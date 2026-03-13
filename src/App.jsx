@@ -1,9 +1,23 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from "recharts";
+
+// ── Full-width override for Vite's default index.css ──────────────
+(function() {
+  var s = document.createElement("style");
+  s.textContent = [
+    "*, *::before, *::after { box-sizing: border-box; }",
+    "html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }",
+    "#root { max-width: 100% !important; width: 100% !important; height: 100% !important;",
+    "        margin: 0 !important; padding: 0 !important; text-align: left !important; }"
+  ].join("\n");
+  document.head.appendChild(s);
+})();
+
 
 /* ─── Design tokens ────────────────────────────────────────── */
 const T = {
@@ -447,7 +461,7 @@ function HoldingsScreen() {
 function ChartScreen({ holdings }) {
   const list = holdings && holdings.length > 0 ? holdings : HOLDINGS_INIT;
   const [tf, setTf] = useState("1D");
-  const [ticker, setTicker] = useState(list[0]?.sym || "AAPL");
+  const [ticker, setTicker] = useState((list[0] && list[0].sym) || "AAPL");
   const [search, setSearch] = useState("");
   const [dropOpen, setDropOpen] = useState(false);
 
@@ -647,7 +661,7 @@ function AddDividendModal({ onClose, onAdd }) {
   const [isUS, setIsUS] = useState(false);
 
   // auto-tick when holding changes
-  useState(() => { setIsUS(autoUS); }, [sym]);
+  useEffect(() => { setIsUS(autoUS); }, [sym]);
 
   const gross = qty && eps ? parseFloat(eps) * qty * 1.345 : 0;  // USD->SGD
   const withhold = isUS ? gross * WITHHOLD_RATE : 0;
@@ -659,7 +673,7 @@ function AddDividendModal({ onClose, onAdd }) {
   );
 
   const handleAdd = () => {
-    onAdd({ sym, payDate, perShare: parseFloat(eps), qty, gross, withhold, net, isUS, exchange: holding?.exchange });
+    onAdd({ sym, payDate, perShare: parseFloat(eps), qty, gross, withhold, net, isUS, exchange: holding ? holding.exchange : undefined });
   };
 
   return (
@@ -2082,7 +2096,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
       </div>
 
       {/* Content */}
-      <div style={{flex:1,overflowY:"auto",padding:"18px 20px",display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{flex:1,overflowY:"auto",minHeight:0}}><div style={{padding:"18px 20px 32px",display:"flex",flexDirection:"column",gap:14}}>
 
         {/* ── OVERVIEW ── */}
         {propTab === "overview" && (
@@ -2385,7 +2399,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
             showToast("Insurance link removed", "success");
           };
           return (
-            <>
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
               {linked ? (
                 <>
                   <div style={{background:T.selected,borderRadius:14,padding:"18px 20px"}}>
@@ -2453,8 +2467,8 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                   )}
 
                   <button onClick={unlinkPolicy}
-                    style={{padding:"9px",borderRadius:8,border:`1px solid ${T.border}`,background:T.bg,color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12}}>
-                    Unlink this policy
+                    style={{padding:"10px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:T.bg,color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,width:"100%",textAlign:"center"}}>
+                    🔗 Unlink this policy
                   </button>
                 </>
               ) : (
@@ -2494,10 +2508,10 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                   )}
                 </>
               )}
-            </>
+            </div>
           );
         })()}
-      </div>
+      </div></div>
     </div>
   );
 }
@@ -2573,7 +2587,7 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
         </div>
 
         {/* List */}
-        <div style={{flex:1,overflowY:"auto",padding:"12px 18px",display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{flex:1,overflowY:"auto",minHeight:0}}><div style={{padding:"12px 18px 24px",display:"flex",flexDirection:"column",gap:10}}>
           {filtered.length === 0 ? (
             <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}>
               <div style={{fontSize:32,marginBottom:10}}>🏘</div>
@@ -2581,7 +2595,7 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
               <div style={{fontSize:12,marginTop:6}}>Add your first property below</div>
             </div>
           ) : filtered.map(p => (
-            <REPropCard key={p.id} p={p} selPropId={selProp?.id}
+            <REPropCard key={p.id} p={p} selPropId={selProp && selProp.id}
               insured={!!(policies||[]).find(pol=>pol.id===p.linkedInsuranceId)}
               onSelect={prop=>{setSelProp(prop);setPropTab("overview");}}/>
           ))}
@@ -2594,7 +2608,7 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
             + Add Property
           </button>
         </div>
-      </div>
+      </div></div>
 
       {/* Right panel */}
       <div style={{flex:1,overflow:"hidden",background:T.bg}}>
@@ -2626,7 +2640,7 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
           <div style={{background:T.bg,borderRadius:16,width:"100%",maxWidth:560,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
 
             <div style={{padding:"18px 24px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontSize:15,fontWeight:700}}>Add Property {RE_COUNTRIES[addForm.country]?.flag}</div>
+              <div style={{fontSize:15,fontWeight:700}}>Add Property {RE_COUNTRIES[addForm.country] && RE_COUNTRIES[addForm.country].flag}</div>
               <button onClick={()=>setShowAdd(false)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 12px",fontSize:13,cursor:"pointer",color:T.muted}}>Cancel</button>
             </div>
 
@@ -2795,13 +2809,13 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
   // Group coverage breakdown
   const groupTotals = {};
   active.forEach(p => {
-    const g = INS_TYPES[p.type]?.group || "Other";
+    const g = INS_TYPES[p.type] && INS_TYPES[p.type].group || "Other";
     groupTotals[g] = (groupTotals[g] || 0) + (p.sumAssured || 0);
   });
 
   // Filtered list
   const filtered = policies.filter(p => {
-    const matchType = filterType === "All" || INS_TYPES[p.type]?.group === filterType || p.type === filterType;
+    const matchType = filterType === "All" || INS_TYPES[p.type] && INS_TYPES[p.type].group === filterType || p.type === filterType;
     const matchStatus = filterStatus === "All" || p.status === filterStatus;
     const matchSearch = !searchQ || p.planName.toLowerCase().includes(searchQ.toLowerCase()) || p.insurer.toLowerCase().includes(searchQ.toLowerCase()) || p.policyNo.toLowerCase().includes(searchQ.toLowerCase()) || p.type.toLowerCase().includes(searchQ.toLowerCase());
     return matchType && matchStatus && matchSearch;
@@ -2822,7 +2836,7 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
     if (!claimForm.type || !claimForm.date) return;
     const claim = { id: `C${Date.now()}`, ...claimForm, amount: parseFloat(claimForm.amount) || 0 };
     setPolicies(prev => prev.map(p => p.id === claimTarget.id ? { ...p, claims: [...(p.claims || []), claim] } : p));
-    if (selectedPolicy?.id === claimTarget.id) setSelectedPolicy(prev => ({ ...prev, claims: [...(prev.claims || []), claim] }));
+    if (selectedPolicy && selectedPolicy.id === claimTarget.id) setSelectedPolicy(prev => ({ ...prev, claims: [...(prev.claims || []), claim] }));
     setClaimForm(EMPTY_CLAIM);
     setShowClaimModal(false);
     showToast("Claim recorded", "success");
@@ -3029,7 +3043,7 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <StatusChip status={pol.status} />
-                  {pol.claims?.filter(c => c.status === "Pending").length > 0 && (
+                  {(pol.claims || []).filter(c => c.status === "Pending").length > 0 && (
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: T.down, display: "inline-block" }} title="Pending claim" />
                   )}
                 </div>
@@ -3085,8 +3099,8 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                   <div style={{ display: "flex", gap: 0, minWidth: "max-content" }}>
                     {DETAIL_TABS.map(dt => {
                       const label = { transactions: "Tx History", claims: "Claims", exclusions: "Exclusions", documents: "Documents", overview: "Overview", coverage: "Coverage", premiums: "Premiums" }[dt] || dt;
-                      const badge = dt === "claims" && pol.claims?.length > 0 ? pol.claims.length
-                                  : dt === "transactions" && pol.premiumTransactions?.length > 0 ? pol.premiumTransactions.length
+                      const badge = dt === "claims" && (pol.claims || []).length > 0 ? pol.claims.length
+                                  : dt === "transactions" && (pol.premiumTransactions || []).length > 0 ? pol.premiumTransactions.length
                                   : null;
                       const active = detailTab === dt;
                       return (
@@ -3129,7 +3143,7 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                         <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{pol.notes}</div>
                       </div>
                     )}
-                    {pol.riders?.length > 0 && (
+                    {(pol.riders || []).length > 0 && (
                       <div>
                         <div style={{ fontSize: 12, fontWeight: 600, color: T.muted, marginBottom: 8 }}>Riders Attached</div>
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -3174,7 +3188,7 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                         </div>
                       </div>
                     )}
-                    {pol.riders?.length > 0 && (
+                    {(pol.riders || []).length > 0 && (
                       <div>
                         <div style={{ fontSize: 12, fontWeight: 600, color: T.muted, marginBottom: 8 }}>Riders</div>
                         {pol.riders.map((r, i) => <div key={i} style={{ fontSize: 13, padding: "7px 12px", background: T.inputBg, borderRadius: 7, marginBottom: 5 }}>✓ {r}</div>)}
@@ -3270,7 +3284,7 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                       style={{ background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 9, padding: "10px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: T.text, fontWeight: 500 }}>
                       + Record New Claim
                     </button>
-                    {pol.claims?.length === 0 ? (
+                    {(pol.claims || []).length === 0 ? (
                       <div style={{ textAlign: "center", padding: "36px 20px" }}>
                         <div style={{ fontSize: 28, marginBottom: 10 }}>📋</div>
                         <div style={{ fontSize: 13, color: T.muted }}>No claims recorded</div>
@@ -3301,7 +3315,7 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                     <div style={{ background: T.warnBg, border: `1px solid ${T.warn}30`, borderRadius: 9, padding: "10px 14px", fontSize: 12, color: T.warn, fontWeight: 500 }}>
                       ⚠️ Review your policy document for the full and binding list of exclusions.
                     </div>
-                    {pol.exclusions?.length === 0 ? (
+                    {(pol.exclusions || []).length === 0 ? (
                       <div style={{ textAlign: "center", padding: "36px 20px" }}>
                         <div style={{ fontSize: 28, marginBottom: 10 }}>✅</div>
                         <div style={{ fontSize: 13, color: T.muted }}>No exclusions recorded</div>
@@ -3455,7 +3469,7 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                       <div style={{ fontSize: 13, fontWeight: 500 }}>Upload Document</div>
                       <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>PDF, JPG, PNG · Drag & drop or click</div>
                     </div>
-                    {pol.documents?.length === 0 ? (
+                    {(pol.documents || []).length === 0 ? (
                       <div style={{ textAlign: "center", padding: "24px 20px" }}>
                         <div style={{ fontSize: 13, color: T.muted }}>No documents uploaded</div>
                       </div>
@@ -4083,11 +4097,11 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                 <Label>Riders</Label>
                 <div style={{ display: "flex", gap: 8 }}>
                   <input value={form.riderInput||""} onChange={e => setF("riderInput", e.target.value)}
-                    onKeyDown={e => { if (e.key==="Enter" && form.riderInput?.trim()) { setF("riders", [...(form.riders||[]), form.riderInput.trim()]); setF("riderInput",""); e.preventDefault(); } }}
+                    onKeyDown={e => { if (e.key==="Enter" && form.riderInput && form.riderInput.trim()) { setF("riders", [...(form.riders||[]), form.riderInput.trim()]); setF("riderInput",""); e.preventDefault(); } }}
                     placeholder="Type rider name and press Enter…"
                     style={{ flex: 1, background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none" }} />
                 </div>
-                {form.riders?.length > 0 && (
+                {(form.riders || []).length > 0 && (
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                     {form.riders.map((r,i) => (
                       <span key={i} style={{ display: "flex", alignItems: "center", gap: 5, background: T.upBg, color: T.up, borderRadius: 6, padding: "4px 10px", fontSize: 12 }}>
@@ -4104,11 +4118,11 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                 <Label>Exclusions</Label>
                 <div style={{ display: "flex", gap: 8 }}>
                   <input value={form.exclusionInput||""} onChange={e => setF("exclusionInput", e.target.value)}
-                    onKeyDown={e => { if (e.key==="Enter" && form.exclusionInput?.trim()) { setF("exclusions", [...(form.exclusions||[]), form.exclusionInput.trim()]); setF("exclusionInput",""); e.preventDefault(); } }}
+                    onKeyDown={e => { if (e.key==="Enter" && form.exclusionInput && form.exclusionInput.trim()) { setF("exclusions", [...(form.exclusions||[]), form.exclusionInput.trim()]); setF("exclusionInput",""); e.preventDefault(); } }}
                     placeholder="Type exclusion and press Enter…"
                     style={{ flex: 1, background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none" }} />
                 </div>
-                {form.exclusions?.length > 0 && (
+                {(form.exclusions || []).length > 0 && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
                     {form.exclusions.map((ex,i) => (
                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: T.downBg, borderRadius: 7, padding: "6px 12px", fontSize: 12 }}>
@@ -4279,7 +4293,7 @@ export default function App() {
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: T.bg, fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif", color: T.text, fontSize: 14 }}>
+    <div style={{ display: "flex", height: "100vh", width: "100%", background: T.bg, fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif", color: T.text, fontSize: 14, overflow: "hidden" }}>
       <Toast msg={toast.msg} type={toast.type} onClose={() => setToast({ msg: "", type: "" })} />
 
       {/* ── Sidebar — exactly as in screenshot ── */}
@@ -4355,13 +4369,23 @@ export default function App() {
         </div>
 
         {/* Page content */}
-        {(page === "realestate" || page === "insurance") ? (
-          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {page === "realestate" ? (
+          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minHeight: 0 }}>
             <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
-              <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav?.label}</h1>
+              <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
               <p style={{ fontSize: 13, color: T.muted, margin: "0 0 14px" }}>{subtitles[page]}</p>
             </div>
-            <div style={{ flex: 1, overflow: "hidden" }}>
+            <div style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
+              {renderScreen()}
+            </div>
+          </div>
+        ) : page === "insurance" ? (
+          <div style={{ flex: 1, overflowY: "auto", minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
+              <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
+              <p style={{ fontSize: 13, color: T.muted, margin: "0 0 14px" }}>{subtitles[page]}</p>
+            </div>
+            <div style={{ padding: "0 28px 32px" }}>
               {renderScreen()}
             </div>
           </div>
@@ -4369,7 +4393,7 @@ export default function App() {
           <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px" }}>
             <div style={{ maxWidth: 980, margin: "0 auto" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 5 }}>
-                <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>{activeNav?.label}</h1>
+                <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
                 {page === "dividends" && (
                   <button onClick={() => setDivModalOpen(true)} style={{ background: T.selected, color: T.selectedText, border: "none", borderRadius: 9, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
                     <span style={{ fontSize: 16 }}>+</span> Add Dividend
