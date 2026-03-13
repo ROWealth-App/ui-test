@@ -4484,7 +4484,7 @@ function CreditCardVisual({ card, accounts, size = "lg" }) {
 
 // ── Add/Edit Card Modal ───────────────────────────────────────
 function CCCardModal({ card, accounts, onSave, onClose }) {
-  const [f, setFState] = React.useState(card);
+  const [f, setFState] = useState(card);
   const setF = (k, v) => setFState(prev => ({...prev, [k]: v}));
   const isDebit = f.cardType === "Debit";
   const CIn = ({ label, fkey, type="text", placeholder="" }) => (
@@ -4589,7 +4589,7 @@ function CCCardModal({ card, accounts, onSave, onClose }) {
 
 // ── Add Transaction Modal ─────────────────────────────────────
 function CCTxnModal({ cardId, onSave, onClose }) {
-  const [f, setFState] = React.useState({ cardId, date: new Date().toISOString().slice(0,10), description:"", category:"Dining", amount:"", type:"Debit" });
+  const [f, setFState] = useState({ cardId, date: new Date().toISOString().slice(0,10), description:"", category:"Dining", amount:"", type:"Debit" });
   const setF = (k,v) => setFState(prev=>({...prev,[k]:v}));
   return (
     <>
@@ -4636,7 +4636,7 @@ function CCTxnModal({ cardId, onSave, onClose }) {
 
 // ── Add Account Modal ─────────────────────────────────────────
 function CCAccountModal({ account, onSave, onClose }) {
-  const [f, setFState] = React.useState(account);
+  const [f, setFState] = useState(account);
   const setF = (k,v) => setFState(prev=>({...prev,[k]:v}));
   return (
     <>
@@ -4687,10 +4687,10 @@ function CCAccountModal({ account, onSave, onClose }) {
 
 // ── Card Detail Drawer ────────────────────────────────────────
 function CCDrawer({ card, accounts, transactions, setTransactions, setCards, showToast, onClose }) {
-  const [tab, setTab] = React.useState("overview");
-  const [showTxnModal, setShowTxnModal] = React.useState(false);
-  const [catFilter, setCatFilter] = React.useState("All");
-  const [txnSearch, setTxnSearch] = React.useState("");
+  const [tab, setTab] = useState("overview");
+  const [showTxnModal, setShowTxnModal] = useState(false);
+  const [catFilter, setCatFilter] = useState("All");
+  const [txnSearch, setTxnSearch] = useState("");
 
   const isDebit = card.cardType === "Debit";
   const linkedAcc = accounts.find(a => a.id === card.linkedAccountId);
@@ -5034,13 +5034,13 @@ function CCDrawer({ card, accounts, transactions, setTransactions, setCards, sho
 
 // ── Main Screen ───────────────────────────────────────────────
 function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions, setTransactions, showToast }) {
-  const [selCard, setSelCard] = React.useState(null);
-  const [showCardModal, setShowCardModal] = React.useState(false);
-  const [editCard, setEditCard] = React.useState(null);
-  const [showAccModal, setShowAccModal] = React.useState(false);
-  const [editAcc, setEditAcc] = React.useState(null);
-  const [filterType, setFilterType] = React.useState("All");
-  const [leftTab, setLeftTab] = React.useState("cards");
+  const [selCard, setSelCard] = useState(null);
+  const [showCardModal, setShowCardModal] = useState(false);
+  const [editCard, setEditCard] = useState(null);
+  const [showAccModal, setShowAccModal] = useState(false);
+  const [editAcc, setEditAcc] = useState(null);
+  const [filterType, setFilterType] = useState("All");
+  const [leftTab, setLeftTab] = useState("cards");
 
   const selCardData = cards.find(c => c.id === selCard);
   const creditCards = cards.filter(c => c.cardType === "Credit" || c.cardType === "Commercial");
