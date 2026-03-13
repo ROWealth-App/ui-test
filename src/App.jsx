@@ -45,6 +45,15 @@ const T = {
 };
 
 /* ─── Reusable primitives ───────────────────────────────────── */
+// Compact currency: auto-abbreviates to K / M when digits would overflow
+const fmtCompact = (v, prefix = "S$") => {
+  const abs = Math.abs(v);
+  if (abs >= 1e9) return `${prefix}${(v/1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${prefix}${(v/1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${prefix}${(v/1e3).toFixed(1)}K`;
+  return `${prefix}${v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+};
+
 const Card = ({ children, style = {} }) => (
   <div style={{ background: T.card, border: `1px solid ${T.cardBorder}`, borderRadius: 12, ...style }}>
     {children}
@@ -1932,6 +1941,7 @@ const EMPTY_PROP = {
   purpose:"Own Stay", annualTax:0, mcstFee:0, maintenanceFee:0,
   stampDuty:0, agentFee:0, otherFees:0, notes:"",
   linkedInsuranceId: null,
+  tags: [],
 };
 
 function calcMonthly(principal, annualRate, years) {
@@ -1971,6 +1981,15 @@ function REPropCard({ p, selPropId, onSelect, insured }) {
           </div>
           <div style={{fontSize:11,color:T.muted}}>{p.type} · {p.tenure||"—"} · {p.country}</div>
           {p.address && <div style={{fontSize:11,color:T.dim,marginTop:2}}>{p.address}</div>}
+          {(p.tags||[]).length > 0 && (
+            <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>
+              {(p.tags||[]).map(tag=>(
+                <span key={tag} style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:T.accentBg,color:T.accent,border:`1px solid ${T.accent}40`}}>
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end",marginLeft:10}}>
           <span style={{fontSize:10,fontWeight:600,color:sc.color,background:sc.bg,border:`1px solid ${sc.border}`,borderRadius:6,padding:"3px 8px",whiteSpace:"nowrap"}}>
@@ -2047,7 +2066,8 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
       annualTax:p.annualTax||0, mcstFee:p.mcstFee||0, maintenanceFee:p.maintenanceFee||0,
       stampDuty:p.stampDuty||0, agentFee:p.agentFee||0, otherFees:p.otherFees||0,
       notes:p.notes||"",
-      linkedInsuranceId:p.linkedInsuranceId||null
+      linkedInsuranceId:p.linkedInsuranceId||null,
+      tags: p.tags||[], tagInput: "",
     });
     setEditing(true);
   };
@@ -2174,6 +2194,65 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
               ) : (
                 <div style={{background:T.inputBg,borderRadius:8,padding:"10px 14px",fontSize:13,color:p.notes?T.text:T.dim,lineHeight:1.6}}>
                   {p.notes||"No notes"}
+                </div>
+              )}
+            </div>
+
+            {/* ── TAGS ── */}
+            <div>
+              <div style={{fontSize:11,color:T.muted,marginBottom:8}}>🏷 Name Tags</div>
+              {editing && ef ? (
+                <div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                    {(ef.tags||[]).map(tag => (
+                      <span key={tag} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:600,padding:"4px 10px",borderRadius:20,background:T.accentBg,color:T.accent,border:`1px solid ${T.accent}40`}}>
+                        {tag}
+                        <span onClick={()=>setEF("tags",(ef.tags||[]).filter(t=>t!==tag))}
+                          style={{cursor:"pointer",fontSize:14,lineHeight:1,color:T.muted,fontWeight:400}}>×</span>
+                      </span>
+                    ))}
+                  </div>
+                  {(ef.tags||[]).length < 3 && (
+                    <div style={{display:"flex",gap:8}}>
+                      <input value={ef.tagInput||""} onChange={e=>setEF("tagInput",e.target.value)}
+                        onKeyDown={e=>{
+                          if((e.key==="Enter"||e.key===",")&&(ef.tagInput||"").trim()){
+                            e.preventDefault();
+                            const t=(ef.tagInput||"").trim();
+                            if(t&&!(ef.tags||[]).includes(t)&&(ef.tags||[]).length<3){
+                              setEF("tags",[...(ef.tags||[]),t]);
+                              setEF("tagInput","");
+                            }
+                          }
+                        }}
+                        placeholder={`Add tag (${3-(ef.tags||[]).length} left) — press Enter`}
+                        style={{flex:1,background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 12px",fontSize:12,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+                      <button onClick={()=>{
+                          const t=(ef.tagInput||"").trim();
+                          if(t&&!(ef.tags||[]).includes(t)&&(ef.tags||[]).length<3){
+                            setEF("tags",[...(ef.tags||[]),t]);
+                            setEF("tagInput","");
+                          }
+                        }}
+                        style={{padding:"7px 14px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
+                        Add
+                      </button>
+                    </div>
+                  )}
+                  {(ef.tags||[]).length >= 3 && (
+                    <div style={{fontSize:11,color:T.muted}}>Maximum 3 tags reached.</div>
+                  )}
+                </div>
+              ) : (
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {(p.tags||[]).length === 0
+                    ? <span style={{fontSize:12,color:T.dim}}>No tags</span>
+                    : (p.tags||[]).map(tag => (
+                        <span key={tag} style={{fontSize:12,fontWeight:600,padding:"4px 10px",borderRadius:20,background:T.accentBg,color:T.accent,border:`1px solid ${T.accent}40`}}>
+                          {tag}
+                        </span>
+                      ))
+                  }
                 </div>
               )}
             </div>
@@ -4212,12 +4291,1035 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
 /* ═══════════════════════════════════════════════════════════
    ROOT APP — full shell matching the screenshot
 ═══════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   CREDIT CARD MODULE — Data & Screen
+   ═══════════════════════════════════════════════════════════════ */
+
+// ── Bank colour maps ──────────────────────────────────────────
+const BANK_COLORS = {
+  "DBS":              { from:"#E31837", to:"#8B0000",    text:"#fff" },
+  "OCBC":             { from:"#E2231A", to:"#B01010",    text:"#fff" },
+  "UOB":              { from:"#004B8D", to:"#002F5F",    text:"#fff" },
+  "Citibank":         { from:"#003B95", to:"#00287A",    text:"#fff" },
+  "Standard Chartered":{ from:"#009A44", to:"#006B2F",  text:"#fff" },
+  "HSBC":             { from:"#DB0011", to:"#9A0000",    text:"#fff" },
+  "Maybank":          { from:"#FABB00", to:"#C78E00",    text:"#222" },
+  "American Express": { from:"#007BC1", to:"#005A8E",    text:"#fff" },
+  "Trust Bank":       { from:"#1A1A2E", to:"#16213E",    text:"#fff" },
+};
+
+const CARD_NETWORKS = ["Visa","Mastercard","Amex","JCB","UnionPay"];
+
+const TXN_CATEGORIES = [
+  "Dining","Shopping","Groceries","Transport","Travel","Entertainment",
+  "Healthcare","Utilities","Insurance","Fuel","Online","Education","Other"
+];
+
+const CATEGORY_ICONS = {
+  Dining:"🍽",Shopping:"🛍",Groceries:"🛒",Transport:"🚌",Travel:"✈️",
+  Entertainment:"🎬",Healthcare:"🏥",Utilities:"💡",Insurance:"🛡",
+  Fuel:"⛽",Online:"💻",Education:"📚",Other:"💳"
+};
+
+// ── Initial data ──────────────────────────────────────────────
+const EMPTY_CARD = {
+  id:"", bank:"DBS", cardName:"", cardType:"Credit",
+  network:"Visa", holderName:"dilwyn", last4:"", expiryMM:"12", expiryYY:"27",
+  creditLimit:0, currentBalance:0, minimumPayment:0, paymentDueDate:"",
+  apr:26.9, annualFee:0, rewardProgram:"", rewardRate:"",
+  cashbackRate:0, milesRate:0,
+  companyName:"", companyUEN:"",
+  linkedAccountId:null, isActive:true, notes:"",
+};
+
+const EMPTY_ACCOUNT = {
+  id:"", bank:"DBS", accountName:"", accountType:"Checking",
+  last4:"", balance:0, currency:"SGD", notes:"",
+};
+
+const CC_ACCOUNTS_INIT = [
+  { id:"ACC001", bank:"DBS",  accountName:"DBS Multiplier",      accountType:"Savings",  last4:"2341", balance:18450, currency:"SGD" },
+  { id:"ACC002", bank:"OCBC", accountName:"OCBC 360 Account",    accountType:"Savings",  last4:"8812", balance:9320,  currency:"SGD" },
+  { id:"ACC003", bank:"UOB",  accountName:"UOB One Account",     accountType:"Checking", last4:"5567", balance:6150,  currency:"SGD" },
+];
+
+const CC_CARDS_INIT = [
+  {
+    id:"CC001", bank:"DBS", cardName:"DBS Live Fresh", cardType:"Credit",
+    network:"Visa", holderName:"dilwyn", last4:"4521", expiryMM:"08", expiryYY:"27",
+    creditLimit:12000, currentBalance:3240.50, minimumPayment:50, paymentDueDate:"2026-03-28",
+    apr:26.9, annualFee:192.60, rewardProgram:"DBS Points", rewardRate:"1pt per S$5",
+    cashbackRate:5, milesRate:0, linkedAccountId:null, isActive:true,
+    notes:"Online & Contactless 5% cashback. Waived if spend S$25k/yr.",
+  },
+  {
+    id:"CC002", bank:"OCBC", cardName:"OCBC 365", cardType:"Credit",
+    network:"Mastercard", holderName:"dilwyn", last4:"8834", expiryMM:"11", expiryYY:"26",
+    creditLimit:20000, currentBalance:7812.00, minimumPayment:156.24, paymentDueDate:"2026-04-05",
+    apr:26.9, annualFee:192.60, rewardProgram:"OCBC$ Rebate", rewardRate:"3% dining, 5% transport",
+    cashbackRate:3, milesRate:0, linkedAccountId:null, isActive:true,
+    notes:"6% cashback on weekends. Min spend S$800/mo.",
+  },
+  {
+    id:"CC003", bank:"UOB", cardName:"UOB PRVI Miles", cardType:"Credit",
+    network:"Visa", holderName:"dilwyn", last4:"2290", expiryMM:"03", expiryYY:"28",
+    creditLimit:30000, currentBalance:1545.00, minimumPayment:30.90, paymentDueDate:"2026-04-10",
+    apr:26.9, annualFee:256.80, rewardProgram:"KrisFlyer Miles", rewardRate:"1.4 miles per S$1 local",
+    cashbackRate:0, milesRate:1.4, linkedAccountId:null, isActive:true,
+    notes:"3 miles per S$1 on overseas. Good for travel.",
+  },
+  {
+    id:"CC004", bank:"Standard Chartered", cardName:"SC Simply Cash", cardType:"Credit",
+    network:"Visa", holderName:"dilwyn", last4:"6601", expiryMM:"06", expiryYY:"27",
+    creditLimit:15000, currentBalance:0, minimumPayment:0, paymentDueDate:"2026-04-15",
+    apr:26.9, annualFee:192.60, rewardProgram:"Cashback", rewardRate:"1.5% unlimited cashback",
+    cashbackRate:1.5, milesRate:0, linkedAccountId:null, isActive:true,
+    notes:"No min spend, no cap. Good everyday card.",
+  },
+  {
+    id:"CC007", bank:"American Express", cardName:"Amex Business Gold", cardType:"Commercial",
+    network:"Amex", holderName:"dilwyn", last4:"3008", expiryMM:"09", expiryYY:"27",
+    creditLimit:50000, currentBalance:12480.00, minimumPayment:249.60, paymentDueDate:"2026-04-01",
+    apr:26.9, annualFee:321, rewardProgram:"Membership Rewards", rewardRate:"2 pts per S$1 business spend",
+    cashbackRate:0, milesRate:2, linkedAccountId:null, isActive:true,
+    companyName:"Dilwyn Ventures Pte Ltd", companyUEN:"202401234Z",
+    notes:"Corporate card. Used for business travel and vendor payments.",
+  },
+  {
+    id:"CC005", bank:"DBS", cardName:"DBS Visa Debit", cardType:"Debit",
+    network:"Visa", holderName:"dilwyn", last4:"2341", expiryMM:"12", expiryYY:"26",
+    creditLimit:0, currentBalance:0, minimumPayment:0, paymentDueDate:"",
+    apr:0, annualFee:0, rewardProgram:"", rewardRate:"",
+    cashbackRate:0, milesRate:0, linkedAccountId:"ACC001", isActive:true,
+    notes:"Linked to DBS Multiplier account.",
+  },
+  {
+    id:"CC006", bank:"OCBC", cardName:"OCBC Frank Debit", cardType:"Debit",
+    network:"Mastercard", holderName:"dilwyn", last4:"8812", expiryMM:"05", expiryYY:"27",
+    creditLimit:0, currentBalance:0, minimumPayment:0, paymentDueDate:"",
+    apr:0, annualFee:0, rewardProgram:"", rewardRate:"",
+    cashbackRate:0, milesRate:0, linkedAccountId:"ACC002", isActive:true,
+    notes:"Linked to OCBC 360 Account.",
+  },
+];
+
+const CC_TRANSACTIONS_INIT = [
+  { id:"T001", cardId:"CC001", date:"2026-03-10", description:"Grab Food",         category:"Dining",       amount:32.50,  type:"Debit"  },
+  { id:"T002", cardId:"CC001", date:"2026-03-08", description:"Shopee",            category:"Online",       amount:89.90,  type:"Debit"  },
+  { id:"T003", cardId:"CC001", date:"2026-03-07", description:"Cold Storage",      category:"Groceries",    amount:67.30,  type:"Debit"  },
+  { id:"T004", cardId:"CC001", date:"2026-03-05", description:"Netflix",           category:"Entertainment",amount:19.98,  type:"Debit"  },
+  { id:"T005", cardId:"CC001", date:"2026-03-01", description:"Payment - Thank You",category:"Other",       amount:500.00, type:"Credit" },
+  { id:"T006", cardId:"CC002", date:"2026-03-11", description:"Dining at PS Cafe", category:"Dining",       amount:148.00, type:"Debit"  },
+  { id:"T007", cardId:"CC002", date:"2026-03-09", description:"ComfortDelGro",     category:"Transport",    amount:24.60,  type:"Debit"  },
+  { id:"T008", cardId:"CC002", date:"2026-03-09", description:"NTUC FairPrice",    category:"Groceries",    amount:112.50, type:"Debit"  },
+  { id:"T009", cardId:"CC002", date:"2026-03-06", description:"Singapore Airlines",category:"Travel",       amount:1850.00,type:"Debit"  },
+  { id:"T010", cardId:"CC002", date:"2026-03-01", description:"Payment - Thank You",category:"Other",       amount:2000.00,type:"Credit" },
+  { id:"T011", cardId:"CC003", date:"2026-03-10", description:"Changi Airport T3", category:"Travel",       amount:320.00, type:"Debit"  },
+  { id:"T012", cardId:"CC003", date:"2026-03-08", description:"Wingstop",          category:"Dining",       amount:28.90,  type:"Debit"  },
+  { id:"T013", cardId:"CC003", date:"2026-03-05", description:"Lazada",            category:"Shopping",     amount:76.50,  type:"Debit"  },
+  { id:"T014", cardId:"CC004", date:"2026-03-11", description:"Uniqlo",            category:"Shopping",     amount:89.90,  type:"Debit"  },
+  { id:"T015", cardId:"CC004", date:"2026-03-10", description:"Guardian Pharmacy", category:"Healthcare",   amount:43.20,  type:"Debit"  },
+  { id:"T016", cardId:"CC005", date:"2026-03-11", description:"Kopitiam",          category:"Dining",       amount:6.50,   type:"Debit"  },
+  { id:"T017", cardId:"CC005", date:"2026-03-10", description:"MRT Top Up",        category:"Transport",    amount:20.00,  type:"Debit"  },
+  { id:"T018", cardId:"CC006", date:"2026-03-09", description:"Giant Hypermart",   category:"Groceries",    amount:55.80,  type:"Debit"  },
+];
+
+// ── Card visual component ─────────────────────────────────────
+function CreditCardVisual({ card, accounts, size = "lg" }) {
+  const bc = BANK_COLORS[card.bank] || { from:"#374151", to:"#1F2937", text:"#fff" };
+  const isDebit = card.cardType === "Debit";
+  const linkedAcc = accounts.find(a => a.id === card.linkedAccountId);
+  const small = size === "sm";
+  const w = small ? 200 : 320;
+  const h = small ? 126 : 200;
+  const fs = { title: small ? 9 : 13, num: small ? 11 : 16, label: small ? 7 : 10, name: small ? 8 : 12 };
+
+  return (
+    <div style={{
+      width: w, height: h, borderRadius: small ? 10 : 16, position:"relative", overflow:"hidden", flexShrink:0,
+      background: `linear-gradient(135deg, #${bc.from}, #${bc.to})`,
+      boxShadow: small ? "0 4px 12px rgba(0,0,0,0.18)" : "0 8px 32px rgba(0,0,0,0.22)",
+      color: bc.text,
+    }}>
+      {/* Decorative circles */}
+      <div style={{position:"absolute",right:-h*0.2,top:-h*0.3,width:h*0.9,height:h*0.9,borderRadius:"50%",background:"rgba(255,255,255,0.06)"}}/>
+      <div style={{position:"absolute",right:h*0.1,top:-h*0.1,width:h*0.6,height:h*0.6,borderRadius:"50%",background:"rgba(255,255,255,0.04)"}}/>
+      {/* Content */}
+      <div style={{position:"absolute",inset:0,padding: small ? "14px 16px" : "22px 24px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
+        {/* Top row */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div>
+            <div style={{fontSize:fs.title,fontWeight:800,opacity:0.95,letterSpacing:"0.01em"}}>{card.bank}</div>
+            {!small && <div style={{fontSize:10,opacity:0.65,marginTop:2}}>{card.cardName}</div>}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3}}>
+            <span style={{fontSize:fs.label,fontWeight:700,opacity:0.9,background:"rgba(255,255,255,0.15)",padding:"2px 6px",borderRadius:4}}>
+              {isDebit ? "DEBIT" : "CREDIT"}
+            </span>
+            {!small && <span style={{fontSize:9,opacity:0.6}}>{card.network}</span>}
+          </div>
+        </div>
+        {/* Card number */}
+        <div style={{fontSize:fs.num,fontWeight:600,letterSpacing:"0.15em",opacity:0.9}}>
+          •••• •••• •••• {card.last4 || "0000"}
+        </div>
+        {/* Bottom row */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+          <div>
+            <div style={{fontSize:fs.label,opacity:0.6,marginBottom:2}}>{isDebit && linkedAcc ? "LINKED ACCOUNT" : "CARD HOLDER"}</div>
+            <div style={{fontSize:fs.name,fontWeight:600,opacity:0.9}}>
+              {isDebit && linkedAcc ? linkedAcc.accountName : card.holderName.toUpperCase()}
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:fs.label,opacity:0.6,marginBottom:2}}>EXPIRES</div>
+            <div style={{fontSize:fs.name,fontWeight:600,opacity:0.9}}>{card.expiryMM}/{card.expiryYY}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Add/Edit Card Modal ───────────────────────────────────────
+function CCCardModal({ card, accounts, onSave, onClose }) {
+  const [f, setFState] = React.useState(card);
+  const setF = (k, v) => setFState(prev => ({...prev, [k]: v}));
+  const isDebit = f.cardType === "Debit";
+  const CIn = ({ label, fkey, type="text", placeholder="" }) => (
+    <div>
+      <Label>{label}</Label>
+      <input value={f[fkey]||""} type={type} placeholder={placeholder}
+        onChange={e => setF(fkey, type==="number" ? parseFloat(e.target.value)||0 : e.target.value)}
+        style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+    </div>
+  );
+  const CSel = ({ label, fkey, options }) => (
+    <div>
+      <Label>{label}</Label>
+      <select value={f[fkey]||""} onChange={e => setF(fkey, e.target.value)}
+        style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+
+  return (
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:300}}/>
+      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:301,background:T.bg,border:`1px solid ${T.border}`,borderRadius:16,width:540,maxHeight:"88vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.22)"}}>
+        <div style={{padding:"18px 22px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
+          <div style={{fontSize:15,fontWeight:700}}>{card.id ? "Edit Card" : "Add Card"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted}}>×</button>
+        </div>
+        <div style={{padding:"20px 22px",display:"flex",flexDirection:"column",gap:14}}>
+          {/* Card preview */}
+          <div style={{display:"flex",justifyContent:"center",marginBottom:8}}>
+            <CreditCardVisual card={f} accounts={accounts}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <CSel label="Bank" fkey="bank" options={Object.keys(BANK_COLORS)}/>
+            <CSel label="Card Type" fkey="cardType" options={["Credit","Commercial","Debit"]}/>
+          </div>
+          <CIn label="Card Name" fkey="cardName" placeholder="e.g. DBS Live Fresh"/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <CSel label="Network" fkey="network" options={CARD_NETWORKS}/>
+            <CIn label="Card Holder Name" fkey="holderName" placeholder="Full name"/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+            <CIn label="Last 4 Digits" fkey="last4" placeholder="4521"/>
+            <CIn label="Expiry Month" fkey="expiryMM" placeholder="08"/>
+            <CIn label="Expiry Year" fkey="expiryYY" placeholder="27"/>
+          </div>
+          {f.cardType === "Commercial" && (
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <CIn label="Company Name" fkey="companyName" placeholder="e.g. Acme Pte Ltd"/>
+              <CIn label="UEN / Business Reg. No." fkey="companyUEN" placeholder="e.g. 202312345A"/>
+            </div>
+          )}
+          {f.cardType === "Debit" ? (
+            <div>
+              <Label>Linked Account</Label>
+              <select value={f.linkedAccountId||""} onChange={e=>setF("linkedAccountId",e.target.value||null)}
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                <option value="">— No linked account —</option>
+                {accounts.map(a=><option key={a.id} value={a.id}>{a.bank} {a.accountName} (••{a.last4})</option>)}
+              </select>
+            </div>
+          ) : (
+            <>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <CIn label="Credit Limit (S$)" fkey="creditLimit" type="number" placeholder="10000"/>
+                <CIn label="Current Balance (S$)" fkey="currentBalance" type="number" placeholder="0"/>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <CIn label="Min. Payment (S$)" fkey="minimumPayment" type="number" placeholder="50"/>
+                <CIn label="Payment Due Date" fkey="paymentDueDate" type="date"/>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <CIn label="APR (%)" fkey="apr" type="number" placeholder="26.9"/>
+                <CIn label="Annual Fee (S$)" fkey="annualFee" type="number" placeholder="192.60"/>
+              </div>
+              <CIn label="Reward Program" fkey="rewardProgram" placeholder="e.g. KrisFlyer, DBS Points, Cashback"/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <CIn label="Cashback Rate (%)" fkey="cashbackRate" type="number" placeholder="1.5"/>
+                <CIn label="Miles Rate (per S$1)" fkey="milesRate" type="number" placeholder="1.4"/>
+              </div>
+            </>
+          )}
+          <div>
+            <Label>Notes</Label>
+            <textarea value={f.notes||""} onChange={e=>setF("notes",e.target.value)} rows={2}
+              style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+          </div>
+        </div>
+        <div style={{padding:"14px 22px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+          <button onClick={()=>onSave(f)}
+            style={{flex:1,background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+            {card.id ? "Save Changes" : "Add Card"}
+          </button>
+          <button onClick={onClose}
+            style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"11px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Add Transaction Modal ─────────────────────────────────────
+function CCTxnModal({ cardId, onSave, onClose }) {
+  const [f, setFState] = React.useState({ cardId, date: new Date().toISOString().slice(0,10), description:"", category:"Dining", amount:"", type:"Debit" });
+  const setF = (k,v) => setFState(prev=>({...prev,[k]:v}));
+  return (
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:400}}/>
+      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:420,boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,fontSize:14,fontWeight:700}}>Add Transaction</div>
+        <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><Label>Date</Label>
+              <input type="date" value={f.date} onChange={e=>setF("date",e.target.value)}
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+            <div><Label>Type</Label>
+              <select value={f.type} onChange={e=>setF("type",e.target.value)}
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                <option>Debit</option><option>Credit</option><option>Refund</option>
+              </select></div>
+          </div>
+          <div><Label>Description</Label>
+            <input value={f.description} onChange={e=>setF("description",e.target.value)} placeholder="e.g. Grab Food"
+              style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><Label>Category</Label>
+              <select value={f.category} onChange={e=>setF("category",e.target.value)}
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                {TXN_CATEGORIES.map(c=><option key={c}>{c}</option>)}
+              </select></div>
+            <div><Label>Amount (S$)</Label>
+              <input type="number" value={f.amount} onChange={e=>setF("amount",e.target.value)} placeholder="0.00"
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+          </div>
+        </div>
+        <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10}}>
+          <button onClick={()=>{ if(f.description&&f.amount) onSave({...f,id:"T"+Date.now(),amount:parseFloat(f.amount)}); }}
+            disabled={!f.description||!f.amount}
+            style={{flex:1,background:f.description&&f.amount?T.selected:T.inputBg,color:f.description&&f.amount?T.selectedText:T.dim,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:f.description&&f.amount?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            Add Transaction
+          </button>
+          <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Add Account Modal ─────────────────────────────────────────
+function CCAccountModal({ account, onSave, onClose }) {
+  const [f, setFState] = React.useState(account);
+  const setF = (k,v) => setFState(prev=>({...prev,[k]:v}));
+  return (
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:400}}/>
+      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:420,boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,fontSize:14,fontWeight:700}}>{account.id?"Edit Account":"Add Account"}</div>
+        <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><Label>Bank</Label>
+              <select value={f.bank} onChange={e=>setF("bank",e.target.value)}
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                {Object.keys(BANK_COLORS).map(b=><option key={b}>{b}</option>)}
+              </select></div>
+            <div><Label>Account Type</Label>
+              <select value={f.accountType} onChange={e=>setF("accountType",e.target.value)}
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                <option>Checking</option><option>Savings</option>
+              </select></div>
+          </div>
+          <div><Label>Account Name</Label>
+            <input value={f.accountName} onChange={e=>setF("accountName",e.target.value)} placeholder="e.g. DBS Multiplier"
+              style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+            <div><Label>Last 4 Digits</Label>
+              <input value={f.last4} onChange={e=>setF("last4",e.target.value)} placeholder="2341"
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+            <div><Label>Balance</Label>
+              <input type="number" value={f.balance} onChange={e=>setF("balance",parseFloat(e.target.value)||0)}
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+            <div><Label>Currency</Label>
+              <select value={f.currency} onChange={e=>setF("currency",e.target.value)}
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                <option>SGD</option><option>MYR</option><option>USD</option><option>GBP</option>
+              </select></div>
+          </div>
+        </div>
+        <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10}}>
+          <button onClick={()=>onSave(f)}
+            style={{flex:1,background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+            {account.id?"Save Changes":"Add Account"}
+          </button>
+          <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Card Detail Drawer ────────────────────────────────────────
+function CCDrawer({ card, accounts, transactions, setTransactions, setCards, showToast, onClose }) {
+  const [tab, setTab] = React.useState("overview");
+  const [showTxnModal, setShowTxnModal] = React.useState(false);
+  const [catFilter, setCatFilter] = React.useState("All");
+  const [txnSearch, setTxnSearch] = React.useState("");
+
+  const isDebit = card.cardType === "Debit";
+  const linkedAcc = accounts.find(a => a.id === card.linkedAccountId);
+  const cardTxns = transactions.filter(t => t.cardId === card.id).sort((a,b)=>b.date.localeCompare(a.date));
+  const bc = BANK_COLORS[card.bank] || { from:"#374151", to:"#1F2937", text:"#fff" };
+
+  // Spend stats
+  const debitTxns = cardTxns.filter(t => t.type === "Debit");
+  const thisMonth = new Date().toISOString().slice(0,7);
+  const monthTxns = debitTxns.filter(t => t.date.startsWith(thisMonth));
+  const monthSpend = monthTxns.reduce((s,t) => s+t.amount, 0);
+  const totalSpend = debitTxns.reduce((s,t) => s+t.amount, 0);
+
+  // Category breakdown
+  const catBreakdown = {};
+  debitTxns.forEach(t => { catBreakdown[t.category] = (catBreakdown[t.category]||0) + t.amount; });
+  const topCats = Object.entries(catBreakdown).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  // Credit utilisation
+  const utilPct = !isDebit && card.creditLimit > 0 ? Math.min(100,(card.currentBalance/card.creditLimit*100)) : 0;
+  const utilColor = utilPct > 80 ? T.down : utilPct > 50 ? T.warn : T.up;
+
+  // Filtered txns
+  const filteredTxns = cardTxns.filter(t =>
+    (catFilter === "All" || t.category === catFilter) &&
+    (t.description.toLowerCase().includes(txnSearch.toLowerCase()) || t.category.toLowerCase().includes(txnSearch.toLowerCase()))
+  );
+
+  const handleAddTxn = (txn) => {
+    setTransactions(prev => [txn, ...prev]);
+    setShowTxnModal(false);
+    showToast("Transaction added","success");
+  };
+
+  const handleDeleteTxn = (tid) => {
+    setTransactions(prev => prev.filter(t => t.id !== tid));
+    showToast("Transaction removed","success");
+  };
+
+  const TABS = isDebit
+    ? [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"}]
+    : [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"},{id:"benefits",label:"Benefits & Rewards"}];
+
+  const daysUntilDue = (() => {
+    if(!card.paymentDueDate) return null;
+    const diff = Math.ceil((new Date(card.paymentDueDate)-new Date())/(1000*60*60*24));
+    return diff;
+  })();
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      {/* Header */}
+      <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{fontSize:14,fontWeight:800}}>{card.cardName}</div>
+            <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,
+              background: isDebit ? T.accentBg : T.upBg,
+              color: isDebit ? T.accent : T.up}}>
+              {card.cardType}
+            </span>
+            {!card.isActive && <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.downBg,color:T.down}}>Inactive</span>}
+          </div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>✕</button>
+        </div>
+        {/* Tabs */}
+        <div style={{display:"flex",gap:4}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{padding:"6px 14px",borderRadius:8,border:"none",background:tab===t.id?T.selected:T.inputBg,
+                color:tab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:tab===t.id?700:400}}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{flex:1,overflowY:"auto",minHeight:0}}>
+        <div style={{padding:"18px 22px 32px",display:"flex",flexDirection:"column",gap:16}}>
+
+          {/* ── OVERVIEW ── */}
+          {tab === "overview" && (
+            <>
+              {/* Card visual */}
+              <div style={{display:"flex",justifyContent:"center"}}>
+                <CreditCardVisual card={card} accounts={accounts}/>
+              </div>
+
+              {/* Payment due alert */}
+              {!isDebit && card.paymentDueDate && daysUntilDue !== null && daysUntilDue <= 7 && daysUntilDue >= 0 && (
+                <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                  <span style={{fontSize:18}}>⚠️</span>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:T.warn}}>Payment due in {daysUntilDue} day{daysUntilDue!==1?"s":""}</div>
+                    <div style={{fontSize:12,color:T.warn}}>Min. payment S${card.minimumPayment.toLocaleString()} due {card.paymentDueDate}</div>
+                  </div>
+                </div>
+              )}
+              {!isDebit && card.currentBalance === 0 && (
+                <div style={{background:T.upBg,border:`1px solid #BBF7D0`,borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                  <span>✅</span>
+                  <div style={{fontSize:13,fontWeight:600,color:T.up}}>No outstanding balance — fully paid</div>
+                </div>
+              )}
+
+              {/* Credit utilisation gauge (credit cards only) */}
+              {!isDebit && card.creditLimit > 0 && (
+                <div style={{background:T.inputBg,borderRadius:12,padding:"16px 18px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+                    <div style={{fontSize:12,fontWeight:700,color:T.muted}}>CREDIT UTILISATION</div>
+                    <div style={{fontSize:13,fontWeight:800,color:utilColor}}>{utilPct.toFixed(1)}%</div>
+                  </div>
+                  <div style={{height:10,borderRadius:5,background:T.border,overflow:"hidden",marginBottom:10}}>
+                    <div style={{width:`${utilPct}%`,height:"100%",borderRadius:5,background:utilColor,transition:"width 0.4s"}}/>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                    {[
+                      {label:"Balance",value:`S$${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.down},
+                      {label:"Available",value:`S$${(card.creditLimit-card.currentBalance).toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.up},
+                      {label:"Limit",value:`S$${card.creditLimit.toLocaleString()}`,color:T.text},
+                    ].map(s=>(
+                      <div key={s.label} style={{textAlign:"center"}}>
+                        <div style={{fontSize:10,color:T.muted,marginBottom:3}}>{s.label}</div>
+                        <div style={{fontSize:13,fontWeight:700,color:s.color}}>{s.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Debit: linked account info */}
+              {isDebit && linkedAcc && (
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:10}}>🔗 LINKED ACCOUNT</div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700}}>{linkedAcc.accountName}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:2}}>{linkedAcc.bank} · {linkedAcc.accountType} · ••{linkedAcc.last4}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:10,color:T.muted}}>Available Balance</div>
+                      <div style={{fontSize:16,fontWeight:800,color:T.up}}>{linkedAcc.currency} {linkedAcc.balance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Spend stats */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {[
+                  {label:"This Month Spend",value:`S$${monthSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,sub:`${monthTxns.length} transactions`},
+                  {label:"Total Spend",value:`S$${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,sub:`${debitTxns.length} transactions`},
+                ].map(s=>(
+                  <div key={s.label} style={{background:T.inputBg,borderRadius:10,padding:"14px 16px"}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>{s.label}</div>
+                    <div style={{fontSize:16,fontWeight:800}}>{s.value}</div>
+                    <div style={{fontSize:11,color:T.dim,marginTop:2}}>{s.sub}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Category breakdown */}
+              {topCats.length > 0 && (
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📊 Spend by Category</div>
+                  {topCats.map(([cat, amt],i) => {
+                    const pct = totalSpend > 0 ? (amt/totalSpend*100) : 0;
+                    return (
+                      <div key={cat} style={{padding:"10px 16px",borderTop:i===0?`1px solid ${T.border}`:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:10}}>
+                        <span style={{fontSize:16,width:22}}>{CATEGORY_ICONS[cat]||"💳"}</span>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                            <span style={{fontSize:12,fontWeight:600}}>{cat}</span>
+                            <span style={{fontSize:12,fontWeight:700}}>S${amt.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                          </div>
+                          <div style={{height:4,borderRadius:2,background:T.border,overflow:"hidden"}}>
+                            <div style={{width:`${pct}%`,height:"100%",borderRadius:2,background:`#${bc.from}`}}/>
+                          </div>
+                        </div>
+                        <span style={{fontSize:11,color:T.muted,width:36,textAlign:"right"}}>{pct.toFixed(0)}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Card details */}
+              <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📋 Card Details</div>
+                {[
+                  ["Card Network", card.network],
+                  card.cardType === "Commercial" && card.companyName ? ["Company Name", card.companyName] : null,
+                  card.cardType === "Commercial" && card.companyUEN ? ["UEN / Reg. No.", card.companyUEN] : null,
+                  ["Card Number", `•••• •••• •••• ${card.last4}`],
+                  ["Expiry", `${card.expiryMM}/${card.expiryYY}`],
+                  !isDebit && card.apr > 0 ? ["Interest Rate (APR)", `${card.apr}% p.a.`] : null,
+                  !isDebit && card.annualFee > 0 ? ["Annual Fee", `S$${card.annualFee.toLocaleString()}`] : null,
+                  !isDebit && card.paymentDueDate ? ["Next Payment Due", card.paymentDueDate] : null,
+                  card.notes ? ["Notes", card.notes] : null,
+                ].filter(Boolean).map(([k,v],i)=>(
+                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                    <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                    <span style={{fontSize:12,fontWeight:600,textAlign:"right",maxWidth:"60%"}}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── TRANSACTIONS ── */}
+          {tab === "transactions" && (
+            <>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <input value={txnSearch} onChange={e=>setTxnSearch(e.target.value)} placeholder="Search transactions..."
+                  style={{flex:1,background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+                <button onClick={()=>setShowTxnModal(true)}
+                  style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>
+                  + Add
+                </button>
+              </div>
+
+              {/* Category filter pills */}
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {["All",...TXN_CATEGORIES].map(c=>(
+                  <button key={c} onClick={()=>setCatFilter(c)}
+                    style={{padding:"4px 12px",borderRadius:20,border:`1px solid ${catFilter===c?T.selected:T.border}`,
+                      background:catFilter===c?T.selected:"transparent",color:catFilter===c?T.selectedText:T.muted,
+                      cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:catFilter===c?700:400}}>
+                    {c!=="All" && (CATEGORY_ICONS[c]+" ")}{c}
+                  </button>
+                ))}
+              </div>
+
+              {/* Transaction list */}
+              {filteredTxns.length === 0 ? (
+                <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}>
+                  <div style={{fontSize:28,marginBottom:8}}>💳</div>
+                  <div style={{fontSize:13,fontWeight:600}}>No transactions found</div>
+                </div>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  {filteredTxns.map((t,i)=>(
+                    <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,
+                      borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                      <div style={{width:34,height:34,borderRadius:8,background:T.inputBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                        {CATEGORY_ICONS[t.category]||"💳"}
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.description}</div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.category} · {t.date}</div>
+                      </div>
+                      <div style={{textAlign:"right",flexShrink:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:t.type==="Debit"?T.down:T.up}}>
+                          {t.type==="Debit"?"-":"+"} S${t.amount.toLocaleString(undefined,{minimumFractionDigits:2})}
+                        </div>
+                        <div style={{fontSize:10,color:T.dim,marginTop:1}}>{t.type}</div>
+                      </div>
+                      <button onClick={()=>handleDeleteTxn(t.id)}
+                        style={{background:"none",border:"none",cursor:"pointer",color:T.dim,fontSize:14,padding:"2px 4px",flexShrink:0}}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── BENEFITS & REWARDS ── */}
+          {tab === "benefits" && !isDebit && (
+            <>
+              {/* Reward summary */}
+              <div style={{background:T.selected,borderRadius:14,padding:"18px 20px",color:T.selectedText}}>
+                <div style={{fontSize:11,color:"#9CA3AF",fontWeight:600,marginBottom:12}}>REWARD PROGRAMME</div>
+                <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>{card.rewardProgram||"No reward programme"}</div>
+                <div style={{fontSize:13,color:"#D1D5DB"}}>{card.rewardRate}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:16}}>
+                  {card.cashbackRate > 0 && (
+                    <div style={{background:"rgba(255,255,255,0.1)",borderRadius:10,padding:"12px 14px"}}>
+                      <div style={{fontSize:10,color:"#9CA3AF",marginBottom:4}}>Cashback Rate</div>
+                      <div style={{fontSize:22,fontWeight:800}}>{card.cashbackRate}%</div>
+                    </div>
+                  )}
+                  {card.milesRate > 0 && (
+                    <div style={{background:"rgba(255,255,255,0.1)",borderRadius:10,padding:"12px 14px"}}>
+                      <div style={{fontSize:10,color:"#9CA3AF",marginBottom:4}}>Miles per S$1</div>
+                      <div style={{fontSize:22,fontWeight:800}}>{card.milesRate}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Estimated rewards */}
+              {(card.cashbackRate > 0 || card.milesRate > 0) && totalSpend > 0 && (
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"16px 18px"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:T.muted,marginBottom:12}}>ESTIMATED REWARDS EARNED</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                    {card.cashbackRate > 0 && (
+                      <div style={{background:T.upBg,borderRadius:10,padding:"14px"}}>
+                        <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Total Cashback</div>
+                        <div style={{fontSize:18,fontWeight:800,color:T.up}}>S${(totalSpend*card.cashbackRate/100).toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+                        <div style={{fontSize:11,color:T.dim,marginTop:2}}>from S${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})} spend</div>
+                      </div>
+                    )}
+                    {card.milesRate > 0 && (
+                      <div style={{background:T.accentBg,borderRadius:10,padding:"14px"}}>
+                        <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Total Miles</div>
+                        <div style={{fontSize:18,fontWeight:800,color:T.accent}}>{Math.floor(totalSpend*card.milesRate).toLocaleString()}</div>
+                        <div style={{fontSize:11,color:T.dim,marginTop:2}}>from S${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})} spend</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Cost analysis */}
+              <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>💰 Annual Cost Analysis</div>
+                {[
+                  ["Annual Fee", `S$${card.annualFee.toLocaleString()}`],
+                  ["Interest Rate (APR)", `${card.apr}% p.a.`],
+                  card.cashbackRate > 0 ? ["Est. Annual Cashback", `S${(totalSpend*12/Math.max(1,cardTxns.length)*card.cashbackRate/100).toFixed(2)}`] : null,
+                  card.milesRate > 0 ? ["Est. Annual Miles", `${Math.floor(totalSpend*12/Math.max(1,cardTxns.length)*card.milesRate).toLocaleString()} miles`] : null,
+                ].filter(Boolean).map(([k,v],i)=>(
+                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                    <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                    <span style={{fontSize:12,fontWeight:700}}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+        </div>
+      </div>
+
+      {/* Transaction modal */}
+      {showTxnModal && <CCTxnModal cardId={card.id} onSave={handleAddTxn} onClose={()=>setShowTxnModal(false)}/>}
+    </div>
+  );
+}
+
+// ── Main Screen ───────────────────────────────────────────────
+function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions, setTransactions, showToast }) {
+  const [selCard, setSelCard] = React.useState(null);
+  const [showCardModal, setShowCardModal] = React.useState(false);
+  const [editCard, setEditCard] = React.useState(null);
+  const [showAccModal, setShowAccModal] = React.useState(false);
+  const [editAcc, setEditAcc] = React.useState(null);
+  const [filterType, setFilterType] = React.useState("All");
+  const [leftTab, setLeftTab] = React.useState("cards");
+
+  const selCardData = cards.find(c => c.id === selCard);
+  const creditCards = cards.filter(c => c.cardType === "Credit" || c.cardType === "Commercial");
+  const debitCards  = cards.filter(c => c.cardType === "Debit");
+
+  // Summary stats
+  const totalDebt   = creditCards.reduce((s,c) => s+c.currentBalance, 0);
+  const totalLimit  = creditCards.reduce((s,c) => s+c.creditLimit, 0);
+  const totalAvail  = totalLimit - totalDebt;
+  const overallUtil = totalLimit > 0 ? (totalDebt/totalLimit*100) : 0;
+  const dueThisWeek = creditCards.filter(c => {
+    if(!c.paymentDueDate) return false;
+    const d = Math.ceil((new Date(c.paymentDueDate)-new Date())/(1000*60*60*24));
+    return d >= 0 && d <= 7;
+  });
+
+  const filteredCards = cards.filter(c =>
+    filterType === "All" || c.cardType === filterType
+  );
+
+  const handleSaveCard = (f) => {
+    if(f.id) {
+      setCards(prev => prev.map(c => c.id===f.id ? f : c));
+      showToast("Card updated","success");
+    } else {
+      const nc = {...f, id:"CC"+Date.now()};
+      setCards(prev => [...prev, nc]);
+      showToast("Card added","success");
+    }
+    setShowCardModal(false);
+    setEditCard(null);
+  };
+
+  const handleSaveAcc = (f) => {
+    if(f.id) {
+      setAccounts(prev => prev.map(a => a.id===f.id ? f : a));
+      showToast("Account updated","success");
+    } else {
+      setAccounts(prev => [...prev, {...f, id:"ACC"+Date.now()}]);
+      showToast("Account added","success");
+    }
+    setShowAccModal(false);
+    setEditAcc(null);
+  };
+
+  const handleDeleteCard = (id) => {
+    setCards(prev => prev.filter(c => c.id!==id));
+    if(selCard===id) setSelCard(null);
+    showToast("Card removed","success");
+  };
+
+  return (
+    <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
+
+      {/* ── Left Panel ── */}
+      <div style={{width:360,flexShrink:0,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+        {/* Summary strip */}
+        <div style={{padding:"14px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
+            {[
+              {label:"Total Debt",  value:fmtCompact(totalDebt),  full:`S$${totalDebt.toLocaleString(undefined,{minimumFractionDigits:2})}`,  color:T.down},
+              {label:"Total Limit", value:fmtCompact(totalLimit), full:`S$${totalLimit.toLocaleString(undefined,{minimumFractionDigits:2})}`, color:T.text},
+              {label:"Available",   value:fmtCompact(totalAvail), full:`S$${totalAvail.toLocaleString(undefined,{minimumFractionDigits:2})}`, color:T.up},
+            ].map(s=>(
+              <div key={s.label} title={s.full} style={{background:T.bg,borderRadius:8,padding:"8px 8px",border:`1px solid ${T.border}`,minWidth:0,cursor:"default"}}>
+                <div style={{fontSize:9,color:T.muted,marginBottom:2,whiteSpace:"nowrap"}}>{s.label}</div>
+                <div style={{fontSize:12,fontWeight:800,color:s.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+          {/* Overall utilisation bar */}
+          {totalLimit > 0 && (
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted,marginBottom:4}}>
+                <span>Overall Credit Utilisation</span>
+                <span style={{fontWeight:700,color:overallUtil>70?T.down:T.up}}>{overallUtil.toFixed(1)}%</span>
+              </div>
+              <div style={{height:5,borderRadius:3,background:T.border,overflow:"hidden"}}>
+                <div style={{width:`${overallUtil}%`,height:"100%",borderRadius:3,background:overallUtil>70?T.down:T.up}}/>
+              </div>
+            </div>
+          )}
+          {dueThisWeek.length > 0 && (
+            <div style={{marginTop:8,padding:"7px 10px",background:T.warnBg,borderRadius:8,fontSize:11,color:T.warn,fontWeight:600}}>
+              ⚠️ {dueThisWeek.length} card{dueThisWeek.length>1?"s":""} due this week
+            </div>
+          )}
+        </div>
+
+        {/* Left panel tabs */}
+        <div style={{display:"flex",padding:"8px 12px",gap:6,borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+          {[{id:"cards",label:"Cards"},{id:"accounts",label:"Accounts"}].map(t=>(
+            <button key={t.id} onClick={()=>setLeftTab(t.id)}
+              style={{flex:1,padding:"7px",borderRadius:8,border:"none",background:leftTab===t.id?T.selected:"transparent",
+                color:leftTab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:leftTab===t.id?700:400}}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Cards tab */}
+        {leftTab === "cards" && (
+          <>
+            {/* Filter + add */}
+            <div style={{padding:"8px 12px",display:"flex",gap:6,flexShrink:0}}>
+              {["All","Credit","Commercial","Debit"].map(f=>(
+                <button key={f} onClick={()=>setFilterType(f)}
+                  style={{padding:"4px 10px",borderRadius:20,border:`1px solid ${filterType===f?T.selected:T.border}`,
+                    background:filterType===f?T.selected:"transparent",color:filterType===f?T.selectedText:T.muted,
+                    cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:filterType===f?700:400}}>
+                  {f}
+                </button>
+              ))}
+            </div>
+
+            <div style={{flex:1,overflowY:"auto",minHeight:0}}>
+              <div style={{padding:"8px 12px 24px",display:"flex",flexDirection:"column",gap:8}}>
+                {filteredCards.map(card=>{
+                  const bc = BANK_COLORS[card.bank] || {from:"374151",to:"1F2937"};
+                  const isDebit = card.cardType!=="Credit";
+                  const linkedAcc = accounts.find(a=>a.id===card.linkedAccountId);
+                  const cardTxns = transactions.filter(t=>t.cardId===card.id);
+                  const utilPct = !isDebit && card.creditLimit>0 ? Math.min(100,card.currentBalance/card.creditLimit*100) : 0;
+                  const daysUntilDue = card.paymentDueDate
+                    ? Math.ceil((new Date(card.paymentDueDate)-new Date())/(1000*60*60*24)) : null;
+                  const isSelected = selCard === card.id;
+
+                  return (
+                    <div key={card.id} onClick={()=>setSelCard(card.id)}
+                      style={{border:`1.5px solid ${isSelected?T.selected:T.border}`,borderRadius:12,padding:"12px 14px",
+                        cursor:"pointer",background:T.bg,transition:"border-color 0.15s"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          {/* Mini colour bar */}
+                          <div style={{width:4,height:36,borderRadius:2,background:`linear-gradient(180deg,#${bc.from},#${bc.to})`}}/>
+                          <div>
+                            <div style={{fontSize:13,fontWeight:700}}>{card.cardName}</div>
+                            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{card.bank} · {card.network} · ••{card.last4}</div>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                          <span style={{fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:4,
+                            background:isDebit?T.accentBg:card.cardType==="Commercial"?T.warnBg:T.upBg,
+                            color:isDebit?T.accent:card.cardType==="Commercial"?T.warn:T.up}}>
+                            {card.cardType}
+                          </span>
+                          <button onClick={e=>{e.stopPropagation();setEditCard(card);setShowCardModal(true);}}
+                            style={{background:"none",border:"none",cursor:"pointer",color:T.dim,fontSize:13,padding:"2px"}}>✏️</button>
+                          <button onClick={e=>{e.stopPropagation();handleDeleteCard(card.id);}}
+                            style={{background:"none",border:"none",cursor:"pointer",color:T.dim,fontSize:13,padding:"2px"}}>✕</button>
+                        </div>
+                      </div>
+                      {/* Credit utilisation */}
+                      {!isDebit && card.creditLimit > 0 && (
+                        <div style={{marginBottom:6}}>
+                          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:T.muted,marginBottom:3}}>
+                            <span>S${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})} / S${card.creditLimit.toLocaleString()}</span>
+                            <span style={{color:utilPct>70?T.down:T.up,fontWeight:700}}>{utilPct.toFixed(0)}%</span>
+                          </div>
+                          <div style={{height:3,borderRadius:2,background:T.border,overflow:"hidden"}}>
+                            <div style={{width:`${utilPct}%`,height:"100%",background:utilPct>70?T.down:T.up}}/>
+                          </div>
+                        </div>
+                      )}
+                      {/* Debit: account balance */}
+                      {isDebit && linkedAcc && (
+                        <div style={{fontSize:11,color:T.muted}}>
+                          Linked: {linkedAcc.accountName} · <span style={{color:T.up,fontWeight:700}}>S${linkedAcc.balance.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                        </div>
+                      )}
+                      {/* Due date */}
+                      {!isDebit && daysUntilDue !== null && daysUntilDue <= 7 && daysUntilDue >= 0 && (
+                        <div style={{fontSize:10,color:T.warn,fontWeight:600,marginTop:4}}>
+                          ⚠️ Due in {daysUntilDue} day{daysUntilDue!==1?"s":""}
+                        </div>
+                      )}
+                      <div style={{fontSize:10,color:T.dim,marginTop:4}}>{cardTxns.length} transactions</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Add card button */}
+            <div style={{padding:"12px 14px",borderTop:`1px solid ${T.border}`,flexShrink:0}}>
+              <button onClick={()=>{setEditCard({...EMPTY_CARD,id:""});setShowCardModal(true);}}
+                style={{width:"100%",padding:"10px",borderRadius:10,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>
+                + Add Card
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Accounts tab */}
+        {leftTab === "accounts" && (
+          <>
+            <div style={{flex:1,overflowY:"auto",minHeight:0}}>
+              <div style={{padding:"10px 12px 24px",display:"flex",flexDirection:"column",gap:8}}>
+                {accounts.map(acc=>{
+                  const bc = BANK_COLORS[acc.bank] || {from:"374151",to:"1F2937"};
+                  const linkedCards = cards.filter(c=>c.linkedAccountId===acc.id);
+                  return (
+                    <div key={acc.id} style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px",background:T.bg}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div style={{width:4,height:36,borderRadius:2,background:`linear-gradient(180deg,#${bc.from},#${bc.to})`}}/>
+                          <div>
+                            <div style={{fontSize:13,fontWeight:700}}>{acc.accountName}</div>
+                            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{acc.bank} · {acc.accountType} · ••{acc.last4}</div>
+                          </div>
+                        </div>
+  
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div>
+                          <div style={{fontSize:10,color:T.muted}}>Available Balance</div>
+                          <div style={{fontSize:18,fontWeight:800,color:T.up}}>{acc.currency} {acc.balance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+                        </div>
+                        {linkedCards.length > 0 && (
+                          <div style={{textAlign:"right"}}>
+                            <div style={{fontSize:10,color:T.muted,marginBottom:3}}>Linked Cards</div>
+                            {linkedCards.map(c=>(
+                              <div key={c.id} style={{fontSize:11,fontWeight:600,color:T.accent}}>••{c.last4} {c.cardName}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </>
+        )}
+      </div>
+
+      {/* ── Right Panel ── */}
+      <div style={{flex:1,overflow:"hidden",background:T.bg}}>
+        {selCardData ? (
+          <CCDrawer
+            key={selCardData.id}
+            card={selCardData}
+            accounts={accounts}
+            transactions={transactions}
+            setTransactions={setTransactions}
+            setCards={setCards}
+            showToast={showToast}
+            onClose={()=>setSelCard(null)}
+          />
+        ) : (
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",flexDirection:"column",gap:12,color:T.muted}}>
+            <div style={{fontSize:48}}>💳</div>
+            <div style={{fontSize:15,fontWeight:600}}>Select a card to view details</div>
+            <div style={{fontSize:13}}>Or add a new card with the button on the left</div>
+          </div>
+        )}
+      </div>
+
+      {/* Modals */}
+      {showCardModal && editCard && (
+        <CCCardModal card={editCard} accounts={accounts} onSave={handleSaveCard} onClose={()=>{setShowCardModal(false);setEditCard(null);}}/>
+      )}
+      {showAccModal && editAcc && (
+        <CCAccountModal account={editAcc} onSave={handleSaveAcc} onClose={()=>{setShowAccModal(false);setEditAcc(null);}}/>
+      )}
+    </div>
+  );
+}
+
+
 const NAV = [
   { id: "holdings", label: "Holdings", icon: "≡", group: "Stocks & Shares" },
   { id: "chart", label: "Stock Chart", icon: "↗", group: "Stocks & Shares" },
   { id: "dividends", label: "Dividends", icon: "◎", group: "Stocks & Shares" },
   { id: "news", label: "News & Sentiment", icon: "⚡", group: "Stocks & Shares", soon: true },
   { id: "manage", label: "Manage Stocks", icon: "+", group: "Stocks & Shares" },
+  { id: "creditcards", label: "Credit Cards", icon: "💳", group: "Banking" },
   { id: "insurance", label: "Insurance", icon: "🛡", group: "Protection" },
   { id: "realestate", label: "Real Estate", icon: "🏠", group: "Protection" },
   { id: "ai", label: "AI Agent", icon: "✦", group: "Tools", soon: true },
@@ -4232,6 +5334,7 @@ const subtitles = {
   manage: "Add, sell or remove stock positions manually",
   ai: "Ask your AI agent anything about your portfolio",
   import: "Connect your broker or upload CSV data",
+  creditcards: "Credit & debit cards, limits, transactions and rewards",
   insurance: "Policies, premiums, claims and coverage overview",
   realestate: "Properties, valuations, rental income and insurance",
 };
@@ -4243,10 +5346,13 @@ export default function App() {
   const [manualDivs, setManualDivs] = useState([]);
   const [policies, setPolicies] = useState(POLICIES_INIT);
   const [properties, setProperties] = useState([
-    { id:"P001", name:"Tampines HDB", country:"Singapore", flag:"🇸🇬", type:"HDB — Resale", tenure:"99-Year Leasehold", address:"Blk 448A Tampines St 45, #08-12", postalCode:"520448", sizeSqft:1001, purchasePrice:390000, purchaseDate:"2021-03-15", currentValuation:490000, purpose:"Own Stay", isRented:false, monthlyRent:0, tenantName:"", leaseStart:"", leaseEnd:"", loanAmount:312000, interestRate:2.6, loanTenureYears:22, monthlyPayment:1565, annualTax:924, mcstFee:0, maintenanceFee:0, stampDuty:9600, agentFee:0, otherFees:3200, notes:"HDB resale. 3-room. Near Tampines MRT.", linkedInsuranceId: 7 },
-    { id:"P002", name:"One North Condo", country:"Singapore", flag:"🇸🇬", type:"Private Condo", tenure:"99-Year Leasehold", address:"1 Rochester Park, #12-08", postalCode:"139212", sizeSqft:753, purchasePrice:1050000, purchaseDate:"2021-09-01", currentValuation:1280000, purpose:"Investment / Rental", isRented:true, monthlyRent:4800, tenantName:"Mr. James Wong", leaseStart:"2025-05-01", leaseEnd:"2027-04-30", loanAmount:840000, interestRate:3.2, loanTenureYears:27, monthlyPayment:3892, annualTax:5920, mcstFee:380, maintenanceFee:0, stampDuty:34200, agentFee:4800, otherFees:5000, notes:"Investment condo. 1BR. Near one-north MRT." },
-    { id:"P003", name:"KL Mont Kiara Condo", country:"Malaysia", flag:"🇲🇾", type:"Condo / Serviced Apt", tenure:"Freehold", address:"Jalan Kiara 3, Mont Kiara, KL", postalCode:"50480", sizeSqft:1250, purchasePrice:850000, purchaseDate:"2023-06-01", currentValuation:920000, purpose:"Investment / Rental", isRented:true, monthlyRent:4200, tenantName:"Expat Family", leaseStart:"2024-01-01", leaseEnd:"2025-12-31", loanAmount:595000, interestRate:4.35, loanTenureYears:30, monthlyPayment:2960, annualTax:1200, mcstFee:450, maintenanceFee:0, stampDuty:21000, agentFee:5950, otherFees:3000, notes:"Freehold condo. Expat tenant." },
+    { id:"P001", name:"Tampines HDB", country:"Singapore", flag:"🇸🇬", type:"HDB — Resale", tenure:"99-Year Leasehold", address:"Blk 448A Tampines St 45, #08-12", postalCode:"520448", sizeSqft:1001, purchasePrice:390000, purchaseDate:"2021-03-15", currentValuation:490000, purpose:"Own Stay", isRented:false, monthlyRent:0, tenantName:"", leaseStart:"", leaseEnd:"", loanAmount:312000, interestRate:2.6, loanTenureYears:22, monthlyPayment:1565, annualTax:924, mcstFee:0, maintenanceFee:0, stampDuty:9600, agentFee:0, otherFees:3200, notes:"HDB resale. 3-room. Near Tampines MRT.", linkedInsuranceId: 7, tags:["Primary Home","HDB"] },
+    { id:"P002", name:"One North Condo", country:"Singapore", flag:"🇸🇬", type:"Private Condo", tenure:"99-Year Leasehold", address:"1 Rochester Park, #12-08", postalCode:"139212", sizeSqft:753, purchasePrice:1050000, purchaseDate:"2021-09-01", currentValuation:1280000, purpose:"Investment / Rental", isRented:true, monthlyRent:4800, tenantName:"Mr. James Wong", leaseStart:"2025-05-01", leaseEnd:"2027-04-30", loanAmount:840000, interestRate:3.2, loanTenureYears:27, monthlyPayment:3892, annualTax:5920, mcstFee:380, maintenanceFee:0, stampDuty:34200, agentFee:4800, otherFees:5000, notes:"Investment condo. 1BR. Near one-north MRT.", tags:["Investment","Tenanted"] },
+    { id:"P003", name:"KL Mont Kiara Condo", country:"Malaysia", flag:"🇲🇾", type:"Condo / Serviced Apt", tenure:"Freehold", address:"Jalan Kiara 3, Mont Kiara, KL", postalCode:"50480", sizeSqft:1250, purchasePrice:850000, purchaseDate:"2023-06-01", currentValuation:920000, purpose:"Investment / Rental", isRented:true, monthlyRent:4200, tenantName:"Expat Family", leaseStart:"2024-01-01", leaseEnd:"2025-12-31", loanAmount:595000, interestRate:4.35, loanTenureYears:30, monthlyPayment:2960, annualTax:1200, mcstFee:450, maintenanceFee:0, stampDuty:21000, agentFee:5950, otherFees:3000, notes:"Freehold condo. Expat tenant.", tags:["Overseas","Freehold"] },
   ]);
+  const [ccCards, setCCCards] = useState(CC_CARDS_INIT);
+  const [ccAccounts, setCCAccounts] = useState(CC_ACCOUNTS_INIT);
+  const [ccTransactions, setCCTransactions] = useState(CC_TRANSACTIONS_INIT);
   const [transactions, setTransactions] = useState([
     { id: 1,  sym: "AAPL",  txType: "Buy",      date: "2025-01-12", qty: "45",  price: "152.30", fees: "1.50", currency: "SGD", broker: "Tiger Brokers", notes: "" },
     { id: 2,  sym: "MSFT",  txType: "Buy",      date: "2025-02-03", qty: "22",  price: "310.40", fees: "1.20", currency: "SGD", broker: "IBKR",          notes: "" },
@@ -4287,6 +5393,7 @@ export default function App() {
     if (page === "ai") return <AIScreen />;
     if (page === "manage") return <ManageScreen holdings={holdings} setHoldings={setHoldings} transactions={transactions} setTransactions={setTransactions} showToast={showToast} />;
     if (page === "import") return <ImportDataScreen />;
+    if (page === "creditcards") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} showToast={showToast} />;
     if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} showToast={showToast} />;
     if (page === "realestate") return <RealEstateScreen properties={properties} setProperties={setProperties} policies={policies} showToast={showToast} />;
     return <div style={{ color: T.muted, fontSize: 13 }}>Coming soon.</div>;
@@ -4370,6 +5477,16 @@ export default function App() {
 
         {/* Page content */}
         {page === "realestate" ? (
+          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minHeight: 0 }}>
+            <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
+              <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
+              <p style={{ fontSize: 13, color: T.muted, margin: "0 0 14px" }}>{subtitles[page]}</p>
+            </div>
+            <div style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
+              {renderScreen()}
+            </div>
+          </div>
+        ) : page === "creditcards" ? (
           <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minHeight: 0 }}>
             <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
               <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
