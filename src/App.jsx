@@ -2843,7 +2843,7 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
   );
 }
 
-function InsuranceScreen({ policies, setPolicies, showToast }) {
+function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToast }) {
   const [insTab, setInsTab] = useState("overview");
   const [filterType, setFilterType] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
@@ -2856,6 +2856,9 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
   const [txSearch, setTxSearch] = useState("");
   const [txFilter, setTxFilter] = useState("All");
   const [txSort, setTxSort] = useState("desc");
+  const [showAddTxModal, setShowAddTxModal] = useState(false);
+  const [showClosureModal, setShowClosureModal] = useState(false);
+  const [closureTarget, setClosureTarget] = useState(null);
 
   // ── Empty form
   const EMPTY_POLICY = {
@@ -2931,6 +2934,141 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
   const StatusChip = ({ status }) => {
     const cfg = { Active: [T.upBg, T.up], Lapsed: [T.downBg, T.down], Surrendered: [T.warnBg, T.warn], Matured: [T.accentBg, T.accent], Pending: [T.warnBg, T.warn], Cancelled: [T.downBg, T.down] }[status] || [T.inputBg, T.muted];
     return <Badge bg={cfg[0]} color={cfg[1]}>{status}</Badge>;
+  };
+
+  // ── Add premium transaction handler ──────────────────────────
+  const handleAddPremiumTx = (polId, tx) => {
+    setPolicies(prev => prev.map(p => p.id === polId
+      ? { ...p,
+          premiumTransactions: [...(p.premiumTransactions || []), tx],
+          totalPremPaid: (p.totalPremPaid || 0) + (tx.status === "Paid" ? parseFloat(tx.amount) || 0 : 0),
+        }
+      : p
+    ));
+    if (tx.linkedAccountId && tx.status === "Paid" && setAccounts) {
+      const totalDeducted = parseFloat(tx.amount || 0) + parseFloat(tx.fees || 0);
+      setAccounts(prev => prev.map(a =>
+        a.id === tx.linkedAccountId ? { ...a, balance: Math.max(0, a.balance - totalDeducted) } : a
+      ));
+    }
+    setShowAddTxModal(false);
+    showToast("Premium payment recorded", "success");
+  };
+
+  // ── Add Premium Transaction Modal ────────────────────────────
+  const AddPremiumTxModal = ({ polId, premium, onClose }) => {
+    const [f, setFLocal] = useState({
+      date: new Date().toISOString().slice(0,10),
+      amount: premium || "",
+      fees: "",
+      method: "GIRO",
+      linkedAccountId: "",
+      ref: "REF-" + Date.now().toString().slice(-6),
+      status: "Paid",
+      notes: "",
+    });
+    const upd = (k, v) => setFLocal(prev => ({...prev, [k]: v}));
+    const selectedAcc = (accounts || []).find(a => a.id === f.linkedAccountId);
+    const totalCost = (parseFloat(f.amount)||0) + (parseFloat(f.fees)||0);
+    const hasSufficientFunds = !selectedAcc || selectedAcc.balance >= totalCost;
+    const useAccount = f.method === "From Account";
+    const iStyle = { width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none" };
+    const canSubmit = f.amount && f.date && (!useAccount || (f.linkedAccountId && hasSufficientFunds));
+
+    return (
+      <>
+        <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:500}}/>
+        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:501,background:T.bg,border:`1px solid ${T.border}`,borderRadius:16,width:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.22)"}}>
+          <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
+            <div style={{fontSize:15,fontWeight:700}}>Record Premium Payment</div>
+            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted}}>×</button>
+          </div>
+          <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:13}}>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div><Label>Payment Date</Label>
+                <input type="date" value={f.date} onChange={e=>upd("date",e.target.value)} style={iStyle}/></div>
+              <div><Label>Status</Label>
+                <select value={f.status} onChange={e=>upd("status",e.target.value)} style={iStyle}>
+                  <option>Paid</option><option>Pending</option><option>Overdue</option><option>Waived</option>
+                </select></div>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div><Label required>Premium Amount (S$)</Label>
+                <input type="number" value={f.amount} onChange={e=>upd("amount",e.target.value)} placeholder="0.00" style={iStyle}/></div>
+              <div><Label>Fees (optional, S$)</Label>
+                <input type="number" value={f.fees} onChange={e=>upd("fees",e.target.value)} placeholder="e.g. 2.50 service fee" style={iStyle}/></div>
+            </div>
+
+            {parseFloat(f.fees) > 0 && (
+              <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:8,padding:"8px 12px",fontSize:12,color:T.warn}}>
+                Total deducted: S${totalCost.toLocaleString(undefined,{minimumFractionDigits:2})} (premium S${parseFloat(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})} + fees S${parseFloat(f.fees||0).toLocaleString(undefined,{minimumFractionDigits:2})})
+              </div>
+            )}
+
+            <div><Label>Payment Method</Label>
+              <select value={f.method} onChange={e=>upd("method",e.target.value)} style={iStyle}>
+                {["GIRO","Bank Transfer","PayNow","Credit Card","Cheque","Cash","From Account"].map(m=><option key={m}>{m}</option>)}
+              </select></div>
+
+            {useAccount && (
+              <div>
+                <Label required>Select Account</Label>
+                <select value={f.linkedAccountId} onChange={e=>upd("linkedAccountId",e.target.value)}
+                  style={{...iStyle, borderColor: f.linkedAccountId ? T.border : "#FECACA"}}>
+                  <option value="">— Choose savings or checking account —</option>
+                  {(accounts||[]).map(a=>(
+                    <option key={a.id} value={a.id}>
+                      {a.bank} {a.accountName} ({a.accountType} ••{a.last4}) — {a.currency} {a.balance.toLocaleString(undefined,{minimumFractionDigits:2})} available
+                    </option>
+                  ))}
+                </select>
+                {selectedAcc && (
+                  <div style={{marginTop:6,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,padding:"8px 12px",borderRadius:8,
+                    background: hasSufficientFunds ? T.upBg : T.downBg,
+                    border: `1px solid ${hasSufficientFunds ? "#BBF7D0" : "#FECACA"}`}}>
+                    <span style={{fontWeight:600, color: hasSufficientFunds ? T.up : T.down}}>
+                      {hasSufficientFunds ? "✅ Sufficient funds" : "❌ Insufficient funds"}
+                    </span>
+                    <span style={{color:T.muted}}>
+                      Balance: S${selectedAcc.balance.toLocaleString(undefined,{minimumFractionDigits:2})} → After: S${Math.max(0, selectedAcc.balance - totalCost).toLocaleString(undefined,{minimumFractionDigits:2})}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div><Label>Reference No.</Label>
+              <input value={f.ref} onChange={e=>upd("ref",e.target.value)} placeholder="e.g. REF-123456" style={iStyle}/></div>
+
+            <div><Label>Notes (optional)</Label>
+              <textarea value={f.notes} onChange={e=>upd("notes",e.target.value)} rows={2}
+                placeholder="e.g. Annual renewal, includes rider premium"
+                style={{...iStyle, resize:"vertical"}}/></div>
+
+          </div>
+          <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+            <button
+              disabled={!canSubmit}
+              onClick={()=>handleAddPremiumTx(polId, {
+                id:"TX"+Date.now(), date:f.date,
+                amount: parseFloat(f.amount)||0,
+                fees: parseFloat(f.fees)||0,
+                method: useAccount ? ("From Account (" + (selectedAcc ? selectedAcc.bank+" "+selectedAcc.accountName : "") + ")") : f.method,
+                linkedAccountId: useAccount ? f.linkedAccountId : null,
+                ref: f.ref, status: f.status, notes: f.notes,
+              })}
+              style={{flex:1, background:canSubmit?T.selected:T.inputBg, color:canSubmit?T.selectedText:T.dim,
+                border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:600,
+                cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+              Record Payment
+            </button>
+            <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"11px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+          </div>
+        </div>
+      </>
+    );
   };
 
   return (
@@ -3095,9 +3233,12 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
             const cv = (pol.cashValue||0) + (pol.ilpFundValue||0);
             return (
               <div key={pol.id} onClick={() => { setSelectedPolicy(pol); setDetailTab("overview"); setTxSearch(""); setTxFilter("All"); setTxSort("desc"); }}
-                style={{ display: "grid", gridTemplateColumns: "2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.9fr", padding: "13px 20px", borderBottom: i < filtered.length-1 ? `1px solid ${T.border}` : "none", alignItems: "center", cursor: "pointer" }}
+                style={{ display: "grid", gridTemplateColumns: "2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.9fr", padding: "13px 20px", borderBottom: i < filtered.length-1 ? `1px solid ${T.border}` : "none", alignItems: "center", cursor: "pointer",
+                  opacity: pol.status === "Lapsed" || pol.status === "Cancelled" || pol.status === "Surrendered" ? 0.5 : 1,
+                  background: pol.status === "Lapsed" || pol.status === "Cancelled" ? T.sidebar : "",
+                }}
                 onMouseEnter={e => e.currentTarget.style.background = T.hover}
-                onMouseLeave={e => e.currentTarget.style.background = ""}>
+                onMouseLeave={e => e.currentTarget.style.background = (pol.status === "Lapsed" || pol.status === "Cancelled" ? T.sidebar : "")}>
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   <div style={{ width: 34, height: 34, borderRadius: 9, background: tc.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0 }}>{tc.icon}</div>
                   <div>
@@ -3143,7 +3284,7 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }}
             onClick={e => { if (e.target === e.currentTarget) { setSelectedPolicy(null); setTxSearch(""); setTxFilter("All"); setTxSort("desc"); } }}>
-            <div style={{ width: 580, height: "100vh", background: T.bg, overflowY: "auto", boxShadow: "-4px 0 32px rgba(0,0,0,0.15)", display: "flex", flexDirection: "column" }}>
+            <div style={{ width: 580, height: "100vh", background: T.bg, overflow: "hidden", boxShadow: "-4px 0 32px rgba(0,0,0,0.15)", display: "flex", flexDirection: "column" }}>
 
               {/* Drawer header */}
               <div style={{ padding: "20px 24px 16px", borderBottom: `1px solid ${T.border}`, background: T.sidebar, flexShrink: 0 }}>
@@ -3155,6 +3296,20 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <StatusChip status={pol.status} />
+                    {pol.status === "Active" && (
+                      <button
+                        onClick={() => { setClosureTarget(pol.id); setShowClosureModal(true); }}
+                        style={{ background: T.downBg, border: `1px solid #FECACA`, borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: T.down, fontFamily: "inherit" }}>
+                        Close Policy
+                      </button>
+                    )}
+                    {pol.status === "Lapsed" && (
+                      <button
+                        onClick={() => { setPolicies(prev => prev.map(p => p.id === pol.id ? { ...p, status: "Active" } : p)); showToast("Policy reactivated", "success"); }}
+                        style={{ background: T.upBg, border: `1px solid #BBF7D0`, borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: T.up, fontFamily: "inherit" }}>
+                        Reactivate
+                      </button>
+                    )}
                     <button onClick={() => { setSelectedPolicy(null); setTxSearch(""); setTxFilter("All"); setTxSort("desc"); }} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 7, width: 30, height: 30, cursor: "pointer", fontSize: 16, color: T.muted, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                   </div>
                 </div>
@@ -3197,7 +3352,18 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
               </div>
 
               {/* Drawer body */}
-              <div style={{ flex: 1, padding: "20px 24px", overflowY: "auto" }}>
+              <div style={{ flex: 1, padding: "20px 24px", overflowY: "auto", minHeight: 0 }}>
+
+                {/* Lapsed / closed warning banner */}
+                {(pol.status === "Lapsed" || pol.status === "Cancelled" || pol.status === "Surrendered") && (
+                  <div style={{ background: T.downBg, border: `1px solid #FECACA`, borderRadius: 10, padding: "12px 16px", display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
+                    <span style={{ fontSize: 20 }}>🚫</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: T.down }}>This policy is {pol.status}</div>
+                      <div style={{ fontSize: 12, color: T.down, marginTop: 2 }}>Coverage has ended. No new claims can be filed. Records are preserved for reference.</div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Overview tab */}
                 {detailTab === "overview" && (
@@ -3220,6 +3386,15 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                       <div style={{ background: T.accentBg, border: `1px solid ${T.accent}30`, borderRadius: 9, padding: "12px 14px" }}>
                         <div style={{ fontSize: 11, color: T.accent, fontWeight: 600, marginBottom: 4 }}>📝 Notes</div>
                         <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{pol.notes}</div>
+                      </div>
+                    )}
+                    {pol.closureComment && (
+                      <div style={{ background: T.downBg, border: `1px solid #FECACA`, borderRadius: 9, padding: "12px 14px" }}>
+                        <div style={{ fontSize: 11, color: T.down, fontWeight: 600, marginBottom: 6, display: "flex", justifyContent: "space-between" }}>
+                          <span>🚫 Closure Reason</span>
+                          {pol.closureDate && <span style={{ fontWeight: 400, color: T.muted }}>{pol.closureDate}</span>}
+                        </div>
+                        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{pol.closureComment}</div>
                       </div>
                     )}
                     {(pol.riders || []).length > 0 && (
@@ -3460,7 +3635,21 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                           title="Toggle date sort">
                           {txSort === "desc" ? "↓ Newest" : "↑ Oldest"}
                         </button>
+                        {pol.status === "Active" && (
+                          <button onClick={() => setShowAddTxModal(true)}
+                            style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: T.selected, color: T.selectedText, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+                            + Record
+                          </button>
+                        )}
                       </div>
+
+                      {showAddTxModal && (
+                        <AddPremiumTxModal
+                          polId={pol.id}
+                          premium={pol.premium}
+                          onClose={() => setShowAddTxModal(false)}
+                        />
+                      )}
 
                       {/* Year-grouped transaction list */}
                       {filtered.length === 0 ? (
@@ -3516,6 +3705,7 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
                                       </div>
                                       <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
                                         <span style={{ fontSize: 10, color: T.dim, background: T.inputBg, borderRadius: 5, padding: "2px 7px", fontFamily: "monospace" }}>{tx.ref}</span>
+                                        {tx.fees > 0 && <span style={{ fontSize: 10, color: T.warn, background: T.warnBg, borderRadius: 5, padding: "2px 7px" }}>+ S${parseFloat(tx.fees).toLocaleString(undefined,{minimumFractionDigits:2})} fees</span>}
                                         {tx.notes && <span style={{ fontSize: 11, color: T.muted, fontStyle: "italic" }}>{tx.notes}</span>}
                                       </div>
                                     </div>
@@ -3569,6 +3759,66 @@ function InsuranceScreen({ policies, setPolicies, showToast }) {
             </div>
           </div>
         );
+      })()}
+
+      {/* ══ CLOSURE COMMENT MODAL ═══════════════════════════════ */}
+      {showClosureModal && (() => {
+        const ClosureModal = () => {
+          const [comment, setComment] = useState("");
+          const handleConfirm = () => {
+            if (!comment.trim()) return;
+            setPolicies(prev => prev.map(p => p.id === closureTarget
+              ? { ...p, status: "Lapsed", closureComment: comment.trim(), closureDate: new Date().toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" }) }
+              : p
+            ));
+            showToast("Policy closed and marked as Lapsed", "success");
+            setShowClosureModal(false);
+            setClosureTarget(null);
+          };
+          return (
+            <>
+              <div onClick={() => { setShowClosureModal(false); setClosureTarget(null); }}
+                style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 400 }}/>
+              <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 401,
+                background: T.bg, border: `1px solid ${T.border}`, borderRadius: 14, width: 440,
+                boxShadow: "0 20px 60px rgba(0,0,0,0.22)" }}>
+                <div style={{ padding: "18px 22px", borderBottom: `1px solid ${T.border}` }}>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>Close Policy</div>
+                  <div style={{ fontSize: 12, color: T.muted, marginTop: 3 }}>This will mark the policy as Lapsed. Please provide a reason.</div>
+                </div>
+                <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ background: T.downBg, border: `1px solid #FECACA`, borderRadius: 9, padding: "10px 14px", fontSize: 12, color: T.down }}>
+                    ⚠️ Once closed, the policy will be disabled and no new claims can be filed. This can be reversed via Reactivate.
+                  </div>
+                  <div>
+                    <Label required>Closure Reason / Comment</Label>
+                    <textarea
+                      value={comment}
+                      onChange={e => setComment(e.target.value)}
+                      rows={4}
+                      placeholder="e.g. Surrendered policy due to financial restructuring. Surrender value of S$34,200 received on 14 Mar 2026."
+                      style={{ width: "100%", boxSizing: "border-box", background: T.inputBg, border: `1px solid ${comment.trim() ? T.border : "#FECACA"}`, borderRadius: 8, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none", resize: "vertical" }}
+                    />
+                    {!comment.trim() && <div style={{ fontSize: 11, color: T.down, marginTop: 4 }}>A reason is required to close the policy.</div>}
+                  </div>
+                </div>
+                <div style={{ padding: "14px 22px", borderTop: `1px solid ${T.border}`, background: T.sidebar, display: "flex", gap: 10 }}>
+                  <button onClick={handleConfirm} disabled={!comment.trim()}
+                    style={{ flex: 1, background: comment.trim() ? T.down : T.inputBg, color: comment.trim() ? "#fff" : T.dim,
+                      border: "none", borderRadius: 9, padding: "11px", fontSize: 13, fontWeight: 600,
+                      cursor: comment.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+                    Confirm Close Policy
+                  </button>
+                  <button onClick={() => { setShowClosureModal(false); setClosureTarget(null); }}
+                    style={{ background: "transparent", color: T.muted, border: `1px solid ${T.border}`, borderRadius: 9, padding: "11px 20px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </>
+          );
+        };
+        return <ClosureModal/>;
       })()}
 
       {/* ══ ADD POLICY MODAL ═════════════════════════════════════ */}
@@ -4326,9 +4576,8 @@ const CATEGORY_ICONS = {
 const EMPTY_CARD = {
   id:"", bank:"DBS", cardName:"", cardType:"Credit",
   network:"Visa", holderName:"dilwyn", last4:"", expiryMM:"12", expiryYY:"27",
-  creditLimit:0, currentBalance:0, minimumPayment:0, paymentDueDate:"",
-  apr:26.9, annualFee:0, rewardProgram:"", rewardRate:"",
-  cashbackRate:0, milesRate:0,
+  creditLimit:0, currentBalance:0, minimumPayment:0, dueDayOfMonth:28,
+  apr:26.9, annualFee:0,
   companyName:"", companyUEN:"",
   linkedAccountId:null, isActive:true, notes:"",
 };
@@ -4348,58 +4597,51 @@ const CC_CARDS_INIT = [
   {
     id:"CC001", bank:"DBS", cardName:"DBS Live Fresh", cardType:"Credit",
     network:"Visa", holderName:"dilwyn", last4:"4521", expiryMM:"08", expiryYY:"27",
-    creditLimit:12000, currentBalance:3240.50, minimumPayment:50, paymentDueDate:"2026-03-28",
-    apr:26.9, annualFee:192.60, rewardProgram:"DBS Points", rewardRate:"1pt per S$5",
-    cashbackRate:5, milesRate:0, linkedAccountId:null, isActive:true,
+    creditLimit:12000, currentBalance:3240.50, minimumPayment:50, dueDayOfMonth:28,
+    apr:26.9, annualFee:192.60, linkedAccountId:null, isActive:true,
     notes:"Online & Contactless 5% cashback. Waived if spend S$25k/yr.",
   },
   {
     id:"CC002", bank:"OCBC", cardName:"OCBC 365", cardType:"Credit",
     network:"Mastercard", holderName:"dilwyn", last4:"8834", expiryMM:"11", expiryYY:"26",
-    creditLimit:20000, currentBalance:7812.00, minimumPayment:156.24, paymentDueDate:"2026-04-05",
-    apr:26.9, annualFee:192.60, rewardProgram:"OCBC$ Rebate", rewardRate:"3% dining, 5% transport",
-    cashbackRate:3, milesRate:0, linkedAccountId:null, isActive:true,
+    creditLimit:20000, currentBalance:7812.00, minimumPayment:156.24, dueDayOfMonth:5,
+    apr:26.9, annualFee:192.60, linkedAccountId:null, isActive:true,
     notes:"6% cashback on weekends. Min spend S$800/mo.",
   },
   {
     id:"CC003", bank:"UOB", cardName:"UOB PRVI Miles", cardType:"Credit",
     network:"Visa", holderName:"dilwyn", last4:"2290", expiryMM:"03", expiryYY:"28",
-    creditLimit:30000, currentBalance:1545.00, minimumPayment:30.90, paymentDueDate:"2026-04-10",
-    apr:26.9, annualFee:256.80, rewardProgram:"KrisFlyer Miles", rewardRate:"1.4 miles per S$1 local",
-    cashbackRate:0, milesRate:1.4, linkedAccountId:null, isActive:true,
+    creditLimit:30000, currentBalance:1545.00, minimumPayment:30.90, dueDayOfMonth:10,
+    apr:26.9, annualFee:256.80, linkedAccountId:null, isActive:true,
     notes:"3 miles per S$1 on overseas. Good for travel.",
   },
   {
     id:"CC004", bank:"Standard Chartered", cardName:"SC Simply Cash", cardType:"Credit",
     network:"Visa", holderName:"dilwyn", last4:"6601", expiryMM:"06", expiryYY:"27",
-    creditLimit:15000, currentBalance:0, minimumPayment:0, paymentDueDate:"2026-04-15",
-    apr:26.9, annualFee:192.60, rewardProgram:"Cashback", rewardRate:"1.5% unlimited cashback",
-    cashbackRate:1.5, milesRate:0, linkedAccountId:null, isActive:true,
+    creditLimit:15000, currentBalance:0, minimumPayment:0, dueDayOfMonth:15,
+    apr:26.9, annualFee:192.60, linkedAccountId:null, isActive:true,
     notes:"No min spend, no cap. Good everyday card.",
   },
   {
     id:"CC007", bank:"American Express", cardName:"Amex Business Gold", cardType:"Commercial",
     network:"Amex", holderName:"dilwyn", last4:"3008", expiryMM:"09", expiryYY:"27",
-    creditLimit:50000, currentBalance:12480.00, minimumPayment:249.60, paymentDueDate:"2026-04-01",
-    apr:26.9, annualFee:321, rewardProgram:"Membership Rewards", rewardRate:"2 pts per S$1 business spend",
-    cashbackRate:0, milesRate:2, linkedAccountId:null, isActive:true,
+    creditLimit:50000, currentBalance:12480.00, minimumPayment:249.60, dueDayOfMonth:1,
+    apr:26.9, annualFee:321, linkedAccountId:null, isActive:true,
     companyName:"Dilwyn Ventures Pte Ltd", companyUEN:"202401234Z",
     notes:"Corporate card. Used for business travel and vendor payments.",
   },
   {
     id:"CC005", bank:"DBS", cardName:"DBS Visa Debit", cardType:"Debit",
     network:"Visa", holderName:"dilwyn", last4:"2341", expiryMM:"12", expiryYY:"26",
-    creditLimit:0, currentBalance:0, minimumPayment:0, paymentDueDate:"",
-    apr:0, annualFee:0, rewardProgram:"", rewardRate:"",
-    cashbackRate:0, milesRate:0, linkedAccountId:"ACC001", isActive:true,
+    creditLimit:0, currentBalance:0, minimumPayment:0, dueDayOfMonth:28,
+    apr:0, annualFee:0, linkedAccountId:"ACC001", isActive:true,
     notes:"Linked to DBS Multiplier account.",
   },
   {
     id:"CC006", bank:"OCBC", cardName:"OCBC Frank Debit", cardType:"Debit",
     network:"Mastercard", holderName:"dilwyn", last4:"8812", expiryMM:"05", expiryYY:"27",
-    creditLimit:0, currentBalance:0, minimumPayment:0, paymentDueDate:"",
-    apr:0, annualFee:0, rewardProgram:"", rewardRate:"",
-    cashbackRate:0, milesRate:0, linkedAccountId:"ACC002", isActive:true,
+    creditLimit:0, currentBalance:0, minimumPayment:0, dueDayOfMonth:28,
+    apr:0, annualFee:0, linkedAccountId:"ACC002", isActive:true,
     notes:"Linked to OCBC 360 Account.",
   },
 ];
@@ -4555,16 +4797,19 @@ function CCCardModal({ card, accounts, onSave, onClose }) {
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <CIn label="Min. Payment (S$)" fkey="minimumPayment" type="number" placeholder="50"/>
-                <CIn label="Payment Due Date" fkey="paymentDueDate" type="date"/>
+                <div>
+                  <Label>Due Day of Month</Label>
+                  <select value={f.dueDayOfMonth||28} onChange={e=>setF("dueDayOfMonth",parseInt(e.target.value))}
+                    style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                    {Array.from({length:28},(_,i)=>i+1).map(d=>(
+                      <option key={d} value={d}>Day {d}{d===1?"st":d===2?"nd":d===3?"rd":"th"} of every month</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <CIn label="APR (%)" fkey="apr" type="number" placeholder="26.9"/>
                 <CIn label="Annual Fee (S$)" fkey="annualFee" type="number" placeholder="192.60"/>
-              </div>
-              <CIn label="Reward Program" fkey="rewardProgram" placeholder="e.g. KrisFlyer, DBS Points, Cashback"/>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <CIn label="Cashback Rate (%)" fkey="cashbackRate" type="number" placeholder="1.5"/>
-                <CIn label="Miles Rate (per S$1)" fkey="milesRate" type="number" placeholder="1.4"/>
               </div>
             </>
           )}
@@ -4588,44 +4833,177 @@ function CCCardModal({ card, accounts, onSave, onClose }) {
 }
 
 // ── Add Transaction Modal ─────────────────────────────────────
-function CCTxnModal({ cardId, onSave, onClose }) {
-  const [f, setFState] = useState({ cardId, date: new Date().toISOString().slice(0,10), description:"", category:"Dining", amount:"", type:"Debit" });
+function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, onSave, onClose }) {
+  const [f, setFState] = useState({
+    cardId, date: new Date().toISOString().slice(0,10),
+    description:"", category:"Dining", amount:"", fees:"",
+    type:"Debit", linkedAccountId:"", ref:"", notes:"",
+  });
   const setF = (k,v) => setFState(prev=>({...prev,[k]:v}));
+  const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+
+  const isRepayment = f.type === "Repayment";
+  const selectedAcc = isRepayment && accounts ? accounts.find(a => a.id === f.linkedAccountId) : null;
+  const repayAmt = parseFloat(f.amount)||0;
+  const feesAmt  = parseFloat(f.fees)||0;
+  const totalCost = repayAmt + feesAmt;
+  const hasFunds = !selectedAcc || selectedAcc.balance >= totalCost;
+  const newBalance = card ? Math.max(0, (card.currentBalance||0) - repayAmt) : 0;
+  const newUtil = card && card.creditLimit > 0 ? (newBalance / card.creditLimit * 100) : 0;
+
+  const canSubmit = isRepayment
+    ? (repayAmt > 0 && f.linkedAccountId && hasFunds)
+    : (f.description && f.amount);
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    if (isRepayment) {
+      // Deduct from account
+      if (setAccounts) {
+        setAccounts(prev => prev.map(a =>
+          a.id === f.linkedAccountId ? {...a, balance: Math.max(0, a.balance - totalCost)} : a
+        ));
+      }
+      // Reduce card balance
+      if (setCards) {
+        setCards(prev => prev.map(c =>
+          c.id === cardId ? {...c, currentBalance: Math.max(0, c.currentBalance - repayAmt)} : c
+        ));
+      }
+      onSave({
+        id:"T"+Date.now(), cardId, date:f.date,
+        description: selectedAcc ? ("Payment from "+selectedAcc.bank+" "+selectedAcc.accountName) : "Card Payment",
+        category:"Other", amount:repayAmt, fees:feesAmt, type:"Credit",
+      });
+    } else {
+      onSave({...f, id:"T"+Date.now(), amount:parseFloat(f.amount), fees:feesAmt});
+    }
+  };
+
   return (
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:400}}/>
-      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:420,boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
-        <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,fontSize:14,fontWeight:700}}>Add Transaction</div>
+      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,fontSize:14,fontWeight:700,position:"sticky",top:0,background:T.bg,zIndex:1}}>
+          {isRepayment ? "Record Card Repayment" : "Add Transaction"}
+          {isRepayment && card && <div style={{fontSize:11,color:T.muted,fontWeight:400,marginTop:2}}>Outstanding: S${(card.currentBalance||0).toLocaleString(undefined,{minimumFractionDigits:2})}</div>}
+        </div>
         <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:12}}>
+
+          {/* Date + Type */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div><Label>Date</Label>
-              <input type="date" value={f.date} onChange={e=>setF("date",e.target.value)}
-                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+              <input type="date" value={f.date} onChange={e=>setF("date",e.target.value)} style={iStyle}/></div>
             <div><Label>Type</Label>
-              <select value={f.type} onChange={e=>setF("type",e.target.value)}
-                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
-                <option>Debit</option><option>Credit</option><option>Refund</option>
+              <select value={f.type} onChange={e=>setF("type",e.target.value)} style={iStyle}>
+                <option>Debit</option><option>Credit</option><option>Refund</option><option>Repayment</option>
               </select></div>
           </div>
-          <div><Label>Description</Label>
-            <input value={f.description} onChange={e=>setF("description",e.target.value)} placeholder="e.g. Grab Food"
-              style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+
+          {/* Repayment-specific fields */}
+          {isRepayment && card && (
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {[
+                {label:"Min Payment", val:card.minimumPayment||0},
+                {label:"Half Balance", val:Math.round((card.currentBalance||0)/2*100)/100},
+                {label:"Full Balance", val:card.currentBalance||0},
+              ].filter(q=>q.val>0).map(q=>(
+                <button key={q.label} onClick={()=>setF("amount",q.val)}
+                  style={{flex:1,padding:"7px 8px",borderRadius:8,border:`1px solid ${parseFloat(f.amount)===q.val?T.selected:T.border}`,
+                    background:parseFloat(f.amount)===q.val?T.selected:"transparent",
+                    color:parseFloat(f.amount)===q.val?T.selectedText:T.muted,
+                    cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:600,textAlign:"center"}}>
+                  {q.label}<br/><span style={{fontSize:10,opacity:0.8}}>S${q.val.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Description (hidden for repayments) */}
+          {!isRepayment && (
+            <div><Label>Description</Label>
+              <input value={f.description} onChange={e=>setF("description",e.target.value)} placeholder="e.g. Grab Food" style={iStyle}/></div>
+          )}
+
+          {/* Amount + Fees */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><Label required>{isRepayment?"Repayment Amount (S$)":"Amount (S$)"}</Label>
+              <input type="number" value={f.amount} onChange={e=>setF("amount",e.target.value)} placeholder="0.00" style={iStyle}/></div>
+            <div><Label>Fees (optional, S$)</Label>
+              <input type="number" value={f.fees} onChange={e=>setF("fees",e.target.value)} placeholder="e.g. 0.50" style={iStyle}/></div>
+          </div>
+
+          {feesAmt > 0 && (
+            <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:8,padding:"8px 12px",fontSize:12,color:T.warn}}>
+              Total deducted: S${totalCost.toLocaleString(undefined,{minimumFractionDigits:2})} (amount S${repayAmt.toLocaleString(undefined,{minimumFractionDigits:2})} + fees S${feesAmt.toLocaleString(undefined,{minimumFractionDigits:2})})
+            </div>
+          )}
+
+          {/* Category — only for non-repayment */}
+          {!isRepayment && (
             <div><Label>Category</Label>
-              <select value={f.category} onChange={e=>setF("category",e.target.value)}
-                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+              <select value={f.category} onChange={e=>setF("category",e.target.value)} style={iStyle}>
                 {TXN_CATEGORIES.map(c=><option key={c}>{c}</option>)}
               </select></div>
-            <div><Label>Amount (S$)</Label>
-              <input type="number" value={f.amount} onChange={e=>setF("amount",e.target.value)} placeholder="0.00"
-                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
-          </div>
+          )}
+
+          {/* Account selector — only for repayments */}
+          {isRepayment && (
+            <div>
+              <Label required>Pay From Account</Label>
+              <select value={f.linkedAccountId} onChange={e=>setF("linkedAccountId",e.target.value)}
+                style={{...iStyle, borderColor:f.linkedAccountId?T.border:"#FECACA"}}>
+                <option value="">— Choose savings or checking account —</option>
+                {(accounts||[]).map(a=>(
+                  <option key={a.id} value={a.id}>
+                    {a.bank} {a.accountName} ({a.accountType} ••{a.last4}) — {a.currency} {a.balance.toLocaleString(undefined,{minimumFractionDigits:2})} available
+                  </option>
+                ))}
+              </select>
+              {selectedAcc && (
+                <div style={{marginTop:6,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",borderRadius:8,fontSize:12,
+                  background:hasFunds?T.upBg:T.downBg, border:`1px solid ${hasFunds?"#BBF7D0":"#FECACA"}`}}>
+                  <span style={{fontWeight:600,color:hasFunds?T.up:T.down}}>{hasFunds?"✅ Sufficient funds":"❌ Insufficient funds"}</span>
+                  <span style={{color:T.muted}}>S${selectedAcc.balance.toLocaleString(undefined,{minimumFractionDigits:2})} → S${Math.max(0,selectedAcc.balance-totalCost).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* After repayment preview */}
+          {isRepayment && repayAmt > 0 && card && (
+            <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px"}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:8}}>AFTER REPAYMENT</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {[
+                  {label:"New Balance",   value:`S$${newBalance.toLocaleString(undefined,{minimumFractionDigits:2})}`,        color:newBalance===0?T.up:T.down},
+                  {label:"New Available", value:`S$${((card.creditLimit||0)-newBalance).toLocaleString(undefined,{minimumFractionDigits:2})}`, color:T.up},
+                  {label:"Utilisation",   value:`${newUtil.toFixed(1)}%`,                                                     color:newUtil>70?T.down:T.up},
+                ].map(s=>(
+                  <div key={s.label} style={{background:T.inputBg,borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+                    <div style={{fontSize:10,color:T.muted,marginBottom:2}}>{s.label}</div>
+                    <div style={{fontSize:12,fontWeight:800,color:s.color}}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+              {newBalance===0 && <div style={{marginTop:8,textAlign:"center",fontSize:12,fontWeight:600,color:T.up}}>🎉 Card will be fully paid off!</div>}
+            </div>
+          )}
+
+          {/* Reference + Notes */}
+          <div><Label>Reference No. (optional)</Label>
+            <input value={f.ref||""} onChange={e=>setF("ref",e.target.value)} placeholder="e.g. REF-123456"
+              style={iStyle}/></div>
+          <div><Label>Notes (optional)</Label>
+            <textarea value={f.notes||""} onChange={e=>setF("notes",e.target.value)} rows={2}
+              placeholder="e.g. Monthly bill, reimbursement pending"
+              style={{...iStyle, resize:"vertical"}}/></div>
+
         </div>
-        <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10}}>
-          <button onClick={()=>{ if(f.description&&f.amount) onSave({...f,id:"T"+Date.now(),amount:parseFloat(f.amount)}); }}
-            disabled={!f.description||!f.amount}
-            style={{flex:1,background:f.description&&f.amount?T.selected:T.inputBg,color:f.description&&f.amount?T.selectedText:T.dim,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:f.description&&f.amount?"pointer":"not-allowed",fontFamily:"inherit"}}>
-            Add Transaction
+        <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+          <button onClick={handleSubmit} disabled={!canSubmit}
+            style={{flex:1,background:canSubmit?T.selected:T.inputBg,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            {isRepayment?"Record Repayment":"Add Transaction"}
           </button>
           <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
         </div>
@@ -4686,7 +5064,7 @@ function CCAccountModal({ account, onSave, onClose }) {
 }
 
 // ── Card Detail Drawer ────────────────────────────────────────
-function CCDrawer({ card, accounts, transactions, setTransactions, setCards, showToast, onClose }) {
+function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, setCards, showToast, onClose }) {
   const [tab, setTab] = useState("overview");
   const [showTxnModal, setShowTxnModal] = useState(false);
   const [catFilter, setCatFilter] = useState("All");
@@ -4730,15 +5108,24 @@ function CCDrawer({ card, accounts, transactions, setTransactions, setCards, sho
     showToast("Transaction removed","success");
   };
 
-  const TABS = isDebit
-    ? [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"}]
-    : [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"},{id:"benefits",label:"Benefits & Rewards"}];
+  const TABS = [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"}];
 
-  const daysUntilDue = (() => {
-    if(!card.paymentDueDate) return null;
-    const diff = Math.ceil((new Date(card.paymentDueDate)-new Date())/(1000*60*60*24));
-    return diff;
+  const nextDueDate = (() => {
+    if(!card.dueDayOfMonth) return null;
+    const today = new Date();
+    const d = card.dueDayOfMonth;
+    let due = new Date(today.getFullYear(), today.getMonth(), d);
+    if (due <= today) due = new Date(today.getFullYear(), today.getMonth()+1, d);
+    return due;
   })();
+  const daysUntilDue = nextDueDate
+    ? Math.ceil((nextDueDate - new Date()) / (1000*60*60*24))
+    : null;
+  const nextDueDateStr = nextDueDate
+    ? nextDueDate.toLocaleDateString("en-SG",{day:"numeric",month:"short",year:"numeric"})
+    : null;
+  const hasOutstanding = !isDebit && card.currentBalance > 0;
+  const isRecurringDue = hasOutstanding && card.dueDayOfMonth;
 
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
@@ -4781,12 +5168,21 @@ function CCDrawer({ card, accounts, transactions, setTransactions, setCards, sho
               </div>
 
               {/* Payment due alert */}
-              {!isDebit && card.paymentDueDate && daysUntilDue !== null && daysUntilDue <= 7 && daysUntilDue >= 0 && (
+              {!isDebit && card.dueDayOfMonth && daysUntilDue !== null && daysUntilDue <= 7 && (
                 <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
                   <span style={{fontSize:18}}>⚠️</span>
                   <div>
                     <div style={{fontSize:13,fontWeight:700,color:T.warn}}>Payment due in {daysUntilDue} day{daysUntilDue!==1?"s":""}</div>
-                    <div style={{fontSize:12,color:T.warn}}>Min. payment S${card.minimumPayment.toLocaleString()} due {card.paymentDueDate}</div>
+                    <div style={{fontSize:12,color:T.warn}}>Min. payment S${card.minimumPayment.toLocaleString()} due {nextDueDateStr}</div>
+                  </div>
+                </div>
+              )}
+              {isRecurringDue && daysUntilDue !== null && daysUntilDue > 7 && (
+                <div style={{background:T.accentBg,border:`1px solid #BFDBFE`,borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                  <span style={{fontSize:18}}>🔁</span>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:T.accent}}>Recurring payment — {daysUntilDue} days until due</div>
+                    <div style={{fontSize:12,color:T.accent}}>S${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})} outstanding · next due {nextDueDateStr} (day {card.dueDayOfMonth} monthly)</div>
                   </div>
                 </div>
               )}
@@ -4889,7 +5285,7 @@ function CCDrawer({ card, accounts, transactions, setTransactions, setCards, sho
                   ["Expiry", `${card.expiryMM}/${card.expiryYY}`],
                   !isDebit && card.apr > 0 ? ["Interest Rate (APR)", `${card.apr}% p.a.`] : null,
                   !isDebit && card.annualFee > 0 ? ["Annual Fee", `S$${card.annualFee.toLocaleString()}`] : null,
-                  !isDebit && card.paymentDueDate ? ["Next Payment Due", card.paymentDueDate] : null,
+                  !isDebit && card.dueDayOfMonth ? ["Payment Due", `Day ${card.dueDayOfMonth} monthly · Next: ${nextDueDateStr}`] : null,
                   card.notes ? ["Notes", card.notes] : null,
                 ].filter(Boolean).map(([k,v],i)=>(
                   <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
@@ -4941,7 +5337,12 @@ function CCDrawer({ card, accounts, transactions, setTransactions, setCards, sho
                       </div>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.description}</div>
-                        <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.category} · {t.date}</div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                          <span>{t.category} · {t.date}</span>
+                          {t.fees > 0 && <span style={{fontSize:10,color:T.warn,background:T.warnBg,borderRadius:4,padding:"1px 6px"}}>+ S${parseFloat(t.fees).toLocaleString(undefined,{minimumFractionDigits:2})} fees</span>}
+                          {t.ref && <span style={{fontSize:10,color:T.dim,background:T.inputBg,borderRadius:4,padding:"1px 6px",fontFamily:"monospace"}}>{t.ref}</span>}
+                        </div>
+                        {t.notes && <div style={{fontSize:11,color:T.muted,fontStyle:"italic",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.notes}</div>}
                       </div>
                       <div style={{textAlign:"right",flexShrink:0}}>
                         <div style={{fontSize:13,fontWeight:700,color:t.type==="Debit"?T.down:T.up}}>
@@ -4958,76 +5359,11 @@ function CCDrawer({ card, accounts, transactions, setTransactions, setCards, sho
             </>
           )}
 
-          {/* ── BENEFITS & REWARDS ── */}
-          {tab === "benefits" && !isDebit && (
-            <>
-              {/* Reward summary */}
-              <div style={{background:T.selected,borderRadius:14,padding:"18px 20px",color:T.selectedText}}>
-                <div style={{fontSize:11,color:"#9CA3AF",fontWeight:600,marginBottom:12}}>REWARD PROGRAMME</div>
-                <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>{card.rewardProgram||"No reward programme"}</div>
-                <div style={{fontSize:13,color:"#D1D5DB"}}>{card.rewardRate}</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:16}}>
-                  {card.cashbackRate > 0 && (
-                    <div style={{background:"rgba(255,255,255,0.1)",borderRadius:10,padding:"12px 14px"}}>
-                      <div style={{fontSize:10,color:"#9CA3AF",marginBottom:4}}>Cashback Rate</div>
-                      <div style={{fontSize:22,fontWeight:800}}>{card.cashbackRate}%</div>
-                    </div>
-                  )}
-                  {card.milesRate > 0 && (
-                    <div style={{background:"rgba(255,255,255,0.1)",borderRadius:10,padding:"12px 14px"}}>
-                      <div style={{fontSize:10,color:"#9CA3AF",marginBottom:4}}>Miles per S$1</div>
-                      <div style={{fontSize:22,fontWeight:800}}>{card.milesRate}</div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Estimated rewards */}
-              {(card.cashbackRate > 0 || card.milesRate > 0) && totalSpend > 0 && (
-                <div style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"16px 18px"}}>
-                  <div style={{fontSize:12,fontWeight:700,color:T.muted,marginBottom:12}}>ESTIMATED REWARDS EARNED</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    {card.cashbackRate > 0 && (
-                      <div style={{background:T.upBg,borderRadius:10,padding:"14px"}}>
-                        <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Total Cashback</div>
-                        <div style={{fontSize:18,fontWeight:800,color:T.up}}>S${(totalSpend*card.cashbackRate/100).toLocaleString(undefined,{minimumFractionDigits:2})}</div>
-                        <div style={{fontSize:11,color:T.dim,marginTop:2}}>from S${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})} spend</div>
-                      </div>
-                    )}
-                    {card.milesRate > 0 && (
-                      <div style={{background:T.accentBg,borderRadius:10,padding:"14px"}}>
-                        <div style={{fontSize:11,color:T.muted,marginBottom:4}}>Total Miles</div>
-                        <div style={{fontSize:18,fontWeight:800,color:T.accent}}>{Math.floor(totalSpend*card.milesRate).toLocaleString()}</div>
-                        <div style={{fontSize:11,color:T.dim,marginTop:2}}>from S${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})} spend</div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Cost analysis */}
-              <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>💰 Annual Cost Analysis</div>
-                {[
-                  ["Annual Fee", `S$${card.annualFee.toLocaleString()}`],
-                  ["Interest Rate (APR)", `${card.apr}% p.a.`],
-                  card.cashbackRate > 0 ? ["Est. Annual Cashback", `S${(totalSpend*12/Math.max(1,cardTxns.length)*card.cashbackRate/100).toFixed(2)}`] : null,
-                  card.milesRate > 0 ? ["Est. Annual Miles", `${Math.floor(totalSpend*12/Math.max(1,cardTxns.length)*card.milesRate).toLocaleString()} miles`] : null,
-                ].filter(Boolean).map(([k,v],i)=>(
-                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
-                    <span style={{fontSize:12,color:T.muted}}>{k}</span>
-                    <span style={{fontSize:12,fontWeight:700}}>{v}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
         </div>
       </div>
 
       {/* Transaction modal */}
-      {showTxnModal && <CCTxnModal cardId={card.id} onSave={handleAddTxn} onClose={()=>setShowTxnModal(false)}/>}
+      {showTxnModal && <CCTxnModal cardId={card.id} card={card} accounts={accounts} setAccounts={setAccounts} setCards={setCards} onSave={handleAddTxn} onClose={()=>setShowTxnModal(false)}/>}
     </div>
   );
 }
@@ -5043,8 +5379,8 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
   const [leftTab, setLeftTab] = useState("cards");
 
   const selCardData = cards.find(c => c.id === selCard);
-  const creditCards = cards.filter(c => c.cardType === "Credit" || c.cardType === "Commercial");
-  const debitCards  = cards.filter(c => c.cardType === "Debit");
+  const creditCards = cards.filter(c => (c.cardType === "Credit" || c.cardType === "Commercial") && c.isActive);
+  const debitCards  = cards.filter(c => c.cardType === "Debit" && c.isActive);
 
   // Summary stats
   const totalDebt   = creditCards.reduce((s,c) => s+c.currentBalance, 0);
@@ -5052,8 +5388,11 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
   const totalAvail  = totalLimit - totalDebt;
   const overallUtil = totalLimit > 0 ? (totalDebt/totalLimit*100) : 0;
   const dueThisWeek = creditCards.filter(c => {
-    if(!c.paymentDueDate) return false;
-    const d = Math.ceil((new Date(c.paymentDueDate)-new Date())/(1000*60*60*24));
+    if(!c.dueDayOfMonth || c.currentBalance <= 0) return false;
+    const today = new Date();
+    let due = new Date(today.getFullYear(), today.getMonth(), c.dueDayOfMonth);
+    if(due <= today) due = new Date(today.getFullYear(), today.getMonth()+1, c.dueDayOfMonth);
+    const d = Math.ceil((due - today)/(1000*60*60*24));
     return d >= 0 && d <= 7;
   });
 
@@ -5086,10 +5425,10 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
     setEditAcc(null);
   };
 
-  const handleDeleteCard = (id) => {
-    setCards(prev => prev.filter(c => c.id!==id));
-    if(selCard===id) setSelCard(null);
-    showToast("Card removed","success");
+  const handleToggleActive = (id) => {
+    setCards(prev => prev.map(c => c.id===id ? {...c, isActive:!c.isActive} : c));
+    const card = cards.find(c=>c.id===id);
+    showToast(card && card.isActive ? "Card deactivated" : "Card reactivated", "success");
   };
 
   return (
@@ -5165,33 +5504,49 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
                   const linkedAcc = accounts.find(a=>a.id===card.linkedAccountId);
                   const cardTxns = transactions.filter(t=>t.cardId===card.id);
                   const utilPct = !isDebit && card.creditLimit>0 ? Math.min(100,card.currentBalance/card.creditLimit*100) : 0;
-                  const daysUntilDue = card.paymentDueDate
-                    ? Math.ceil((new Date(card.paymentDueDate)-new Date())/(1000*60*60*24)) : null;
+                  const daysUntilDue = (() => {
+                    if(!card.dueDayOfMonth) return null;
+                    const today = new Date();
+                    let due = new Date(today.getFullYear(), today.getMonth(), card.dueDayOfMonth);
+                    if(due <= today) due = new Date(today.getFullYear(), today.getMonth()+1, card.dueDayOfMonth);
+                    return Math.ceil((due - today)/(1000*60*60*24));
+                  })();
                   const isSelected = selCard === card.id;
 
                   return (
                     <div key={card.id} onClick={()=>setSelCard(card.id)}
                       style={{border:`1.5px solid ${isSelected?T.selected:T.border}`,borderRadius:12,padding:"12px 14px",
-                        cursor:"pointer",background:T.bg,transition:"border-color 0.15s"}}>
+                        cursor:"pointer",background:card.isActive?T.bg:T.sidebar,
+                        opacity:card.isActive?1:0.55,transition:"border-color 0.15s"}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                         <div style={{display:"flex",alignItems:"center",gap:8}}>
                           {/* Mini colour bar */}
-                          <div style={{width:4,height:36,borderRadius:2,background:`linear-gradient(180deg,#${bc.from},#${bc.to})`}}/>
+                          <div style={{width:4,height:36,borderRadius:2,background:card.isActive?`linear-gradient(180deg,#${bc.from},#${bc.to})`:"#D1D5DB"}}/>
                           <div>
-                            <div style={{fontSize:13,fontWeight:700}}>{card.cardName}</div>
+                            <div style={{fontSize:13,fontWeight:700,color:card.isActive?T.text:T.muted}}>{card.cardName}</div>
                             <div style={{fontSize:11,color:T.muted,marginTop:1}}>{card.bank} · {card.network} · ••{card.last4}</div>
                           </div>
                         </div>
                         <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                          <span style={{fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:4,
-                            background:isDebit?T.accentBg:card.cardType==="Commercial"?T.warnBg:T.upBg,
-                            color:isDebit?T.accent:card.cardType==="Commercial"?T.warn:T.up}}>
-                            {card.cardType}
-                          </span>
+                          {!card.isActive && (
+                            <span style={{fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:4,background:T.downBg,color:T.down}}>Inactive</span>
+                          )}
+                          {card.isActive && (
+                            <span style={{fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:4,
+                              background:isDebit?T.accentBg:card.cardType==="Commercial"?T.warnBg:T.upBg,
+                              color:isDebit?T.accent:card.cardType==="Commercial"?T.warn:T.up}}>
+                              {card.cardType}
+                            </span>
+                          )}
                           <button onClick={e=>{e.stopPropagation();setEditCard(card);setShowCardModal(true);}}
                             style={{background:"none",border:"none",cursor:"pointer",color:T.dim,fontSize:13,padding:"2px"}}>✏️</button>
-                          <button onClick={e=>{e.stopPropagation();handleDeleteCard(card.id);}}
-                            style={{background:"none",border:"none",cursor:"pointer",color:T.dim,fontSize:13,padding:"2px"}}>✕</button>
+                          <button
+                            onClick={e=>{e.stopPropagation();handleToggleActive(card.id);}}
+                            title={card.isActive?"Deactivate card":"Reactivate card"}
+                            style={{background:"none",border:"none",cursor:"pointer",fontSize:13,padding:"2px",
+                              color:card.isActive?T.dim:T.up}}>
+                            {card.isActive ? "🚫" : "✅"}
+                          </button>
                         </div>
                       </div>
                       {/* Credit utilisation */}
@@ -5213,7 +5568,7 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
                         </div>
                       )}
                       {/* Due date */}
-                      {!isDebit && daysUntilDue !== null && daysUntilDue <= 7 && daysUntilDue >= 0 && (
+                      {!isDebit && card.currentBalance > 0 && daysUntilDue !== null && daysUntilDue <= 7 && (
                         <div style={{fontSize:10,color:T.warn,fontWeight:600,marginTop:4}}>
                           ⚠️ Due in {daysUntilDue} day{daysUntilDue!==1?"s":""}
                         </div>
@@ -5286,6 +5641,7 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
             key={selCardData.id}
             card={selCardData}
             accounts={accounts}
+            setAccounts={setAccounts}
             transactions={transactions}
             setTransactions={setTransactions}
             setCards={setCards}
@@ -5334,7 +5690,7 @@ const subtitles = {
   manage: "Add, sell or remove stock positions manually",
   ai: "Ask your AI agent anything about your portfolio",
   import: "Connect your broker or upload CSV data",
-  creditcards: "Credit & debit cards, limits, transactions and rewards",
+  creditcards: "Credit & debit cards, limits and transactions",
   insurance: "Policies, premiums, claims and coverage overview",
   realestate: "Properties, valuations, rental income and insurance",
 };
@@ -5394,7 +5750,7 @@ export default function App() {
     if (page === "manage") return <ManageScreen holdings={holdings} setHoldings={setHoldings} transactions={transactions} setTransactions={setTransactions} showToast={showToast} />;
     if (page === "import") return <ImportDataScreen />;
     if (page === "creditcards") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} showToast={showToast} />;
-    if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} showToast={showToast} />;
+    if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} />;
     if (page === "realestate") return <RealEstateScreen properties={properties} setProperties={setProperties} policies={policies} showToast={showToast} />;
     return <div style={{ color: T.muted, fontSize: 13 }}>Coming soon.</div>;
   };
