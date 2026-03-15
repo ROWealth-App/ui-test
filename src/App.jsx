@@ -1942,6 +1942,8 @@ const EMPTY_PROP = {
   stampDuty:0, agentFee:0, otherFees:0, notes:"",
   linkedInsuranceId: null,
   tags: [],
+  loanContracts: [],
+  loanRepayments: [],
 };
 
 function calcMonthly(principal, annualRate, years) {
@@ -1951,6 +1953,21 @@ function calcMonthly(principal, annualRate, years) {
 }
 
 const COUNTRIES_LIST = Object.keys(RE_COUNTRIES);
+
+// ── Loan eligibility rules ────────────────────────────────────
+const HDB_TYPES = ["HDB — BTO","HDB — Resale"];
+const PRIVATE_RESIDENTIAL_TYPES = ["Executive Condo","Private Condo","Terrace House","Semi-Detached","Bungalow / GCB"];
+const COMMERCIAL_TYPES = ["Shophouse","Office / Commercial"];
+
+const getLoanTypes = (propType) => {
+  if (HDB_TYPES.includes(propType)) return ["HDB Loan","Bank Loan"];
+  return ["Bank Loan"];  // Private residential, commercial, overseas — bank only
+};
+
+const isCPFEligible = (propType, country) => {
+  if (country !== "Singapore") return false;
+  return HDB_TYPES.includes(propType) || PRIVATE_RESIDENTIAL_TYPES.includes(propType);
+};
 
 /* ── Real Estate: Sub-components (defined OUTSIDE RealEstateScreen to avoid remount) ── */
 
@@ -2038,6 +2055,9 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
   const [editing, setEditing] = useState(false);
   const [ef, setEFState] = useState(null);
   const setEF = (k, v) => setEFState(f => ({...f, [k]: v}));
+  const [finTab, setFinTab] = useState("contracts");
+  const [showAddContract, setShowAddContract] = useState(false);
+  const [showAddRepay, setShowAddRepay] = useState(false);
 
   const ctry = RE_COUNTRIES[p.country] || RE_COUNTRIES.Singapore;
   const sym = ctry.symbol;
@@ -2085,7 +2105,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
             </div>
           </div>
           <div style={{display:"flex",gap:6}}>
-            {propTab !== "insurance" && (
+            {propTab !== "insurance" && propTab !== "financials" && (
               <>
                 <button onClick={editing ? handleSave : handleEdit}
                   style={{padding:"6px 14px",borderRadius:8,border:`1px solid ${editing?T.up:T.border}`,background:editing?T.upBg:T.bg,color:editing?T.up:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
@@ -2260,58 +2280,429 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
         )}
 
         {/* ── FINANCIALS ── */}
-        {propTab === "financials" && (
-          <>
-            <div style={{background:T.selected,borderRadius:14,padding:"18px 20px"}}>
-              <div style={{fontSize:11,color:"#9CA3AF",marginBottom:12,fontWeight:600}}>EQUITY SNAPSHOT</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-                {[
-                  {l:"Property Value", v:`${sym}${(p.currentValuation||p.purchasePrice||0).toLocaleString()}`, c:"white"},
-                  {l:"Loan Balance",   v:p.loanAmount>0?`-${sym}${p.loanAmount.toLocaleString()}`:"No loan",  c:p.loanAmount>0?"#FCA5A5":"#86EFAC"},
-                  {l:"Equity",         v:`${sym}${((p.currentValuation||p.purchasePrice||0)-(p.loanAmount||0)).toLocaleString()}`, c:"#86EFAC"},
-                ].map(s => (
-                  <div key={s.l}>
-                    <div style={{fontSize:10,color:"#9CA3AF"}}>{s.l}</div>
-                    <div style={{fontSize:14,fontWeight:800,color:s.c,marginTop:4}}>{s.v}</div>
+        {propTab === "financials" && (() => {
+          const loanContracts = p.loanContracts || [];
+          const loanRepayments = p.loanRepayments || [];
+          const activeContract = loanContracts.find(c => c.isActive) || loanContracts[0];
+          const cpfOK = isCPFEligible(p.type, p.country);
+          const allowedLoanTypes = getLoanTypes(p.type);
+
+          // ── Add Contract Modal ─────────────────────────────
+          const AddContractModal = ({ onClose }) => {
+            const loanContracts = p.loanContracts || [];
+            const allowedLoanTypes = getLoanTypes(p.type);
+            const sym2 = sym;
+            const [f, setFL] = useState({
+              loanType: allowedLoanTypes[0], lender:"", loanAmount: p.purchasePrice * 0.75 || 0,
+              interestRate:2.6, rateType:"Floating", tenureYears:25,
+              monthlyPayment:0, startDate: p.purchaseDate||"", maturityDate:"",
+              isActive: loanContracts.length === 0, notes:"",
+            });
+            const upd = (k,v) => setFL(prev=>({...prev,[k]:v}));
+            const calc = calcMonthly(parseFloat(f.loanAmount)||0, parseFloat(f.interestRate)||0, parseInt(f.tenureYears)||25);
+            const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+            return (
+              <>
+                <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:400}}/>
+                <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+                  <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
+                    <div><div style={{fontSize:14,fontWeight:700}}>Add Loan Contract</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                      {allowedLoanTypes.length === 1 ? "Bank loan only for this property type" : "HDB or Bank loan available"}
+                    </div></div>
+                    <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
                   </div>
+                  <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                      <div><Label>Loan Type</Label>
+                        <select value={f.loanType} onChange={e=>upd("loanType",e.target.value)} style={iStyle}>
+                          {allowedLoanTypes.map(t=><option key={t}>{t}</option>)}
+                        </select></div>
+                      <div><Label>Lender / Bank</Label>
+                        <input value={f.lender} onChange={e=>upd("lender",e.target.value)} placeholder={f.loanType==="HDB Loan"?"HDB":"e.g. DBS Bank"} style={iStyle}/></div>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                      <div><Label>Loan Amount ({sym2})</Label>
+                        <input type="number" value={f.loanAmount} onChange={e=>upd("loanAmount",parseFloat(e.target.value)||0)} style={iStyle}/></div>
+                      <div><Label>Interest Rate (% p.a.)</Label>
+                        <input type="number" step="0.01" value={f.interestRate} onChange={e=>upd("interestRate",parseFloat(e.target.value)||0)} style={iStyle}/></div>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                      <div><Label>Rate Type</Label>
+                        <select value={f.rateType} onChange={e=>upd("rateType",e.target.value)} style={iStyle}>
+                          <option>Fixed</option><option>Floating</option><option>Hybrid</option>
+                        </select></div>
+                      <div><Label>Tenure (years)</Label>
+                        <input type="number" value={f.tenureYears} onChange={e=>upd("tenureYears",parseInt(e.target.value)||25)} style={iStyle}/></div>
+                    </div>
+                    {calc > 0 && (
+                      <div style={{background:T.accentBg,border:`1px solid ${T.accent}30`,borderRadius:8,padding:"9px 12px",fontSize:12,color:T.accent}}>
+                        Estimated monthly: <strong>{sym2}{calc.toLocaleString()}</strong>
+                      </div>
+                    )}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                      <div><Label>Start Date</Label>
+                        <input type="date" value={f.startDate} onChange={e=>upd("startDate",e.target.value)} style={iStyle}/></div>
+                      <div><Label>Maturity Date</Label>
+                        <input type="date" value={f.maturityDate} onChange={e=>upd("maturityDate",e.target.value)} style={iStyle}/></div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:T.inputBg,borderRadius:8}}>
+                      <input type="checkbox" id="isActiveCb" checked={f.isActive} onChange={e=>upd("isActive",e.target.checked)} style={{width:16,height:16,cursor:"pointer"}}/>
+                      <label htmlFor="isActiveCb" style={{fontSize:13,cursor:"pointer",color:T.text}}>Mark as active/current loan contract</label>
+                    </div>
+                    <div><Label>Notes</Label>
+                      <textarea value={f.notes} onChange={e=>upd("notes",e.target.value)} rows={2} style={{...iStyle,resize:"vertical"}}/></div>
+                  </div>
+                  <div style={{padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+                    <button onClick={()=>{
+                      const newC = {...f, id:"LC"+Date.now(), monthlyPayment: f.monthlyPayment||calc};
+                      const updContracts = f.isActive
+                        ? [...loanContracts.map(c=>({...c,isActive:false})), newC]
+                        : [...loanContracts, newC];
+                      update({ loanContracts: updContracts,
+                        loanAmount: f.isActive ? parseFloat(f.loanAmount)||0 : p.loanAmount,
+                        interestRate: f.isActive ? parseFloat(f.interestRate)||0 : p.interestRate,
+                        loanTenureYears: f.isActive ? parseInt(f.tenureYears)||25 : p.loanTenureYears,
+                        monthlyPayment: f.isActive ? (f.monthlyPayment||calc) : p.monthlyPayment });
+                      onClose(); showToast("Loan contract added","success");
+                    }}
+                      style={{flex:1,background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                      Add Contract
+                    </button>
+                    <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+                  </div>
+                </div>
+              </>
+            );
+          };
+
+          // ── Add Repayment Modal ────────────────────────────
+          const AddRepayModal = ({ onClose }) => {
+            const loanContracts2 = p.loanContracts || [];
+            const activeContract2 = loanContracts2.find(c => c.isActive) || loanContracts2[0];
+            const cpfOK2 = isCPFEligible(p.type, p.country);
+            const sym2 = sym;
+            const [f, setFL] = useState({
+              contractId: activeContract2 ? activeContract2.id : "",
+              date: new Date().toISOString().slice(0,10),
+              totalAmount: activeContract2 ? activeContract2.monthlyPayment : 0,
+              cashAmount: activeContract2 ? activeContract2.monthlyPayment : 0,
+              cpfAmount:0, fees:0, notes:"",
+              useCPF: false,
+              paymentType: "monthly",
+            });
+            const upd = (k,v) => setFL(prev=>({...prev,[k]:v}));
+            const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+            const cpfAmt = parseFloat(f.cpfAmount)||0;
+            const cashAmt = parseFloat(f.cashAmount)||0;
+            const total = parseFloat(f.totalAmount)||0;
+            const splitMatch = !f.useCPF || Math.abs((cashAmt + cpfAmt) - total) < 0.01;
+            const selectedContract = loanContracts2.find(c=>c.id===f.contractId);
+            const scheduledMonthly = selectedContract ? selectedContract.monthlyPayment : 0;
+            return (
+              <>
+                <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:400}}/>
+                <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+                  <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
+                    <div><div style={{fontSize:14,fontWeight:700}}>Record Loan Repayment</div>
+                    {cpfOK2 && <div style={{fontSize:11,color:T.accent,marginTop:2}}>CPF-OA repayment available for this property</div>}</div>
+                    <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
+                  </div>
+                  <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+                    {loanContracts2.length > 1 && (
+                      <div><Label>Loan Contract</Label>
+                        <select value={f.contractId} onChange={e=>{
+                          const c = loanContracts2.find(lc=>lc.id===e.target.value);
+                          upd("contractId",e.target.value);
+                          if(c){ upd("totalAmount",c.monthlyPayment); if(!f.useCPF) upd("cashAmount",c.monthlyPayment); }
+                        }} style={iStyle}>
+                          {loanContracts2.map(c=><option key={c.id} value={c.id}>{c.lender} — {sym2}{c.loanAmount.toLocaleString()} @ {c.interestRate}% {c.isActive?"(Active)":""}</option>)}
+                        </select></div>
+                    )}
+                    {/* Payment type selector */}
+                    <div style={{display:"flex",gap:6}}>
+                      {[{id:"monthly",label:"Monthly Payment"},{id:"partial",label:"Partial Payment"}].map(t=>(
+                        <button key={t.id} onClick={()=>{
+                          upd("paymentType",t.id);
+                          if(t.id==="monthly"){
+                            upd("totalAmount",scheduledMonthly);
+                            if(!f.useCPF) upd("cashAmount",scheduledMonthly);
+                            else upd("cashAmount",Math.max(0,Math.round((scheduledMonthly-(parseFloat(f.cpfAmount)||0))*100)/100));
+                          }
+                        }}
+                          style={{flex:1,padding:"8px 10px",borderRadius:8,border:`1.5px solid ${(f.paymentType||"monthly")===t.id?T.selected:T.border}`,
+                            background:(f.paymentType||"monthly")===t.id?T.selected:"transparent",
+                            color:(f.paymentType||"monthly")===t.id?T.selectedText:T.muted,
+                            cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textAlign:"center"}}>
+                          {t.id==="monthly"?"📅 "+t.label:"✂️ "+t.label}
+                        </button>
+                      ))}
+                    </div>
+                    {(f.paymentType||"monthly")==="partial" && (
+                      <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:8,padding:"8px 12px",fontSize:12,color:T.warn}}>
+                        Partial payment — enter any amount less than or different from the scheduled monthly. This will be recorded separately and does not replace the scheduled payment.
+                      </div>
+                    )}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                      <div><Label>Payment Date</Label>
+                        <input type="date" value={f.date} onChange={e=>upd("date",e.target.value)} style={iStyle}/></div>
+                      <div>
+                        <Label required>Total Amount ({sym2})</Label>
+                        <input type="number" value={f.totalAmount}
+                          readOnly={(f.paymentType||"monthly")==="monthly"}
+                          onChange={e=>{
+                            if((f.paymentType||"monthly")==="monthly") return;
+                            const newTotal = parseFloat(e.target.value)||0;
+                            upd("totalAmount", e.target.value);
+                            if(!f.useCPF) {
+                              upd("cashAmount", newTotal);
+                            } else {
+                              const cpf = parseFloat(f.cpfAmount)||0;
+                              upd("cashAmount", Math.max(0, Math.round((newTotal - cpf)*100)/100));
+                            }
+                          }}
+                          style={{...iStyle,
+                            background:(f.paymentType||"monthly")==="monthly"?T.inputBg:T.bg,
+                            borderColor:(f.paymentType||"monthly")==="partial"?T.accent:T.border,
+                            color:(f.paymentType||"monthly")==="monthly"?T.muted:T.text}}/>
+                        {scheduledMonthly > 0 && (
+                          <div style={{fontSize:11,color:T.muted,marginTop:4}}>
+                            Scheduled: <span style={{fontWeight:700,color:T.text}}>{sym2}{scheduledMonthly.toLocaleString(undefined,{minimumFractionDigits:2})}</span> / month
+                            {(f.paymentType||"monthly")==="partial" && parseFloat(f.totalAmount)>0 && parseFloat(f.totalAmount) !== scheduledMonthly && (
+                              <span style={{marginLeft:6,color:T.warn,fontWeight:600}}>
+                                ({parseFloat(f.totalAmount)<scheduledMonthly?"underpaying by ":"overpaying by "}{sym2}{Math.abs(parseFloat(f.totalAmount)-scheduledMonthly).toLocaleString(undefined,{minimumFractionDigits:2})})
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {cpfOK2 && (
+                      <div style={{padding:"10px 12px",background:f.useCPF?T.accentBg:T.inputBg,border:`1px solid ${f.useCPF?T.accent+"40":T.border}`,borderRadius:9}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:f.useCPF?10:0}}>
+                          <input type="checkbox" id="cpfToggle" checked={f.useCPF} onChange={e=>{
+                            upd("useCPF",e.target.checked);
+                            if(!e.target.checked){upd("cpfAmount",0);upd("cashAmount",parseFloat(f.totalAmount)||0);}
+                          }} style={{width:16,height:16,cursor:"pointer"}}/>
+                          <label htmlFor="cpfToggle" style={{fontSize:13,cursor:"pointer",fontWeight:600,color:f.useCPF?T.accent:T.text}}>
+                            Include CPF-OA payment (optional)
+                          </label>
+                        </div>
+                        {f.useCPF && (
+                          <>
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                              <div><Label>Cash Amount ({sym2})</Label>
+                                <input type="number" value={f.cashAmount}
+                                  onChange={e=>{
+                                    const cash = parseFloat(e.target.value)||0;
+                                    upd("cashAmount", cash);
+                                    upd("cpfAmount", Math.max(0, Math.round((total - cash)*100)/100));
+                                  }} style={iStyle}/></div>
+                              <div><Label>CPF-OA Amount ({sym2})</Label>
+                                <input type="number" value={f.cpfAmount}
+                                  onChange={e=>{
+                                    const cpf = parseFloat(e.target.value)||0;
+                                    upd("cpfAmount", cpf);
+                                    upd("cashAmount", Math.max(0, Math.round((total - cpf)*100)/100));
+                                  }} style={iStyle}/></div>
+                            </div>
+                            <div style={{marginTop:8,padding:"7px 10px",borderRadius:7,fontSize:12,
+                              background:splitMatch?T.upBg:T.downBg, border:`1px solid ${splitMatch?"#BBF7D0":"#FECACA"}`,
+                              color:splitMatch?T.up:T.down, fontWeight:600}}>
+                              {splitMatch
+                                ? `✅ Split: ${sym2}${cashAmt.toLocaleString(undefined,{minimumFractionDigits:2})} cash + ${sym2}${cpfAmt.toLocaleString(undefined,{minimumFractionDigits:2})} CPF = ${sym2}${(cashAmt+cpfAmt).toLocaleString(undefined,{minimumFractionDigits:2})}`
+                                : `❌ Cash + CPF (${sym2}${(cashAmt+cpfAmt).toLocaleString(undefined,{minimumFractionDigits:2})}) ≠ Total (${sym2}${total.toLocaleString(undefined,{minimumFractionDigits:2})})`
+                              }
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                      <div><Label>Fees (optional, {sym2})</Label>
+                        <input type="number" value={f.fees} onChange={e=>upd("fees",parseFloat(e.target.value)||0)} placeholder="0.00" style={iStyle}/></div>
+                      <div></div>
+                    </div>
+                    <div><Label>Notes (optional)</Label>
+                      <textarea value={f.notes} onChange={e=>upd("notes",e.target.value)} rows={2}
+                        style={{...iStyle,resize:"vertical"}} placeholder="e.g. Partial capital repayment"/></div>
+                  </div>
+                  <div style={{padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+                    <button disabled={!f.totalAmount||!f.date||(f.useCPF&&!splitMatch)}
+                      onClick={()=>{
+                        const repay = { id:"LR"+Date.now(), contractId:f.contractId, date:f.date,
+                          totalAmount:total, cashAmount:f.useCPF?cashAmt:total, cpfAmount:f.useCPF?cpfAmt:0,
+                          fees:parseFloat(f.fees)||0, notes:f.notes, paymentType: f.paymentType||"monthly" };
+                        update({ loanRepayments:[...(p.loanRepayments||[]), repay] });
+                        onClose(); showToast("Repayment recorded","success");
+                      }}
+                      style={{flex:1, background:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?T.inputBg:T.selected,
+                        color:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?T.dim:T.selectedText,
+                        border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,
+                        cursor:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?"not-allowed":"pointer",fontFamily:"inherit"}}>
+                      Record Repayment
+                    </button>
+                    <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+                  </div>
+                </div>
+              </>
+            );
+          };
+
+          return (
+            <>
+              {/* Equity snapshot */}
+              <div style={{background:T.selected,borderRadius:14,padding:"18px 20px"}}>
+                <div style={{fontSize:11,color:"#9CA3AF",marginBottom:12,fontWeight:600}}>EQUITY SNAPSHOT</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+                  {[
+                    {l:"Property Value", v:`${sym}${(p.currentValuation||p.purchasePrice||0).toLocaleString()}`, c:"white"},
+                    {l:"Loan Balance",   v:p.loanAmount>0?`-${sym}${p.loanAmount.toLocaleString()}`:"No loan",  c:p.loanAmount>0?"#FCA5A5":"#86EFAC"},
+                    {l:"Equity",         v:`${sym}${((p.currentValuation||p.purchasePrice||0)-(p.loanAmount||0)).toLocaleString()}`, c:"#86EFAC"},
+                  ].map(s=>(
+                    <div key={s.l}>
+                      <div style={{fontSize:10,color:"#9CA3AF"}}>{s.l}</div>
+                      <div style={{fontSize:14,fontWeight:800,color:s.c,marginTop:4}}>{s.v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sub-tabs */}
+              <div style={{display:"flex",gap:4,borderBottom:`1px solid ${T.border}`,paddingBottom:0}}>
+                {[{id:"contracts",label:`Contracts (${loanContracts.length})`},{id:"repayments",label:`Repayments (${loanRepayments.length})`}].map(t=>(
+                  <button key={t.id} onClick={()=>setFinTab(t.id)}
+                    style={{padding:"8px 14px",border:"none",borderBottom:`2px solid ${finTab===t.id?T.selected:"transparent"}`,
+                      background:"transparent",color:finTab===t.id?T.text:T.muted,cursor:"pointer",
+                      fontFamily:"inherit",fontSize:12,fontWeight:finTab===t.id?700:400,marginBottom:-1}}>
+                    {t.label}
+                  </button>
                 ))}
               </div>
-            </div>
 
-            <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-              <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>🏦 Loan Details</div>
-              {editing && ef ? (
-                <div style={{padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    <div><Label>Loan Balance ({sym})</Label><Input type="number" value={ef.loanAmount} onChange={e=>setEF("loanAmount",parseFloat(e.target.value)||0)}/></div>
-                    <div><Label>Interest Rate (%)</Label><Input type="number" step="0.01" value={ef.interestRate} onChange={e=>setEF("interestRate",parseFloat(e.target.value)||0)}/></div>
-                    <div><Label>Remaining Tenure (yrs)</Label><Input type="number" value={ef.loanTenureYears} onChange={e=>setEF("loanTenureYears",parseInt(e.target.value)||25)}/></div>
-                    <div><Label>Monthly Payment</Label><Input type="number" value={ef.monthlyPayment} onChange={e=>setEF("monthlyPayment",parseFloat(e.target.value)||0)} placeholder="Auto-calculated"/></div>
-                  </div>
-                  {!!(ef.loanAmount && ef.interestRate && ef.loanTenureYears) && (
-                    <div style={{background:T.inputBg,borderRadius:8,padding:"10px 14px",fontSize:12,color:T.muted}}>
-                      Calculated monthly: <strong style={{color:T.text}}>{sym}{calcMonthly(parseFloat(ef.loanAmount),parseFloat(ef.interestRate),parseInt(ef.loanTenureYears)).toLocaleString()}</strong>
+              {/* ── CONTRACTS sub-tab ── */}
+              {finTab === "contracts" && (
+                <>
+                  {loanContracts.length === 0 ? (
+                    <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}>
+                      <div style={{fontSize:28,marginBottom:8}}>🏦</div>
+                      <div style={{fontSize:13,fontWeight:600}}>No loan contracts yet</div>
+                      <div style={{fontSize:12,marginTop:4}}>Add a contract to track your loan details and history.</div>
+                    </div>
+                  ) : loanContracts.map((c,i) => (
+                    <div key={c.id} style={{border:`1.5px solid ${c.isActive?T.accent:T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:c.isActive?T.accentBg:T.inputBg,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{fontSize:13,fontWeight:700}}>{c.lender||c.loanType}</span>
+                          <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,
+                            background:c.loanType==="HDB Loan"?"#FEF9C3":"#EFF6FF",
+                            color:c.loanType==="HDB Loan"?"#854D0E":T.accent}}>
+                            {c.loanType}
+                          </span>
+                          {c.isActive && <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,background:T.upBg,color:T.up}}>Active</span>}
+                        </div>
+                      </div>
+                      {[
+                        ["Loan Amount",    `${sym}${c.loanAmount.toLocaleString()}`],
+                        ["Interest Rate",  `${c.interestRate}% p.a. (${c.rateType})`],
+                        ["Tenure",         `${c.tenureYears} years`],
+                        ["Monthly Payment",`${sym}${(c.monthlyPayment||0).toLocaleString()}`],
+                        ["Start Date",     c.startDate||"—"],
+                        ["Maturity Date",  c.maturityDate||"—"],
+                        c.notes ? ["Notes", c.notes] : null,
+                      ].filter(Boolean).map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"9px 16px",borderTop:`1px solid ${T.border}`}}>
+                          <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",maxWidth:"60%"}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                  <button onClick={()=>setShowAddContract(true)}
+                    style={{width:"100%",padding:"10px",borderRadius:10,border:`1px dashed ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600}}>
+                    + Add Loan Contract
+                  </button>
+                </>
+              )}
+
+              {/* ── REPAYMENTS sub-tab ── */}
+              {finTab === "repayments" && (
+                <>
+                  {/* Summary */}
+                  {loanRepayments.length > 0 && (() => {
+                    const totalRepaid = loanRepayments.reduce((s,r)=>s+r.totalAmount,0);
+                    const totalCPF = loanRepayments.reduce((s,r)=>s+(r.cpfAmount||0),0);
+                    const totalCash = loanRepayments.reduce((s,r)=>s+(r.cashAmount||0),0);
+                    return (
+                      <div style={{display:"grid",gridTemplateColumns:`1fr 1fr${cpfOK?" 1fr":""}`,gap:10}}>
+                        {[
+                          {l:"Total Repaid",   v:`${sym}${totalRepaid.toLocaleString(undefined,{minimumFractionDigits:2})}`, c:T.up},
+                          {l:"Cash Payments",  v:`${sym}${totalCash.toLocaleString(undefined,{minimumFractionDigits:2})}`,   c:T.text},
+                          cpfOK ? {l:"CPF-OA Used",  v:`${sym}${totalCPF.toLocaleString(undefined,{minimumFractionDigits:2})}`, c:T.accent} : null,
+                        ].filter(Boolean).map(s=>(
+                          <div key={s.l} style={{background:T.inputBg,borderRadius:10,padding:"12px 14px"}}>
+                            <div style={{fontSize:10,color:T.muted,marginBottom:3}}>{s.l}</div>
+                            <div style={{fontSize:14,fontWeight:800,color:s.c}}>{s.v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
+                  {loanRepayments.length === 0 ? (
+                    <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}>
+                      <div style={{fontSize:28,marginBottom:8}}>💰</div>
+                      <div style={{fontSize:13,fontWeight:600}}>No repayments recorded yet</div>
+                    </div>
+                  ) : (
+                    <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      {[...loanRepayments].sort((a,b)=>b.date.localeCompare(a.date)).map((r,i)=>{
+                        const contract = loanContracts.find(c=>c.id===r.contractId);
+                        const hasCPF = (r.cpfAmount||0) > 0;
+                        return (
+                          <div key={r.id} style={{padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:hasCPF?6:0}}>
+                              <div>
+                                <div style={{fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+                                  {r.date}
+                                  {r.paymentType === "partial" && (
+                                    <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:4,background:T.warnBg,color:T.warn,border:`1px solid #FDE68A`}}>Partial</span>
+                                  )}
+                                </div>
+                                <div style={{fontSize:11,color:T.muted,marginTop:1}}>
+                                  {contract ? `${contract.lender} · ${contract.loanType}` : "Loan repayment"}
+                                </div>
+                              </div>
+                              <div style={{textAlign:"right"}}>
+                                <div style={{fontSize:14,fontWeight:800,color:T.up}}>{sym}{r.totalAmount.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+                                {r.fees > 0 && <div style={{fontSize:10,color:T.warn}}>+ {sym}{r.fees} fees</div>}
+                              </div>
+                            </div>
+                            {hasCPF && (
+                              <div style={{display:"flex",gap:6,marginTop:4}}>
+                                <span style={{fontSize:11,padding:"2px 8px",borderRadius:4,background:T.inputBg,color:T.muted}}>💵 Cash: {sym}{(r.cashAmount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                                <span style={{fontSize:11,padding:"2px 8px",borderRadius:4,background:T.accentBg,color:T.accent}}>🏛 CPF-OA: {sym}{(r.cpfAmount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                              </div>
+                            )}
+                            {r.notes && <div style={{fontSize:11,color:T.dim,fontStyle:"italic",marginTop:4}}>{r.notes}</div>}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
-                </div>
-              ) : (
-                [
-                  ["Loan Balance",      p.loanAmount>0?`${sym}${p.loanAmount.toLocaleString()}`:"No loan / Cash purchase"],
-                  ["Interest Rate",     p.interestRate>0?`${p.interestRate}% p.a.`:"—"],
-                  ["Remaining Tenure",  p.loanTenureYears>0?`${p.loanTenureYears} years`:"—"],
-                  ["Monthly Repayment", monthly>0?`${sym}${monthly.toLocaleString()}`:"—"],
-                  ["Annual Repayment",  monthly>0?`${sym}${(monthly*12).toLocaleString()}`:"—"],
-                  ["LTV Ratio",         p.purchasePrice>0&&p.loanAmount>0?`${((p.loanAmount/p.purchasePrice)*100).toFixed(0)}%`:"—"],
-                ].map(([k,v]) => (
-                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
-                    <span style={{fontSize:12,color:T.muted}}>{k}</span>
-                    <span style={{fontSize:12,fontWeight:600}}>{v}</span>
-                  </div>
-                ))
+
+                  <button onClick={()=>setShowAddRepay(true)}
+                    style={{width:"100%",padding:"10px",borderRadius:10,border:`1px dashed ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600}}>
+                    + Record Repayment
+                  </button>
+                </>
               )}
-            </div>
-          </>
-        )}
+
+              {showAddContract && <AddContractModal onClose={()=>setShowAddContract(false)}/>}
+              {showAddRepay && <AddRepayModal onClose={()=>setShowAddRepay(false)}/>}
+            </>
+          );
+        })()}
 
         {/* ── RENTAL ── */}
         {propTab === "rental" && p.isRented && (
@@ -5702,9 +6093,35 @@ export default function App() {
   const [manualDivs, setManualDivs] = useState([]);
   const [policies, setPolicies] = useState(POLICIES_INIT);
   const [properties, setProperties] = useState([
-    { id:"P001", name:"Tampines HDB", country:"Singapore", flag:"🇸🇬", type:"HDB — Resale", tenure:"99-Year Leasehold", address:"Blk 448A Tampines St 45, #08-12", postalCode:"520448", sizeSqft:1001, purchasePrice:390000, purchaseDate:"2021-03-15", currentValuation:490000, purpose:"Own Stay", isRented:false, monthlyRent:0, tenantName:"", leaseStart:"", leaseEnd:"", loanAmount:312000, interestRate:2.6, loanTenureYears:22, monthlyPayment:1565, annualTax:924, mcstFee:0, maintenanceFee:0, stampDuty:9600, agentFee:0, otherFees:3200, notes:"HDB resale. 3-room. Near Tampines MRT.", linkedInsuranceId: 7, tags:["Primary Home","HDB"] },
-    { id:"P002", name:"One North Condo", country:"Singapore", flag:"🇸🇬", type:"Private Condo", tenure:"99-Year Leasehold", address:"1 Rochester Park, #12-08", postalCode:"139212", sizeSqft:753, purchasePrice:1050000, purchaseDate:"2021-09-01", currentValuation:1280000, purpose:"Investment / Rental", isRented:true, monthlyRent:4800, tenantName:"Mr. James Wong", leaseStart:"2025-05-01", leaseEnd:"2027-04-30", loanAmount:840000, interestRate:3.2, loanTenureYears:27, monthlyPayment:3892, annualTax:5920, mcstFee:380, maintenanceFee:0, stampDuty:34200, agentFee:4800, otherFees:5000, notes:"Investment condo. 1BR. Near one-north MRT.", tags:["Investment","Tenanted"] },
-    { id:"P003", name:"KL Mont Kiara Condo", country:"Malaysia", flag:"🇲🇾", type:"Condo / Serviced Apt", tenure:"Freehold", address:"Jalan Kiara 3, Mont Kiara, KL", postalCode:"50480", sizeSqft:1250, purchasePrice:850000, purchaseDate:"2023-06-01", currentValuation:920000, purpose:"Investment / Rental", isRented:true, monthlyRent:4200, tenantName:"Expat Family", leaseStart:"2024-01-01", leaseEnd:"2025-12-31", loanAmount:595000, interestRate:4.35, loanTenureYears:30, monthlyPayment:2960, annualTax:1200, mcstFee:450, maintenanceFee:0, stampDuty:21000, agentFee:5950, otherFees:3000, notes:"Freehold condo. Expat tenant.", tags:["Overseas","Freehold"] },
+    { id:"P001", name:"Tampines HDB", country:"Singapore", flag:"🇸🇬", type:"HDB — Resale", tenure:"99-Year Leasehold", address:"Blk 448A Tampines St 45, #08-12", postalCode:"520448", sizeSqft:1001, purchasePrice:390000, purchaseDate:"2021-03-15", currentValuation:490000, purpose:"Own Stay", isRented:false, monthlyRent:0, tenantName:"", leaseStart:"", leaseEnd:"", loanAmount:312000, interestRate:2.6, loanTenureYears:22, monthlyPayment:1565, annualTax:924, mcstFee:0, maintenanceFee:0, stampDuty:9600, agentFee:0, otherFees:3200, notes:"HDB resale. 3-room. Near Tampines MRT.", linkedInsuranceId: 7, tags:["Primary Home","HDB"],
+      loanContracts:[
+        { id:"LC001", loanType:"HDB Loan", lender:"HDB", loanAmount:312000, interestRate:2.6, rateType:"Fixed", tenureYears:25, monthlyPayment:1421, startDate:"2021-03-15", maturityDate:"2046-03-15", isActive:true, notes:"HDB concessionary loan at 2.6% fixed." },
+      ],
+      loanRepayments:[
+        { id:"LR001", contractId:"LC001", date:"2026-03-01", totalAmount:1421, cashAmount:711, cpfAmount:710, fees:0, notes:"March 2026 — half cash, half CPF-OA" },
+        { id:"LR002", contractId:"LC001", date:"2026-02-01", totalAmount:1421, cashAmount:711, cpfAmount:710, fees:0, notes:"Feb 2026" },
+        { id:"LR003", contractId:"LC001", date:"2026-01-01", totalAmount:1421, cashAmount:1421, cpfAmount:0, fees:0, notes:"Jan 2026 — full cash" },
+      ],
+    },
+    { id:"P002", name:"One North Condo", country:"Singapore", flag:"🇸🇬", type:"Private Condo", tenure:"99-Year Leasehold", address:"1 Rochester Park, #12-08", postalCode:"139212", sizeSqft:753, purchasePrice:1050000, purchaseDate:"2021-09-01", currentValuation:1280000, purpose:"Investment / Rental", isRented:true, monthlyRent:4800, tenantName:"Mr. James Wong", leaseStart:"2025-05-01", leaseEnd:"2027-04-30", loanAmount:840000, interestRate:3.2, loanTenureYears:27, monthlyPayment:3892, annualTax:5920, mcstFee:380, maintenanceFee:0, stampDuty:34200, agentFee:4800, otherFees:5000, notes:"Investment condo. 1BR. Near one-north MRT.", tags:["Investment","Tenanted"],
+      loanContracts:[
+        { id:"LC002", loanType:"Bank Loan", lender:"DBS Bank", loanAmount:840000, interestRate:3.2, rateType:"Floating", tenureYears:30, monthlyPayment:3892, startDate:"2021-09-01", maturityDate:"2051-09-01", isActive:true, notes:"DBS floating rate package. SORA + 0.85%." },
+      ],
+      loanRepayments:[
+        { id:"LR004", contractId:"LC002", date:"2026-03-01", totalAmount:3892, cashAmount:2892, cpfAmount:1000, fees:0, notes:"Mar 2026 — partial CPF-OA" },
+        { id:"LR005", contractId:"LC002", date:"2026-02-01", totalAmount:3892, cashAmount:2892, cpfAmount:1000, fees:0, notes:"Feb 2026" },
+        { id:"LR006", contractId:"LC002", date:"2026-01-01", totalAmount:3892, cashAmount:3892, cpfAmount:0, fees:0, notes:"Jan 2026 — full cash" },
+      ],
+    },
+    { id:"P003", name:"KL Mont Kiara Condo", country:"Malaysia", flag:"🇲🇾", type:"Condo / Serviced Apt", tenure:"Freehold", address:"Jalan Kiara 3, Mont Kiara, KL", postalCode:"50480", sizeSqft:1250, purchasePrice:850000, purchaseDate:"2023-06-01", currentValuation:920000, purpose:"Investment / Rental", isRented:true, monthlyRent:4200, tenantName:"Expat Family", leaseStart:"2024-01-01", leaseEnd:"2025-12-31", loanAmount:595000, interestRate:4.35, loanTenureYears:30, monthlyPayment:2960, annualTax:1200, mcstFee:450, maintenanceFee:0, stampDuty:21000, agentFee:5950, otherFees:3000, notes:"Freehold condo. Expat tenant.", tags:["Overseas","Freehold"],
+      loanContracts:[
+        { id:"LC003", loanType:"Bank Loan", lender:"Maybank Malaysia", loanAmount:595000, interestRate:4.35, rateType:"Floating", tenureYears:30, monthlyPayment:2960, startDate:"2023-06-01", maturityDate:"2053-06-01", isActive:true, notes:"Maybank BLR-based floating rate." },
+      ],
+      loanRepayments:[
+        { id:"LR007", contractId:"LC003", date:"2026-03-01", totalAmount:2960, cashAmount:2960, cpfAmount:0, fees:0, notes:"Mar 2026" },
+        { id:"LR008", contractId:"LC003", date:"2026-02-01", totalAmount:2960, cashAmount:2960, cpfAmount:0, fees:0, notes:"Feb 2026" },
+      ],
+    },
   ]);
   const [ccCards, setCCCards] = useState(CC_CARDS_INIT);
   const [ccAccounts, setCCAccounts] = useState(CC_ACCOUNTS_INIT);
