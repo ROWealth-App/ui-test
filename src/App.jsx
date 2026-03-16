@@ -1121,18 +1121,19 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
   const filtered = holdings.filter(h => h.sym.toLowerCase().includes(search.toLowerCase()) || h.name.toLowerCase().includes(search.toLowerCase()));
 
   const TABS = [
-    { id: "add", label: "Add Stock", icon: "+" },
-    { id: "remove", label: `Manage Holdings (${holdings.length})`, icon: "⊟" },
-    { id: "history", label: `Transaction History (${transactions.length})`, icon: "☰" },
-    { id: "api", label: "Broker Integrations", icon: "🔗", badge: "Coming Soon" },
+    { id: "add",      label: "Add Stock",         icon: "+" },
+    { id: "remove",   label: `Holdings (${holdings.length})`,    icon: "⊟" },
+    { id: "history",  label: `Transactions (${transactions.length})`, icon: "☰" },
+    { id: "postings", label: "Postings",           icon: "" },
+    { id: "api",      label: "Integrations",       icon: "🔗", badge: "Soon" },
   ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
       {/* Inner tab bar */}
-      <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}`, marginBottom: 22 }}>
+      <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}`, marginBottom: 22, marginLeft: -32, marginRight: -32, paddingLeft: 32, overflowX: "auto", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>
         {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ background: "transparent", color: tab === t.id ? T.text : T.muted, border: "none", borderBottom: `2px solid ${tab === t.id ? T.selected : "transparent"}`, padding: "10px 18px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", fontWeight: tab === t.id ? 600 : 400, display: "flex", alignItems: "center", gap: 6, marginBottom: -1 }}>
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ background: "transparent", color: tab === t.id ? T.text : T.muted, border: "none", borderBottom: `2px solid ${tab === t.id ? T.selected : "transparent"}`, padding: "10px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: tab === t.id ? 600 : 400, display: "flex", alignItems: "center", gap: 5, marginBottom: -1, whiteSpace: "nowrap", flexShrink: 0 }}>
             <span style={{ fontSize: 13 }}>{t.icon}</span>{t.label}
             {t.badge && <Badge bg={T.warnBg} color={T.warn}>{t.badge}</Badge>}
           </button>
@@ -1518,6 +1519,132 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
           })()}
         </div>
       )}
+
+      {/* ── POSTINGS TAB ── */}
+      {tab === "postings" && (() => {
+        const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+        const mono  = "'Courier New',Courier,monospace";
+        const sorted = [...transactions].sort((a,b) => a.date.localeCompare(b.date));
+
+        const daysAgo = (d) => {
+          if (!d) return "";
+          const diff = Math.floor((Date.now() - new Date(d)) / 86400000);
+          return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago";
+        };
+
+        const fmtAmt = (v, ccy) => {
+          const sym = ccy === "USD" ? "US$" : ccy === "GBP" ? "£" : ccy === "EUR" ? "€" : "S$";
+          return sym + Math.abs(parseFloat(v)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+        };
+
+        const tableRows = sorted.flatMap(tx => {
+          const qty   = parseFloat(tx.qty)   || 0;
+          const price = parseFloat(tx.price) || 0;
+          const fees  = parseFloat(tx.fees)  || 0;
+          const gross = qty * price;
+          const total = gross + (tx.txType === "Buy" ? fees : -fees);
+          const ccy   = tx.currency || "SGD";
+          const stockAcct  = `Assets:Investments:Equities:${tx.sym}`;
+          const cashAcct   = `Assets:Bank:Cash`;
+          const feeAcct    = `Expenses:Brokerage:Fees`;
+          const divAcct    = `Income:Dividends:${tx.sym}`;
+
+          if (tx.txType === "Buy" || tx.txType === "Transfer In") {
+            const rows = [
+              { date: tx.date, desc: `${tx.txType} ${qty} × ${tx.sym} @ ${fmtAmt(price,ccy)}`, account: stockAcct, amount: fmtAmt(gross,ccy), debit: true,  _first: true  },
+              { date: null,    desc: "",                                                          account: cashAcct,  amount: fmtAmt(total,ccy), debit: false, _first: false },
+            ];
+            if (fees > 0) rows.push({ date: null, desc: `Brokerage fee — ${tx.broker||"Broker"}`, account: feeAcct, amount: fmtAmt(fees,ccy), debit: true, _first: false },
+                                     { date: null, desc: "",                                        account: cashAcct, amount: fmtAmt(fees,ccy), debit: false, _first: false });
+            return rows;
+          }
+          if (tx.txType === "Sell" || tx.txType === "Transfer Out") {
+            const rows = [
+              { date: tx.date, desc: `${tx.txType} ${qty} × ${tx.sym} @ ${fmtAmt(price,ccy)}`, account: cashAcct,  amount: fmtAmt(Math.abs(total),ccy), debit: true,  _first: true  },
+              { date: null,    desc: "",                                                          account: stockAcct, amount: fmtAmt(gross,ccy),            debit: false, _first: false },
+            ];
+            if (fees > 0) rows.push({ date: null, desc: `Brokerage fee — ${tx.broker||"Broker"}`, account: feeAcct,  amount: fmtAmt(fees,ccy), debit: true,  _first: false },
+                                     { date: null, desc: "",                                        account: cashAcct, amount: fmtAmt(fees,ccy), debit: false, _first: false });
+            return rows;
+          }
+          if (tx.txType === "Dividend") {
+            const divAmt = qty * price;
+            return [
+              { date: tx.date, desc: `Dividend — ${tx.sym} (${qty} shares × ${fmtAmt(price,ccy)})`, account: cashAcct, amount: fmtAmt(divAmt,ccy), debit: true,  _first: true  },
+              { date: null,    desc: "",                                                               account: divAcct,  amount: fmtAmt(divAmt,ccy), debit: false, _first: false },
+            ];
+          }
+          return [];
+        });
+
+        if (tableRows.length === 0) {
+          return (
+            <div style={{ textAlign: "center", padding: "60px 20px", color: T.muted }}>
+              <div style={{ fontSize: 36, marginBottom: 12 }}>📒</div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>No transactions to post</div>
+              <div style={{ fontSize: 13, marginTop: 6 }}>Add stock transactions to see ledger postings</div>
+            </div>
+          );
+        }
+
+        return (
+          <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", background: T.bg }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T.border}` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: inter }}>Ledger Postings</div>
+              <div style={{ fontSize: 12, color: T.accent, marginTop: 3, fontFamily: inter }}>Double-entry bookkeeping · PTA compliant · {sorted.length} transactions</div>
+            </div>
+            <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: 560 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                    <th style={{ padding: "9px 16px", textAlign: "left", width: 148, fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter, whiteSpace: "nowrap" }}>Date</th>
+                    <th style={{ padding: "9px 16px", textAlign: "left", fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Account</th>
+                    <th style={{ padding: "9px 16px", textAlign: "left", fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Description</th>
+                    <th style={{ padding: "9px 16px", textAlign: "right", width: 160, fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Debit</th>
+                    <th style={{ padding: "9px 16px", textAlign: "right", width: 160, fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Credit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map((row, ri) => (
+                    <tr key={ri} style={{ borderBottom: `1px solid ${T.border}` }}>
+                      <td style={{ padding: "11px 16px", verticalAlign: "top", width: 148 }}>
+                        {row._first ? (
+                          <>
+                            <div style={{ fontSize: 13, fontWeight: 400, color: T.text, fontFamily: inter, whiteSpace: "nowrap" }}>{row.date}</div>
+                            <div style={{ fontSize: 11, color: T.dim, marginTop: 2, fontFamily: inter }}>{daysAgo(row.date)}</div>
+                          </>
+                        ) : null}
+                      </td>
+                      <td style={{ padding: "11px 16px", verticalAlign: "top" }}>
+                        <span style={{ fontFamily: mono, fontSize: 12, color: T.text }}>{row.account}</span>
+                      </td>
+                      <td style={{ padding: "11px 16px", verticalAlign: "top", fontSize: 12, color: T.muted, fontFamily: inter }}>{row.desc}</td>
+                      <td style={{ padding: "11px 16px", verticalAlign: "top", textAlign: "right", whiteSpace: "nowrap" }}>
+                        {row.debit
+                          ? <span style={{ fontSize: 13, fontWeight: 700, color: T.up, fontFamily: inter }}>{row.amount}</span>
+                          : <span style={{ fontSize: 13, color: T.dim, fontFamily: inter }}>—</span>}
+                      </td>
+                      <td style={{ padding: "11px 16px", verticalAlign: "top", textAlign: "right", whiteSpace: "nowrap" }}>
+                        {!row.debit
+                          ? <span style={{ fontSize: 13, fontWeight: 700, color: T.down, fontFamily: inter }}>{row.amount}</span>
+                          : <span style={{ fontSize: 13, color: T.dim, fontFamily: inter }}>—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: "12px 20px", borderTop: `1px solid ${T.border}`, background: T.sidebar }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 6, fontFamily: inter }}>Double-Entry Accounting</div>
+              <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.8, fontFamily: inter }}>
+                <div>• <span style={{ color: T.up, fontWeight: 600 }}>Debit (Dr):</span> Buy → increases Assets:Investments; Sell / Dividend → increases Assets:Bank:Cash</div>
+                <div>• <span style={{ color: T.down, fontWeight: 600 }}>Credit (Cr):</span> Buy → reduces cash; Sell → reduces equity position; Dividend → records income</div>
+              </div>
+              <div style={{ fontSize: 11, color: T.dim, marginTop: 8, fontFamily: inter }}>Every transaction has equal debits and credits (sum = 0)</div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── API TAB ── */}
       {tab === "api" && (
@@ -3910,12 +4037,12 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         const tc = typeConf(pol.type);
         const annualPrem = (parseFloat(pol.premium)||0) * ({ Monthly:12, Quarterly:4, "Half-Yearly":2, Yearly:1, "Single Premium":0, "N/A":0 }[pol.premFreq]||1);
         const cv = (pol.cashValue||0);
-        const DETAIL_TABS = ["overview","coverage","premiums","transactions","claims","exclusions","documents"];
+        const DETAIL_TABS = ["overview","coverage","premiums","transactions","claims","exclusions","documents","postings"];
 
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }}
             onClick={e => { if (e.target === e.currentTarget) { setSelectedPolicy(null); setTxSearch(""); setTxFilter("All"); setTxSort("desc"); } }}>
-            <div style={{ width: 580, height: "100vh", background: T.bg, overflow: "hidden", boxShadow: "-4px 0 32px rgba(0,0,0,0.15)", display: "flex", flexDirection: "column" }}>
+            <div style={{ width: "min(960px, 95vw)", height: "100vh", background: T.bg, overflow: "hidden", boxShadow: "-4px 0 32px rgba(0,0,0,0.15)", display: "flex", flexDirection: "column" }}>
 
               {/* Drawer header */}
               <div style={{ padding: "20px 24px 16px", borderBottom: `1px solid ${T.border}`, background: T.sidebar, flexShrink: 0 }}>
@@ -3963,7 +4090,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 <div style={{ marginTop: 14, borderBottom: `1px solid ${T.border}`, overflowX: "auto", scrollbarWidth: "none" }}>
                   <div style={{ display: "flex", gap: 0, minWidth: "max-content" }}>
                     {DETAIL_TABS.map(dt => {
-                      const label = { transactions: "Tx History", claims: "Claims", exclusions: "Exclusions", documents: "Documents", overview: "Overview", coverage: "Coverage", premiums: "Premiums" }[dt] || dt;
+                      const label = { transactions: "Tx History", claims: "Claims", exclusions: "Exclusions", documents: "Documents", overview: "Overview", coverage: "Coverage", premiums: "Premiums", postings: "Postings" }[dt] || dt;
                       const badge = dt === "claims" && (pol.claims || []).length > 0 ? pol.claims.length
                                   : dt === "transactions" && (pol.premiumTransactions || []).length > 0 ? pol.premiumTransactions.length
                                   : null;
@@ -4386,6 +4513,127 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                     ))}
                   </div>
                 )}
+                {detailTab === "postings" && (() => {
+                  const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+                  const mono  = "'Courier New',Courier,monospace";
+                  const txs    = (pol.premiumTransactions || []).filter(t => t.status === "Paid").slice().sort((a,b) => a.date.localeCompare(b.date));
+                  const claims = (pol.claims || []).filter(c => c.status === "Approved").slice().sort((a,b) => a.date.localeCompare(b.date));
+                  const ccy   = pol.currency || "SGD";
+                  const sym2  = ccy === "USD" ? "US$" : ccy === "GBP" ? "£" : "S$";
+                  const fmtA  = (v) => sym2 + Math.abs(parseFloat(v)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+                  const cashAcct = "Assets:Bank:Cash";
+                  const expAcct  = `Expenses:Insurance:${(pol.type||"General").replace(/ /g,"")}`;
+
+                  const daysAgo = (d) => {
+                    if (!d) return "";
+                    const diff = Math.floor((Date.now() - new Date(d)) / 86400000);
+                    return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago";
+                  };
+
+                  // Premium payments only — no inception entry
+                  const journalRows = [];
+
+                  // Build combined entries sorted by date
+                  const allEntries = [
+                    ...txs.map(tx => ({ _type: "premium", date: tx.date, tx })),
+                    ...claims.map(c  => ({ _type: "claim",   date: c.date,  c  })),
+                  ].sort((a, b) => a.date.localeCompare(b.date));
+
+                  allEntries.forEach(entry => {
+                    if (entry._type === "premium") {
+                      const tx  = entry.tx;
+                      const amt = parseFloat(tx.amount)||0;
+                      const fee = parseFloat(tx.fees)||0;
+                      journalRows.push(
+                        { date: tx.date, desc: `${tx.date.slice(0,7)} Premium — ${pol.planName}`, account: expAcct,  amount: fmtA(amt), debit: true,  _first: true  },
+                        { date: null,    desc: "",                                                  account: cashAcct, amount: fmtA(amt), debit: false, _first: false },
+                      );
+                      if (fee > 0) {
+                        journalRows.push(
+                          { date: null, desc: "Processing fee",              account: "Expenses:Insurance:Fees", amount: fmtA(fee), debit: true,  _first: false },
+                          { date: null, desc: "",                            account: cashAcct,                  amount: fmtA(fee), debit: false, _first: false },
+                        );
+                      }
+                    } else {
+                      const c   = entry.c;
+                      const amt = parseFloat(c.amount)||0;
+                      // Claim payout: Dr Assets:Bank:Cash (receive money), Cr Income:InsuranceClaim
+                      journalRows.push(
+                        { date: c.date, desc: `Claim payout — ${c.type}${c.notes ? ` (${c.notes.slice(0,40)}${c.notes.length>40?"…":""})` : ""}`, account: cashAcct, amount: fmtA(amt), debit: true,  _first: true  },
+                        { date: null,   desc: "",                                                                                                       account: `Income:InsuranceClaim:${pol.insurer.replace(/ /g,"")}`, amount: fmtA(amt), debit: false, _first: false },
+                      );
+                    }
+                  });
+
+                  if (journalRows.length === 0) {
+                    return (
+                      <div style={{ textAlign: "center", padding: "48px 20px", color: T.muted }}>
+                        <div style={{ fontSize: 32, marginBottom: 10 }}>📒</div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>No entries to post yet</div>
+                        <div style={{ fontSize: 12, marginTop: 4 }}>Record a premium payment to see ledger postings</div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", background: T.bg }}>
+                      <div style={{ padding: "14px 18px", borderBottom: `1px solid ${T.border}` }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: inter }}>Ledger Postings</div>
+                        <div style={{ fontSize: 12, color: T.accent, marginTop: 3, fontFamily: inter }}>Double-entry bookkeeping · PTA compliant · {txs.length} premium{txs.length !== 1 ? "s" : ""}{claims.length > 0 ? ` · ${claims.length} claim payout${claims.length !== 1 ? "s" : ""}` : ""}</div>
+                      </div>
+                      <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: 460 }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                              <th style={{ padding: "9px 16px", textAlign: "left", width: 148, fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter, whiteSpace: "nowrap" }}>Date</th>
+                              <th style={{ padding: "9px 16px", textAlign: "left", fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Account</th>
+                              <th style={{ padding: "9px 16px", textAlign: "left", fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Description</th>
+                              <th style={{ padding: "9px 16px", textAlign: "right", width: 148, fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Debit</th>
+                              <th style={{ padding: "9px 16px", textAlign: "right", width: 148, fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Credit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {journalRows.map((row, ri) => (
+                              <tr key={ri} style={{ borderBottom: `1px solid ${T.border}` }}>
+                                <td style={{ padding: "11px 16px", verticalAlign: "top", width: 148 }}>
+                                  {row._first && row.date ? (
+                                    <>
+                                      <div style={{ fontSize: 13, fontWeight: 400, color: T.text, fontFamily: inter, whiteSpace: "nowrap" }}>{row.date}</div>
+                                      <div style={{ fontSize: 11, color: T.dim, marginTop: 2, fontFamily: inter }}>{daysAgo(row.date)}</div>
+                                    </>
+                                  ) : null}
+                                </td>
+                                <td style={{ padding: "11px 16px", verticalAlign: "top" }}>
+                                  <span style={{ fontFamily: mono, fontSize: 12, color: T.text }}>{row.account}</span>
+                                </td>
+                                <td style={{ padding: "11px 16px", verticalAlign: "top", fontSize: 12, color: T.muted, fontFamily: inter }}>{row.desc}</td>
+                                <td style={{ padding: "11px 16px", verticalAlign: "top", textAlign: "right", whiteSpace: "nowrap" }}>
+                                  {row.debit
+                                    ? <span style={{ fontSize: 13, fontWeight: 700, color: T.up, fontFamily: inter }}>{row.amount}</span>
+                                    : <span style={{ fontSize: 13, color: T.dim, fontFamily: inter }}>—</span>}
+                                </td>
+                                <td style={{ padding: "11px 16px", verticalAlign: "top", textAlign: "right", whiteSpace: "nowrap" }}>
+                                  {!row.debit
+                                    ? <span style={{ fontSize: 13, fontWeight: 700, color: T.down, fontFamily: inter }}>{row.amount}</span>
+                                    : <span style={{ fontSize: 13, color: T.dim, fontFamily: inter }}>—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{ padding: "12px 18px", borderTop: `1px solid ${T.border}`, background: T.sidebar }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 6, fontFamily: inter }}>Double-Entry Accounting</div>
+                        <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.8, fontFamily: inter }}>
+                          <div>• <span style={{ color: T.up, fontWeight: 600 }}>Debit (Dr):</span> Premium paid → increases Expenses:Insurance; Claim payout → increases Assets:Bank:Cash</div>
+                          <div>• <span style={{ color: T.down, fontWeight: 600 }}>Credit (Cr):</span> Premium paid → reduces Assets:Bank:Cash; Claim payout → records Income:InsuranceClaim</div>
+                        </div>
+                        <div style={{ fontSize: 11, color: T.dim, marginTop: 8, fontFamily: inter }}>Every transaction has equal debits and credits (sum = 0)</div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
               </div>
             </div>
           </div>
@@ -5995,8 +6243,14 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
             const inter = "'Inter','Segoe UI',system-ui,sans-serif";
             const mono  = "'Courier New',Courier,monospace";
             const sym   = card.currency === "USD" ? "US$" : card.currency === "GBP" ? "£" : "S$";
-            const cardAcct = `Liabilities:CreditCard:${card.bank.replace(/ /g,"")}:${card.cardName.replace(/ /g,"")}`;
-            const cashAcct = linkedAcc ? `Assets:Bank:${linkedAcc.bankName||linkedAcc.accountName}` : "Assets:Bank:Cash";
+            // Debit cards: money flows directly from bank account. Credit cards: uses liability account.
+            const bankAcct = linkedAcc
+              ? `Assets:Bank:${(linkedAcc.bankName||linkedAcc.accountName||"Checking").replace(/ /g,"")}`
+              : "Assets:Bank:Cash";
+            const cardLiabilityAcct = `Liabilities:CreditCard:${card.bank.replace(/ /g,"")}:${card.cardName.replace(/ /g,"")}`;
+            // For debit: spend comes straight from bank. For credit: spend goes to liability.
+            const spendAcct   = isDebit ? bankAcct : cardLiabilityAcct;
+            const repayAcct   = isDebit ? bankAcct : bankAcct; // repayment always from bank
 
             // Build PTA journal from transactions
             const sorted = [...cardTxns].sort((a,b) => a.date.localeCompare(b.date));
@@ -6011,27 +6265,27 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
 
             // Build table rows: each txn = 2 ledger lines
             const tableRows = sorted.flatMap((txn) => {
-              const isRepayment = txn.type === "Repayment" || txn.type === "Credit";
+              const isRepayment = !isDebit && (txn.type === "Repayment" || txn.type === "Credit");
               const isRefund    = txn.type === "Refund";
 
               if (isRepayment) {
-                // Paying off the card: Dr Liabilities:CC (reduces liability), Cr Assets:Bank (cash out)
+                // Credit card repayment: Dr Liabilities:CC (clears debt), Cr Assets:Bank (cash out)
                 return [
-                  { date: txn.date, desc: txn.description || "Card repayment", account: cardAcct,  amount: fmtAmt(txn.amount), debit: true,  _first: true  },
-                  { date: null,     desc: "",                                   account: cashAcct,  amount: fmtAmt(txn.amount), debit: false, _first: false },
+                  { date: txn.date, desc: txn.description || "Card repayment", account: cardLiabilityAcct, amount: fmtAmt(txn.amount), debit: true,  _first: true  },
+                  { date: null,     desc: "",                                   account: bankAcct,          amount: fmtAmt(txn.amount), debit: false, _first: false },
                 ];
               }
               if (isRefund) {
-                // Merchant refund: Dr Liabilities:CC (reduces balance), Cr Expenses:Category (reversal)
+                // Refund: Dr spendAcct (bank for debit / liability for credit), Cr Expenses (reversal)
                 return [
-                  { date: txn.date, desc: txn.description || "Refund",                        account: cardAcct,                               amount: fmtAmt(txn.amount), debit: true,  _first: true  },
-                  { date: null,     desc: `Refund — ${txn.category || "General"}`,            account: `Expenses:${txn.category || "General"}`, amount: fmtAmt(txn.amount), debit: false, _first: false },
+                  { date: txn.date, desc: txn.description || "Refund",              account: spendAcct,                               amount: fmtAmt(txn.amount), debit: true,  _first: true  },
+                  { date: null,     desc: `Refund — ${txn.category || "General"}`,  account: `Expenses:${txn.category || "General"}`, amount: fmtAmt(txn.amount), debit: false, _first: false },
                 ];
               }
-              // Regular spend: Dr Expenses:Category, Cr Liabilities:CC (increases balance)
+              // Regular spend: Dr Expenses:Category, Cr bank (debit) or Cr liability (credit card)
               return [
                 { date: txn.date, desc: txn.description || txn.category, account: `Expenses:${txn.category || "General"}`, amount: fmtAmt(txn.amount), debit: true,  _first: true  },
-                { date: null,     desc: "",                               account: cardAcct,                                amount: fmtAmt(txn.amount), debit: false, _first: false },
+                { date: null,     desc: "",                               account: spendAcct,                               amount: fmtAmt(txn.amount), debit: false, _first: false },
               ];
             });
 
@@ -6100,8 +6354,17 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                 <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
                   <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:6,fontFamily:inter}}>Double-Entry Accounting</div>
                   <div style={{fontSize:11,color:T.muted,lineHeight:1.8,fontFamily:inter}}>
-                    <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Spend → increases Expenses; Repayment / Refund → reduces card liability</div>
-                    <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Spend → increases card liability; Repayment → reduces bank cash</div>
+                    {isDebit ? (
+                      <>
+                        <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Spend → increases Expenses; Refund → restores bank balance</div>
+                        <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Spend → reduces bank account directly</div>
+                      </>
+                    ) : (
+                      <>
+                        <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Spend → increases Expenses; Repayment / Refund → reduces card liability</div>
+                        <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Spend → increases card liability; Repayment → reduces bank cash</div>
+                      </>
+                    )}
                   </div>
                   <div style={{fontSize:11,color:T.dim,marginTop:8,fontFamily:inter}}>Every transaction has equal debits and credits (sum = 0)</div>
                 </div>
