@@ -2066,8 +2066,284 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
   const monthly = p.monthlyPayment || calcMonthly(p.loanAmount, p.interestRate, p.loanTenureYears);
   const update = (fields) => setProperties(prev => prev.map(pr => pr.id === p.id ? {...pr,...fields} : pr));
 
-  const TABS = ["overview","financials","rental","costs","insurance"];
-  const tabLabel = {overview:"Overview",financials:"Loan & Finance",rental:"Rental",costs:"Costs & Fees",insurance:"Insurance"};
+
+  // ── Add Contract Modal ─────────────────────────────
+  const AddContractModal = ({ onClose }) => {
+    const _lc   = p.loanContracts || [];
+    const _alt  = getLoanTypes(p.type);
+    const [f, setFL] = useState({
+      loanType: _alt[0], lender:"", loanAmount: p.purchasePrice * 0.75 || 0,
+      interestRate:2.6, rateType:"Floating", tenureYears:25,
+      monthlyPayment:0, startDate: p.purchaseDate||"", maturityDate:"",
+      isActive: _lc.length === 0, notes:"",
+    });
+    const upd = (k,v) => setFL(prev=>({...prev,[k]:v}));
+    const calc = calcMonthly(parseFloat(f.loanAmount)||0, parseFloat(f.interestRate)||0, parseInt(f.tenureYears)||25);
+    const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+    return (
+      <>
+        <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:400}}/>
+        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+          <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
+            <div><div style={{fontSize:14,fontWeight:700}}>Add Loan Contract</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+              {_alt.length === 1 ? "Bank loan only for this property type" : "HDB or Bank loan available"}
+            </div></div>
+            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
+          </div>
+          <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><Label>Loan Type</Label>
+                <select value={f.loanType} onChange={e=>upd("loanType",e.target.value)} style={iStyle}>
+                  {_alt.map(t=><option key={t}>{t}</option>)}
+                </select></div>
+              <div><Label>Lender / Bank</Label>
+                <input value={f.lender} onChange={e=>upd("lender",e.target.value)} placeholder={f.loanType==="HDB Loan"?"HDB":"e.g. DBS Bank"} style={iStyle}/></div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><Label>Loan Amount ({sym})</Label>
+                <input type="number" value={f.loanAmount} onChange={e=>upd("loanAmount",parseFloat(e.target.value)||0)} style={iStyle}/></div>
+              <div><Label>Interest Rate (% p.a.)</Label>
+                <input type="number" step="0.01" value={f.interestRate} onChange={e=>upd("interestRate",parseFloat(e.target.value)||0)} style={iStyle}/></div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><Label>Rate Type</Label>
+                <select value={f.rateType} onChange={e=>upd("rateType",e.target.value)} style={iStyle}>
+                  <option>Fixed</option><option>Floating</option><option>Hybrid</option>
+                </select></div>
+              <div><Label>Tenure (years)</Label>
+                <input type="number" value={f.tenureYears} onChange={e=>upd("tenureYears",parseInt(e.target.value)||25)} style={iStyle}/></div>
+            </div>
+            {calc > 0 && (
+              <div style={{background:T.accentBg,border:`1px solid ${T.accent}30`,borderRadius:8,padding:"9px 12px",fontSize:12,color:T.accent}}>
+                Estimated monthly: <strong>{sym}{calc.toLocaleString()}</strong>
+              </div>
+            )}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><Label>Start Date</Label>
+                <input type="date" value={f.startDate} onChange={e=>upd("startDate",e.target.value)} style={iStyle}/></div>
+              <div><Label>Maturity Date</Label>
+                <input type="date" value={f.maturityDate} onChange={e=>upd("maturityDate",e.target.value)} style={iStyle}/></div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:T.inputBg,borderRadius:8}}>
+              <input type="checkbox" id="isActiveCb" checked={f.isActive} onChange={e=>upd("isActive",e.target.checked)} style={{width:16,height:16,cursor:"pointer"}}/>
+              <label htmlFor="isActiveCb" style={{fontSize:13,cursor:"pointer",color:T.text}}>Mark as active/current loan contract</label>
+            </div>
+            <div><Label>Notes</Label>
+              <textarea value={f.notes} onChange={e=>upd("notes",e.target.value)} rows={2} style={{...iStyle,resize:"vertical"}}/></div>
+          </div>
+          <div style={{padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+            <button onClick={()=>{
+              const newC = {...f, id:"LC"+Date.now(), monthlyPayment: f.monthlyPayment||calc};
+              const existingActive = _lc.find(c => c.isActive);
+              const updContracts = f.isActive
+                ? [..._lc.map(c=>({...c,isActive:false})), newC]
+                : [..._lc, newC];
+              const settlementRepays = (f.isActive && existingActive) ? [{
+                id: "LR"+Date.now(),
+                contractId: existingActive.id,
+                date: f.startDate || new Date().toISOString().slice(0,10),
+                totalAmount: p.loanAmount || existingActive.loanAmount,
+                cashAmount: p.loanAmount || existingActive.loanAmount,
+                cpfAmount: 0, fees: 0, paymentType: "settlement",
+                notes: `Full settlement of ${existingActive.lender} loan upon refinancing to ${f.lender || newC.loanType}`,
+              }] : [];
+              update({
+                loanContracts: updContracts,
+                loanRepayments: [...(p.loanRepayments||[]), ...settlementRepays],
+                loanAmount: f.isActive ? parseFloat(f.loanAmount)||0 : p.loanAmount,
+                interestRate: f.isActive ? parseFloat(f.interestRate)||0 : p.interestRate,
+                loanTenureYears: f.isActive ? parseInt(f.tenureYears)||25 : p.loanTenureYears,
+                monthlyPayment: f.isActive ? (f.monthlyPayment||calc) : p.monthlyPayment,
+              });
+              onClose();
+              showToast(f.isActive && existingActive
+                ? `New contract added · ${existingActive.lender} loan marked settled`
+                : "Loan contract added", "success");
+            }}
+              style={{flex:1,background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              Add Contract
+            </button>
+            <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+          </div>
+        </div>
+      </>
+    );
+  };
+  // ── Add Repayment Modal ────────────────────────────
+  const AddRepayModal = ({ onClose }) => {
+    const _lc = p.loanContracts || [];
+    const _ac = _lc.find(c => c.isActive) || _lc[0];
+    const _cpfOK = isCPFEligible(p.type, p.country);
+    const [f, setFL] = useState({
+      contractId: _ac ? _ac.id : "",
+      date: new Date().toISOString().slice(0,10),
+      totalAmount: _ac ? _ac.monthlyPayment : 0,
+      cashAmount: _ac ? _ac.monthlyPayment : 0,
+      cpfAmount:0, fees:0, notes:"",
+      useCPF: false,
+      paymentType: "monthly",
+    });
+    const upd = (k,v) => setFL(prev=>({...prev,[k]:v}));
+    const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+    const cpfAmt = parseFloat(f.cpfAmount)||0;
+    const cashAmt = parseFloat(f.cashAmount)||0;
+    const total = parseFloat(f.totalAmount)||0;
+    const splitMatch = !f.useCPF || Math.abs((cashAmt + cpfAmt) - total) < 0.01;
+    const selectedContract = _lc.find(c=>c.id===f.contractId);
+    const scheduledMonthly = selectedContract ? selectedContract.monthlyPayment : 0;
+    return (
+      <>
+        <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:400}}/>
+        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+          <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
+            <div><div style={{fontSize:14,fontWeight:700}}>Record Loan Repayment</div>
+            {_cpfOK && <div style={{fontSize:11,color:T.accent,marginTop:2}}>CPF-OA repayment available for this property</div>}</div>
+            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
+          </div>
+          <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+            {_lc.length > 1 && (
+              <div><Label>Loan Contract</Label>
+                <select value={f.contractId} onChange={e=>{
+                  const c = _lc.find(lc=>lc.id===e.target.value);
+                  upd("contractId",e.target.value);
+                  if(c){ upd("totalAmount",c.monthlyPayment); if(!f.useCPF) upd("cashAmount",c.monthlyPayment); }
+                }} style={iStyle}>
+                  {_lc.map(c=><option key={c.id} value={c.id}>{c.lender} — {sym}{c.loanAmount.toLocaleString()} @ {c.interestRate}% {c.isActive?"(Active)":""}</option>)}
+                </select></div>
+            )}
+            {/* Payment type selector */}
+            <div style={{display:"flex",gap:6}}>
+              {[{id:"monthly",label:"Monthly Payment"},{id:"partial",label:"Partial Payment"}].map(t=>(
+                <button key={t.id} onClick={()=>{
+                  upd("paymentType",t.id);
+                  if(t.id==="monthly"){
+                    upd("totalAmount",scheduledMonthly);
+                    if(!f.useCPF) upd("cashAmount",scheduledMonthly);
+                    else upd("cashAmount",Math.max(0,Math.round((scheduledMonthly-(parseFloat(f.cpfAmount)||0))*100)/100));
+                  }
+                }}
+                  style={{flex:1,padding:"8px 10px",borderRadius:8,border:`1.5px solid ${(f.paymentType||"monthly")===t.id?T.selected:T.border}`,
+                    background:(f.paymentType||"monthly")===t.id?T.selected:"transparent",
+                    color:(f.paymentType||"monthly")===t.id?T.selectedText:T.muted,
+                    cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textAlign:"center"}}>
+                  {t.id==="monthly"?"📅 "+t.label:"✂️ "+t.label}
+                </button>
+              ))}
+            </div>
+            {(f.paymentType||"monthly")==="partial" && (
+              <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:8,padding:"8px 12px",fontSize:12,color:T.warn}}>
+                Partial payment — enter any amount less than or different from the scheduled monthly. This will be recorded separately and does not replace the scheduled payment.
+              </div>
+            )}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><Label>Payment Date</Label>
+                <input type="date" value={f.date} onChange={e=>upd("date",e.target.value)} style={iStyle}/></div>
+              <div>
+                <Label required>Total Amount ({sym})</Label>
+                <input type="number" value={f.totalAmount}
+                  readOnly={(f.paymentType||"monthly")==="monthly"}
+                  onChange={e=>{
+                    if((f.paymentType||"monthly")==="monthly") return;
+                    const newTotal = parseFloat(e.target.value)||0;
+                    upd("totalAmount", e.target.value);
+                    if(!f.useCPF) {
+                      upd("cashAmount", newTotal);
+                    } else {
+                      const cpf = parseFloat(f.cpfAmount)||0;
+                      upd("cashAmount", Math.max(0, Math.round((newTotal - cpf)*100)/100));
+                    }
+                  }}
+                  style={{...iStyle,
+                    background:(f.paymentType||"monthly")==="monthly"?T.inputBg:T.bg,
+                    borderColor:(f.paymentType||"monthly")==="partial"?T.accent:T.border,
+                    color:(f.paymentType||"monthly")==="monthly"?T.muted:T.text}}/>
+                {scheduledMonthly > 0 && (
+                  <div style={{fontSize:11,color:T.muted,marginTop:4}}>
+                    Scheduled: <span style={{fontWeight:700,color:T.text}}>{sym}{scheduledMonthly.toLocaleString(undefined,{minimumFractionDigits:2})}</span> / month
+                    {(f.paymentType||"monthly")==="partial" && parseFloat(f.totalAmount)>0 && parseFloat(f.totalAmount) !== scheduledMonthly && (
+                      <span style={{marginLeft:6,color:T.warn,fontWeight:600}}>
+                        ({parseFloat(f.totalAmount)<scheduledMonthly?"underpaying by ":"overpaying by "}{sym}{Math.abs(parseFloat(f.totalAmount)-scheduledMonthly).toLocaleString(undefined,{minimumFractionDigits:2})})
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            {_cpfOK && (
+              <div style={{padding:"10px 12px",background:f.useCPF?T.accentBg:T.inputBg,border:`1px solid ${f.useCPF?T.accent+"40":T.border}`,borderRadius:9}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:f.useCPF?10:0}}>
+                  <input type="checkbox" id="cpfToggle" checked={f.useCPF} onChange={e=>{
+                    upd("useCPF",e.target.checked);
+                    if(!e.target.checked){upd("cpfAmount",0);upd("cashAmount",parseFloat(f.totalAmount)||0);}
+                  }} style={{width:16,height:16,cursor:"pointer"}}/>
+                  <label htmlFor="cpfToggle" style={{fontSize:13,cursor:"pointer",fontWeight:600,color:f.useCPF?T.accent:T.text}}>
+                    Include CPF-OA payment (optional)
+                  </label>
+                </div>
+                {f.useCPF && (
+                  <>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                      <div><Label>Cash Amount ({sym})</Label>
+                        <input type="number" value={f.cashAmount}
+                          onChange={e=>{
+                            const cash = parseFloat(e.target.value)||0;
+                            upd("cashAmount", cash);
+                            upd("cpfAmount", Math.max(0, Math.round((total - cash)*100)/100));
+                          }} style={iStyle}/></div>
+                      <div><Label>CPF-OA Amount ({sym})</Label>
+                        <input type="number" value={f.cpfAmount}
+                          onChange={e=>{
+                            const cpf = parseFloat(e.target.value)||0;
+                            upd("cpfAmount", cpf);
+                            upd("cashAmount", Math.max(0, Math.round((total - cpf)*100)/100));
+                          }} style={iStyle}/></div>
+                    </div>
+                    <div style={{marginTop:8,padding:"7px 10px",borderRadius:7,fontSize:12,
+                      background:splitMatch?T.upBg:T.downBg, border:`1px solid ${splitMatch?"#BBF7D0":"#FECACA"}`,
+                      color:splitMatch?T.up:T.down, fontWeight:600}}>
+                      {splitMatch
+                        ? `✅ Split: ${sym}${cashAmt.toLocaleString(undefined,{minimumFractionDigits:2})} cash + ${sym}${cpfAmt.toLocaleString(undefined,{minimumFractionDigits:2})} CPF = ${sym}${(cashAmt+cpfAmt).toLocaleString(undefined,{minimumFractionDigits:2})}`
+                        : `❌ Cash + CPF (${sym}${(cashAmt+cpfAmt).toLocaleString(undefined,{minimumFractionDigits:2})}) ≠ Total (${sym}${total.toLocaleString(undefined,{minimumFractionDigits:2})})`
+                      }
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><Label>Fees (optional, {sym})</Label>
+                <input type="number" value={f.fees} onChange={e=>upd("fees",parseFloat(e.target.value)||0)} placeholder="0.00" style={iStyle}/></div>
+              <div></div>
+            </div>
+            <div><Label>Notes (optional)</Label>
+              <textarea value={f.notes} onChange={e=>upd("notes",e.target.value)} rows={2}
+                style={{...iStyle,resize:"vertical"}} placeholder="e.g. Partial capital repayment"/></div>
+          </div>
+          <div style={{padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+            <button disabled={!f.totalAmount||!f.date||(f.useCPF&&!splitMatch)}
+              onClick={()=>{
+                const repay = { id:"LR"+Date.now(), contractId:f.contractId, date:f.date,
+                  totalAmount:total, cashAmount:f.useCPF?cashAmt:total, cpfAmount:f.useCPF?cpfAmt:0,
+                  fees:parseFloat(f.fees)||0, notes:f.notes, paymentType: f.paymentType||"monthly" };
+                update({ loanRepayments:[...(p.loanRepayments||[]), repay] });
+                onClose(); showToast("Repayment recorded","success");
+              }}
+              style={{flex:1, background:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?T.inputBg:T.selected,
+                color:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?T.dim:T.selectedText,
+                border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,
+                cursor:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?"not-allowed":"pointer",fontFamily:"inherit"}}>
+              Record Repayment
+            </button>
+            <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  const TABS = ["overview","financials","rental","costs","insurance","postings"];
+  const tabLabel = {overview:"Overview",financials:"Loan & Finance",rental:"Rental",costs:"Costs & Fees",insurance:"Insurance",postings:"Postings"};
 
   const handleSave = () => {
     update(ef);
@@ -2105,7 +2381,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
             </div>
           </div>
           <div style={{display:"flex",gap:6}}>
-            {propTab !== "insurance" && propTab !== "financials" && (
+            {propTab !== "insurance" && propTab !== "financials" && propTab !== "postings" && (
               <>
                 <button onClick={editing ? handleSave : handleEdit}
                   style={{padding:"6px 14px",borderRadius:8,border:`1px solid ${editing?T.up:T.border}`,background:editing?T.upBg:T.bg,color:editing?T.up:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
@@ -2287,268 +2563,6 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
           const cpfOK = isCPFEligible(p.type, p.country);
           const allowedLoanTypes = getLoanTypes(p.type);
 
-          // ── Add Contract Modal ─────────────────────────────
-          const AddContractModal = ({ onClose }) => {
-            const loanContracts = p.loanContracts || [];
-            const allowedLoanTypes = getLoanTypes(p.type);
-            const sym2 = sym;
-            const [f, setFL] = useState({
-              loanType: allowedLoanTypes[0], lender:"", loanAmount: p.purchasePrice * 0.75 || 0,
-              interestRate:2.6, rateType:"Floating", tenureYears:25,
-              monthlyPayment:0, startDate: p.purchaseDate||"", maturityDate:"",
-              isActive: loanContracts.length === 0, notes:"",
-            });
-            const upd = (k,v) => setFL(prev=>({...prev,[k]:v}));
-            const calc = calcMonthly(parseFloat(f.loanAmount)||0, parseFloat(f.interestRate)||0, parseInt(f.tenureYears)||25);
-            const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
-            return (
-              <>
-                <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:400}}/>
-                <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
-                  <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
-                    <div><div style={{fontSize:14,fontWeight:700}}>Add Loan Contract</div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>
-                      {allowedLoanTypes.length === 1 ? "Bank loan only for this property type" : "HDB or Bank loan available"}
-                    </div></div>
-                    <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
-                  </div>
-                  <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                      <div><Label>Loan Type</Label>
-                        <select value={f.loanType} onChange={e=>upd("loanType",e.target.value)} style={iStyle}>
-                          {allowedLoanTypes.map(t=><option key={t}>{t}</option>)}
-                        </select></div>
-                      <div><Label>Lender / Bank</Label>
-                        <input value={f.lender} onChange={e=>upd("lender",e.target.value)} placeholder={f.loanType==="HDB Loan"?"HDB":"e.g. DBS Bank"} style={iStyle}/></div>
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                      <div><Label>Loan Amount ({sym2})</Label>
-                        <input type="number" value={f.loanAmount} onChange={e=>upd("loanAmount",parseFloat(e.target.value)||0)} style={iStyle}/></div>
-                      <div><Label>Interest Rate (% p.a.)</Label>
-                        <input type="number" step="0.01" value={f.interestRate} onChange={e=>upd("interestRate",parseFloat(e.target.value)||0)} style={iStyle}/></div>
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                      <div><Label>Rate Type</Label>
-                        <select value={f.rateType} onChange={e=>upd("rateType",e.target.value)} style={iStyle}>
-                          <option>Fixed</option><option>Floating</option><option>Hybrid</option>
-                        </select></div>
-                      <div><Label>Tenure (years)</Label>
-                        <input type="number" value={f.tenureYears} onChange={e=>upd("tenureYears",parseInt(e.target.value)||25)} style={iStyle}/></div>
-                    </div>
-                    {calc > 0 && (
-                      <div style={{background:T.accentBg,border:`1px solid ${T.accent}30`,borderRadius:8,padding:"9px 12px",fontSize:12,color:T.accent}}>
-                        Estimated monthly: <strong>{sym2}{calc.toLocaleString()}</strong>
-                      </div>
-                    )}
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                      <div><Label>Start Date</Label>
-                        <input type="date" value={f.startDate} onChange={e=>upd("startDate",e.target.value)} style={iStyle}/></div>
-                      <div><Label>Maturity Date</Label>
-                        <input type="date" value={f.maturityDate} onChange={e=>upd("maturityDate",e.target.value)} style={iStyle}/></div>
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:T.inputBg,borderRadius:8}}>
-                      <input type="checkbox" id="isActiveCb" checked={f.isActive} onChange={e=>upd("isActive",e.target.checked)} style={{width:16,height:16,cursor:"pointer"}}/>
-                      <label htmlFor="isActiveCb" style={{fontSize:13,cursor:"pointer",color:T.text}}>Mark as active/current loan contract</label>
-                    </div>
-                    <div><Label>Notes</Label>
-                      <textarea value={f.notes} onChange={e=>upd("notes",e.target.value)} rows={2} style={{...iStyle,resize:"vertical"}}/></div>
-                  </div>
-                  <div style={{padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
-                    <button onClick={()=>{
-                      const newC = {...f, id:"LC"+Date.now(), monthlyPayment: f.monthlyPayment||calc};
-                      const updContracts = f.isActive
-                        ? [...loanContracts.map(c=>({...c,isActive:false})), newC]
-                        : [...loanContracts, newC];
-                      update({ loanContracts: updContracts,
-                        loanAmount: f.isActive ? parseFloat(f.loanAmount)||0 : p.loanAmount,
-                        interestRate: f.isActive ? parseFloat(f.interestRate)||0 : p.interestRate,
-                        loanTenureYears: f.isActive ? parseInt(f.tenureYears)||25 : p.loanTenureYears,
-                        monthlyPayment: f.isActive ? (f.monthlyPayment||calc) : p.monthlyPayment });
-                      onClose(); showToast("Loan contract added","success");
-                    }}
-                      style={{flex:1,background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                      Add Contract
-                    </button>
-                    <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
-                  </div>
-                </div>
-              </>
-            );
-          };
-
-          // ── Add Repayment Modal ────────────────────────────
-          const AddRepayModal = ({ onClose }) => {
-            const loanContracts2 = p.loanContracts || [];
-            const activeContract2 = loanContracts2.find(c => c.isActive) || loanContracts2[0];
-            const cpfOK2 = isCPFEligible(p.type, p.country);
-            const sym2 = sym;
-            const [f, setFL] = useState({
-              contractId: activeContract2 ? activeContract2.id : "",
-              date: new Date().toISOString().slice(0,10),
-              totalAmount: activeContract2 ? activeContract2.monthlyPayment : 0,
-              cashAmount: activeContract2 ? activeContract2.monthlyPayment : 0,
-              cpfAmount:0, fees:0, notes:"",
-              useCPF: false,
-              paymentType: "monthly",
-            });
-            const upd = (k,v) => setFL(prev=>({...prev,[k]:v}));
-            const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
-            const cpfAmt = parseFloat(f.cpfAmount)||0;
-            const cashAmt = parseFloat(f.cashAmount)||0;
-            const total = parseFloat(f.totalAmount)||0;
-            const splitMatch = !f.useCPF || Math.abs((cashAmt + cpfAmt) - total) < 0.01;
-            const selectedContract = loanContracts2.find(c=>c.id===f.contractId);
-            const scheduledMonthly = selectedContract ? selectedContract.monthlyPayment : 0;
-            return (
-              <>
-                <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:400}}/>
-                <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
-                  <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
-                    <div><div style={{fontSize:14,fontWeight:700}}>Record Loan Repayment</div>
-                    {cpfOK2 && <div style={{fontSize:11,color:T.accent,marginTop:2}}>CPF-OA repayment available for this property</div>}</div>
-                    <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
-                  </div>
-                  <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
-                    {loanContracts2.length > 1 && (
-                      <div><Label>Loan Contract</Label>
-                        <select value={f.contractId} onChange={e=>{
-                          const c = loanContracts2.find(lc=>lc.id===e.target.value);
-                          upd("contractId",e.target.value);
-                          if(c){ upd("totalAmount",c.monthlyPayment); if(!f.useCPF) upd("cashAmount",c.monthlyPayment); }
-                        }} style={iStyle}>
-                          {loanContracts2.map(c=><option key={c.id} value={c.id}>{c.lender} — {sym2}{c.loanAmount.toLocaleString()} @ {c.interestRate}% {c.isActive?"(Active)":""}</option>)}
-                        </select></div>
-                    )}
-                    {/* Payment type selector */}
-                    <div style={{display:"flex",gap:6}}>
-                      {[{id:"monthly",label:"Monthly Payment"},{id:"partial",label:"Partial Payment"}].map(t=>(
-                        <button key={t.id} onClick={()=>{
-                          upd("paymentType",t.id);
-                          if(t.id==="monthly"){
-                            upd("totalAmount",scheduledMonthly);
-                            if(!f.useCPF) upd("cashAmount",scheduledMonthly);
-                            else upd("cashAmount",Math.max(0,Math.round((scheduledMonthly-(parseFloat(f.cpfAmount)||0))*100)/100));
-                          }
-                        }}
-                          style={{flex:1,padding:"8px 10px",borderRadius:8,border:`1.5px solid ${(f.paymentType||"monthly")===t.id?T.selected:T.border}`,
-                            background:(f.paymentType||"monthly")===t.id?T.selected:"transparent",
-                            color:(f.paymentType||"monthly")===t.id?T.selectedText:T.muted,
-                            cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textAlign:"center"}}>
-                          {t.id==="monthly"?"📅 "+t.label:"✂️ "+t.label}
-                        </button>
-                      ))}
-                    </div>
-                    {(f.paymentType||"monthly")==="partial" && (
-                      <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:8,padding:"8px 12px",fontSize:12,color:T.warn}}>
-                        Partial payment — enter any amount less than or different from the scheduled monthly. This will be recorded separately and does not replace the scheduled payment.
-                      </div>
-                    )}
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                      <div><Label>Payment Date</Label>
-                        <input type="date" value={f.date} onChange={e=>upd("date",e.target.value)} style={iStyle}/></div>
-                      <div>
-                        <Label required>Total Amount ({sym2})</Label>
-                        <input type="number" value={f.totalAmount}
-                          readOnly={(f.paymentType||"monthly")==="monthly"}
-                          onChange={e=>{
-                            if((f.paymentType||"monthly")==="monthly") return;
-                            const newTotal = parseFloat(e.target.value)||0;
-                            upd("totalAmount", e.target.value);
-                            if(!f.useCPF) {
-                              upd("cashAmount", newTotal);
-                            } else {
-                              const cpf = parseFloat(f.cpfAmount)||0;
-                              upd("cashAmount", Math.max(0, Math.round((newTotal - cpf)*100)/100));
-                            }
-                          }}
-                          style={{...iStyle,
-                            background:(f.paymentType||"monthly")==="monthly"?T.inputBg:T.bg,
-                            borderColor:(f.paymentType||"monthly")==="partial"?T.accent:T.border,
-                            color:(f.paymentType||"monthly")==="monthly"?T.muted:T.text}}/>
-                        {scheduledMonthly > 0 && (
-                          <div style={{fontSize:11,color:T.muted,marginTop:4}}>
-                            Scheduled: <span style={{fontWeight:700,color:T.text}}>{sym2}{scheduledMonthly.toLocaleString(undefined,{minimumFractionDigits:2})}</span> / month
-                            {(f.paymentType||"monthly")==="partial" && parseFloat(f.totalAmount)>0 && parseFloat(f.totalAmount) !== scheduledMonthly && (
-                              <span style={{marginLeft:6,color:T.warn,fontWeight:600}}>
-                                ({parseFloat(f.totalAmount)<scheduledMonthly?"underpaying by ":"overpaying by "}{sym2}{Math.abs(parseFloat(f.totalAmount)-scheduledMonthly).toLocaleString(undefined,{minimumFractionDigits:2})})
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    {cpfOK2 && (
-                      <div style={{padding:"10px 12px",background:f.useCPF?T.accentBg:T.inputBg,border:`1px solid ${f.useCPF?T.accent+"40":T.border}`,borderRadius:9}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:f.useCPF?10:0}}>
-                          <input type="checkbox" id="cpfToggle" checked={f.useCPF} onChange={e=>{
-                            upd("useCPF",e.target.checked);
-                            if(!e.target.checked){upd("cpfAmount",0);upd("cashAmount",parseFloat(f.totalAmount)||0);}
-                          }} style={{width:16,height:16,cursor:"pointer"}}/>
-                          <label htmlFor="cpfToggle" style={{fontSize:13,cursor:"pointer",fontWeight:600,color:f.useCPF?T.accent:T.text}}>
-                            Include CPF-OA payment (optional)
-                          </label>
-                        </div>
-                        {f.useCPF && (
-                          <>
-                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                              <div><Label>Cash Amount ({sym2})</Label>
-                                <input type="number" value={f.cashAmount}
-                                  onChange={e=>{
-                                    const cash = parseFloat(e.target.value)||0;
-                                    upd("cashAmount", cash);
-                                    upd("cpfAmount", Math.max(0, Math.round((total - cash)*100)/100));
-                                  }} style={iStyle}/></div>
-                              <div><Label>CPF-OA Amount ({sym2})</Label>
-                                <input type="number" value={f.cpfAmount}
-                                  onChange={e=>{
-                                    const cpf = parseFloat(e.target.value)||0;
-                                    upd("cpfAmount", cpf);
-                                    upd("cashAmount", Math.max(0, Math.round((total - cpf)*100)/100));
-                                  }} style={iStyle}/></div>
-                            </div>
-                            <div style={{marginTop:8,padding:"7px 10px",borderRadius:7,fontSize:12,
-                              background:splitMatch?T.upBg:T.downBg, border:`1px solid ${splitMatch?"#BBF7D0":"#FECACA"}`,
-                              color:splitMatch?T.up:T.down, fontWeight:600}}>
-                              {splitMatch
-                                ? `✅ Split: ${sym2}${cashAmt.toLocaleString(undefined,{minimumFractionDigits:2})} cash + ${sym2}${cpfAmt.toLocaleString(undefined,{minimumFractionDigits:2})} CPF = ${sym2}${(cashAmt+cpfAmt).toLocaleString(undefined,{minimumFractionDigits:2})}`
-                                : `❌ Cash + CPF (${sym2}${(cashAmt+cpfAmt).toLocaleString(undefined,{minimumFractionDigits:2})}) ≠ Total (${sym2}${total.toLocaleString(undefined,{minimumFractionDigits:2})})`
-                              }
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                      <div><Label>Fees (optional, {sym2})</Label>
-                        <input type="number" value={f.fees} onChange={e=>upd("fees",parseFloat(e.target.value)||0)} placeholder="0.00" style={iStyle}/></div>
-                      <div></div>
-                    </div>
-                    <div><Label>Notes (optional)</Label>
-                      <textarea value={f.notes} onChange={e=>upd("notes",e.target.value)} rows={2}
-                        style={{...iStyle,resize:"vertical"}} placeholder="e.g. Partial capital repayment"/></div>
-                  </div>
-                  <div style={{padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
-                    <button disabled={!f.totalAmount||!f.date||(f.useCPF&&!splitMatch)}
-                      onClick={()=>{
-                        const repay = { id:"LR"+Date.now(), contractId:f.contractId, date:f.date,
-                          totalAmount:total, cashAmount:f.useCPF?cashAmt:total, cpfAmount:f.useCPF?cpfAmt:0,
-                          fees:parseFloat(f.fees)||0, notes:f.notes, paymentType: f.paymentType||"monthly" };
-                        update({ loanRepayments:[...(p.loanRepayments||[]), repay] });
-                        onClose(); showToast("Repayment recorded","success");
-                      }}
-                      style={{flex:1, background:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?T.inputBg:T.selected,
-                        color:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?T.dim:T.selectedText,
-                        border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,
-                        cursor:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?"not-allowed":"pointer",fontFamily:"inherit"}}>
-                      Record Repayment
-                    </button>
-                    <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
-                  </div>
-                </div>
-              </>
-            );
-          };
-
           return (
             <>
               {/* Equity snapshot */}
@@ -2570,7 +2584,10 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
 
               {/* Sub-tabs */}
               <div style={{display:"flex",gap:4,borderBottom:`1px solid ${T.border}`,paddingBottom:0}}>
-                {[{id:"contracts",label:`Contracts (${loanContracts.length})`},{id:"repayments",label:`Repayments (${loanRepayments.length})`}].map(t=>(
+                {[
+                  {id:"contracts",  label:`Contracts (${loanContracts.length})`},
+                  {id:"repayments", label:`Repayments (${loanRepayments.length})`},
+                ].map(t=>(
                   <button key={t.id} onClick={()=>setFinTab(t.id)}
                     style={{padding:"8px 14px",border:"none",borderBottom:`2px solid ${finTab===t.id?T.selected:"transparent"}`,
                       background:"transparent",color:finTab===t.id?T.text:T.muted,cursor:"pointer",
@@ -2668,6 +2685,9 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                                   {r.paymentType === "partial" && (
                                     <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:4,background:T.warnBg,color:T.warn,border:`1px solid #FDE68A`}}>Partial</span>
                                   )}
+                                  {r.paymentType === "settlement" && (
+                                    <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:4,background:T.downBg,color:T.down,border:`1px solid #FECACA`}}>Settlement</span>
+                                  )}
                                 </div>
                                 <div style={{fontSize:11,color:T.muted,marginTop:1}}>
                                   {contract ? `${contract.lender} · ${contract.loanType}` : "Loan repayment"}
@@ -2698,13 +2718,231 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                 </>
               )}
 
-              {showAddContract && <AddContractModal onClose={()=>setShowAddContract(false)}/>}
-              {showAddRepay && <AddRepayModal onClose={()=>setShowAddRepay(false)}/>}
+
             </>
           );
         })()}
+{/* ── POSTINGS sub-tab ── */}
+        {propTab === "postings" && (() => {
+          const loanContracts  = p.loanContracts  || [];
+          const loanRepayments = p.loanRepayments || [];
+          const activeContract = loanContracts.find(c => c.isActive) || loanContracts[0];
+          const purchasePrice  = p.purchasePrice  || 0;
+          const loanAmt        = activeContract ? activeContract.loanAmount : (p.loanAmount || 0);
+          const equity         = purchasePrice - loanAmt;
+          const stampDuty      = p.stampDuty  || 0;
+          const agentFee       = p.agentFee   || 0;
+          const otherFees      = p.otherFees  || 0;
+          const annualTax      = p.annualTax  || 0;
+          const mcstFee        = p.mcstFee    || 0;
+          const propertyName   = (p.name || "Property").replace(/ /g, "");
+          const purchaseDateFmt = p.purchaseDate || "????-??-??";
 
-        {/* ── RENTAL ── */}
+          // ── PTA formatters ────────────────────────────────
+          const fmtV = (v, neg) => {
+            const abs = Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+            return (neg ? "-" : "") + sym + abs;
+          };
+          const ptaLine = (account, amount, isCredit) => ({account, amount, isCredit});
+
+          // ── Build journal transactions ────────────────────
+          const journal = [];
+
+          // 1. Property purchase
+          const purchaseLines = [
+            ptaLine(`Assets:Fixed:Property:${propertyName}`, fmtV(purchasePrice, false), false),
+            stampDuty > 0 ? ptaLine(`Expenses:Property:StampDuty`, fmtV(stampDuty, false), false) : null,
+            agentFee  > 0 ? ptaLine(`Expenses:Property:LegalFees`, fmtV(agentFee,  false), false) : null,
+            otherFees > 0 ? ptaLine(`Expenses:Property:OtherFees`, fmtV(otherFees, false), false) : null,
+            loanAmt   > 0 ? ptaLine(`Liabilities:Mortgage:${activeContract ? activeContract.lender.replace(/ /g,"") : "Bank"}`, fmtV(loanAmt, true), true) : null,
+            ptaLine(`Assets:Bank:Cash`, fmtV(equity + stampDuty + agentFee + otherFees, true), true),
+          ].filter(Boolean);
+          journal.push({ date: purchaseDateFmt, desc: `Purchase ${propertyName}`, _order:0, lines: purchaseLines });
+
+          // 2. Each loan contract (refinancing)
+          loanContracts.forEach((c, ci) => {
+            if (ci === 0) return;
+            const prev = loanContracts[ci - 1];
+            journal.push({
+              date: c.startDate || purchaseDateFmt,
+              desc: `Refinance ${prev.lender.replace(/ /g,"")} into ${c.lender.replace(/ /g,"")}`,
+              _order: 1,
+              lines: [
+                ptaLine(`Liabilities:Mortgage:${prev.lender.replace(/ /g,"")}`, fmtV(p.loanAmount || prev.loanAmount, false), false),
+                ptaLine(`Liabilities:Mortgage:${c.lender.replace(/ /g,"")}`, fmtV(c.loanAmount, true), true),
+              ],
+            });
+          });
+
+          // 3. Loan repayments
+          loanRepayments
+            .slice().sort((a, b) => a.date.localeCompare(b.date))
+            .forEach((r, ri) => {
+              const contract = loanContracts.find(c => c.id === r.contractId) || activeContract;
+              const cLender  = (contract ? contract.lender : "Bank").replace(/ /g, "");
+              const cRate    = contract ? contract.interestRate : (p.interestRate || 0);
+              const cLoan    = contract ? contract.loanAmount  : loanAmt;
+              const cMonthly = contract ? contract.monthlyPayment : (p.monthlyPayment || 0);
+              const isSettlement = r.paymentType === "settlement";
+
+              if (isSettlement) {
+                journal.push({
+                  date: r.date, desc: `${cLender} full settlement`, _order: 1,
+                  lines: [
+                    ptaLine(`Liabilities:Mortgage:${cLender}`, fmtV(r.totalAmount, false), false),
+                    ptaLine(`Assets:Bank:Cash`, fmtV(r.totalAmount, true), true),
+                  ],
+                });
+                return;
+              }
+
+              const rr = cRate / 100 / 12;
+              const paysBefore = loanRepayments.filter(x => x.contractId === r.contractId && x.date < r.date && x.paymentType !== "settlement").length;
+              const outstandingBal = rr > 0
+                ? cLoan * Math.pow(1+rr, paysBefore) - cMonthly * (Math.pow(1+rr, paysBefore)-1) / rr
+                : cLoan;
+              const interestAmt  = rr > 0 ? Math.max(0, Math.round(outstandingBal * rr * 100) / 100) : 0;
+              const principalAmt = Math.max(0, r.totalAmount - interestAmt);
+              const cashAmt      = r.cashAmount || r.totalAmount;
+              const cpfAmt       = r.cpfAmount  || 0;
+              const label        = r.paymentType === "partial" ? " partial payment" : ` repayment month ${paysBefore+1}`;
+
+              const repayLines = [
+                ptaLine(`Liabilities:Mortgage:${cLender}`, fmtV(principalAmt, false), false),
+                ptaLine(`Expenses:Interest:Mortgage`, fmtV(interestAmt, false), false),
+                cpfAmt > 0 ? ptaLine(`Assets:CPF:OA`, fmtV(cpfAmt, true), true) : null,
+                ptaLine(`Assets:Bank:Cash`, fmtV(cashAmt + (r.fees||0), true), true),
+                r.fees > 0 ? ptaLine(`Expenses:Mortgage:AdminFees`, fmtV(r.fees, false), false) : null,
+              ].filter(Boolean);
+
+              journal.push({ date: r.date, desc: `${cLender}${label}`, _order: 1, lines: repayLines });
+            });
+
+          // 4. Recurring costs — dated to end of purchase year, sort chronologically with everything else
+          if (annualTax > 0) {
+            journal.push({
+              date: purchaseDateFmt.slice(0,4) + "-12-31",
+              desc: "Property tax payment",
+              _order: 1,
+              lines: [
+                ptaLine(`Expenses:Property:Tax`,  fmtV(annualTax, false), false),
+                ptaLine(`Assets:Bank:Cash`,        fmtV(annualTax, true),  true),
+              ],
+            });
+          }
+          if (mcstFee > 0) {
+            journal.push({
+              date: purchaseDateFmt.slice(0,4) + "-12-31",
+              desc: "MCST / maintenance fee",
+              _order: 1,
+              lines: [
+                ptaLine(`Expenses:Property:MCST`, fmtV(mcstFee, false), false),
+                ptaLine(`Assets:Bank:Cash`,        fmtV(mcstFee, true),  true),
+              ],
+            });
+          }
+
+          // Sort: purchase always first, then everything else strictly by date
+          journal.sort((a, b) => {
+            if (a._order === 0) return -1;
+            if (b._order === 0) return 1;
+            return a.date.localeCompare(b.date);
+          });
+
+          // Flatten journal into table rows
+          const tableRows = journal.flatMap(txn =>
+            txn.lines.map((ln, li) => ({
+              date: li === 0 ? txn.date : null,
+              desc: li === 0 ? txn.desc : "",
+              account: ln.account,
+              amount: ln.amount,
+              isCredit: ln.isCredit,
+            }))
+          );
+
+          const daysAgo = (d) => {
+            if (!d || d.includes("?")) return "";
+            const diff = Math.floor((Date.now() - new Date(d)) / 86400000);
+            return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago";
+          };
+
+          const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+          const mono  = "'Courier New',Courier,monospace";
+
+          return (
+                  <div style={{border:`1px solid ${T.border}`,borderRadius:14,overflow:"hidden",background:T.bg}}>
+                    {/* Header */}
+                    <div style={{padding:"18px 22px",borderBottom:`1px solid ${T.border}`}}>
+                      <div style={{fontSize:15,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
+                      <div style={{fontSize:12,color:T.accent,marginTop:4,fontFamily:inter}}>Double-entry bookkeeping postings for this asset (PTA compliant)</div>
+                    </div>
+
+                    {/* Table */}
+                    <div style={{overflowX:"auto"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse"}}>
+                        <thead>
+                          <tr style={{borderBottom:`1px solid ${T.border}`}}>
+                            <th style={{padding:"10px 18px",textAlign:"left",width:156,fontSize:12,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>Date</th>
+                            <th style={{padding:"10px 18px",textAlign:"left",fontSize:12,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.01em"}}>Account</th>
+                            <th style={{padding:"10px 18px",textAlign:"left",fontSize:12,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.01em"}}>Description</th>
+                            <th style={{padding:"10px 18px",textAlign:"right",width:170,fontSize:12,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.01em"}}>Debit</th>
+                            <th style={{padding:"10px 18px",textAlign:"right",width:170,fontSize:12,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.01em"}}>Credit</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tableRows.map((row, ri) => (
+                            <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
+                              {/* Date col — two-line when first row of txn */}
+                              <td style={{padding:"12px 18px",verticalAlign:"top",width:156}}>
+                                {row.date ? (
+                                  <>
+                                    <div style={{fontSize:13,fontWeight:400,color:T.text,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div>
+                                    <div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div>
+                                  </>
+                                ) : null}
+                              </td>
+                              {/* Account — monospace */}
+                              <td style={{padding:"12px 18px",verticalAlign:"top"}}>
+                                <span style={{fontFamily:mono,fontSize:13,color:T.text,fontWeight:400}}>{row.account}</span>
+                              </td>
+                              {/* Description — Inter muted */}
+                              <td style={{padding:"12px 18px",verticalAlign:"top",fontSize:13,color:T.muted,fontFamily:inter}}>
+                                {row.desc}
+                              </td>
+                              {/* Debit */}
+                              <td style={{padding:"12px 18px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                {!row.isCredit
+                                  ? <span style={{fontSize:13,fontWeight:700,color:T.up,fontFamily:inter}}>{row.amount}</span>
+                                  : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                              </td>
+                              {/* Credit */}
+                              <td style={{padding:"12px 18px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                {row.isCredit
+                                  ? <span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>
+                                  : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Legend */}
+                    <div style={{padding:"16px 22px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
+                      <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:8,fontFamily:inter}}>Double-Entry Accounting</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                        <div style={{fontSize:12,color:T.muted,fontFamily:inter}}>
+                          • <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Increases asset accounts, shown in green
+                        </div>
+                        <div style={{fontSize:12,color:T.muted,fontFamily:inter}}>
+                          • <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Decreases asset accounts, shown in red
+                        </div>
+                      </div>
+                      <div style={{fontSize:11,color:T.dim,marginTop:10,fontFamily:inter}}>Every transaction has equal debits and credits (sum = 0)</div>
+                    </div>
+                  </div>
+                );
+        })()}
         {propTab === "rental" && p.isRented && (
           <>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
@@ -2982,6 +3220,8 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
           );
         })()}
       </div></div>
+      {showAddContract && <AddContractModal onClose={()=>setShowAddContract(false)}/>}
+      {showAddRepay && <AddRepayModal onClose={()=>setShowAddRepay(false)}/>}
     </div>
   );
 }
@@ -3081,7 +3321,7 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
       </div></div>
 
       {/* Right panel */}
-      <div style={{flex:1,overflow:"hidden",background:T.bg}}>
+      <div style={{flex:1,overflow:"hidden",minHeight:0,background:T.bg,position:"relative"}}>
         {selPropData ? (
           <REDrawer
             key={selPropData.id}
@@ -5499,7 +5739,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
     showToast("Transaction removed","success");
   };
 
-  const TABS = [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"}];
+  const TABS = [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"},{id:"postings",label:"Postings"}];
 
   const nextDueDate = (() => {
     if(!card.dueDayOfMonth) return null;
@@ -5749,6 +5989,125 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
               )}
             </>
           )}
+
+          {/* ── POSTINGS ── */}
+          {tab === "postings" && (() => {
+            const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+            const mono  = "'Courier New',Courier,monospace";
+            const sym   = card.currency === "USD" ? "US$" : card.currency === "GBP" ? "£" : "S$";
+            const cardAcct = `Liabilities:CreditCard:${card.bank.replace(/ /g,"")}:${card.cardName.replace(/ /g,"")}`;
+            const cashAcct = linkedAcc ? `Assets:Bank:${linkedAcc.bankName||linkedAcc.accountName}` : "Assets:Bank:Cash";
+
+            // Build PTA journal from transactions
+            const sorted = [...cardTxns].sort((a,b) => a.date.localeCompare(b.date));
+
+            const daysAgo = (d) => {
+              if (!d) return "";
+              const diff = Math.floor((Date.now() - new Date(d)) / 86400000);
+              return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago";
+            };
+
+            const fmtAmt = (v) => sym + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+
+            // Build table rows: each txn = 2 ledger lines
+            const tableRows = sorted.flatMap((txn) => {
+              const isRepayment = txn.type === "Repayment" || txn.type === "Credit";
+              const isRefund    = txn.type === "Refund";
+
+              if (isRepayment) {
+                // Paying off the card: Dr Liabilities:CC (reduces liability), Cr Assets:Bank (cash out)
+                return [
+                  { date: txn.date, desc: txn.description || "Card repayment", account: cardAcct,  amount: fmtAmt(txn.amount), debit: true,  _first: true  },
+                  { date: null,     desc: "",                                   account: cashAcct,  amount: fmtAmt(txn.amount), debit: false, _first: false },
+                ];
+              }
+              if (isRefund) {
+                // Merchant refund: Dr Liabilities:CC (reduces balance), Cr Expenses:Category (reversal)
+                return [
+                  { date: txn.date, desc: txn.description || "Refund",                        account: cardAcct,                               amount: fmtAmt(txn.amount), debit: true,  _first: true  },
+                  { date: null,     desc: `Refund — ${txn.category || "General"}`,            account: `Expenses:${txn.category || "General"}`, amount: fmtAmt(txn.amount), debit: false, _first: false },
+                ];
+              }
+              // Regular spend: Dr Expenses:Category, Cr Liabilities:CC (increases balance)
+              return [
+                { date: txn.date, desc: txn.description || txn.category, account: `Expenses:${txn.category || "General"}`, amount: fmtAmt(txn.amount), debit: true,  _first: true  },
+                { date: null,     desc: "",                               account: cardAcct,                                amount: fmtAmt(txn.amount), debit: false, _first: false },
+              ];
+            });
+
+            if (tableRows.length === 0) {
+              return (
+                <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}>
+                  <div style={{fontSize:32,marginBottom:10}}>📒</div>
+                  <div style={{fontSize:13,fontWeight:600}}>No transactions to post</div>
+                  <div style={{fontSize:12,marginTop:4}}>Add transactions to see ledger postings</div>
+                </div>
+              );
+            }
+
+            return (
+              <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
+                {/* Header */}
+                <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
+                  <div style={{fontSize:12,color:T.accent,marginTop:3,fontFamily:inter}}>Double-entry bookkeeping · PTA compliant · {sorted.length} transactions</div>
+                </div>
+
+                {/* Table */}
+                <div style={{overflowX:"auto",overflowY:"auto",maxHeight:480}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",minWidth:580}}>
+                    <thead>
+                      <tr style={{borderBottom:`1px solid ${T.border}`}}>
+                        <th style={{padding:"9px 16px",textAlign:"left",width:148,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em",whiteSpace:"nowrap"}}>Date</th>
+                        <th style={{padding:"9px 16px",textAlign:"left",fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Account</th>
+                        <th style={{padding:"9px 16px",textAlign:"left",fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Description</th>
+                        <th style={{padding:"9px 16px",textAlign:"right",width:148,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Debit</th>
+                        <th style={{padding:"9px 16px",textAlign:"right",width:148,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Credit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tableRows.map((row, ri) => (
+                        <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
+                            {row._first ? (
+                              <>
+                                <div style={{fontSize:13,fontWeight:400,color:T.text,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div>
+                                <div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div>
+                              </>
+                            ) : null}
+                          </td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top"}}>
+                            <span style={{fontFamily:mono,fontSize:12,color:T.text}}>{row.account}</span>
+                          </td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",fontSize:12,color:T.muted,fontFamily:inter}}>{row.desc}</td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                            {row.debit
+                              ? <span style={{fontSize:13,fontWeight:700,color:T.up,fontFamily:inter}}>{row.amount}</span>
+                              : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                          </td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                            {!row.debit
+                              ? <span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>
+                              : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Legend */}
+                <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
+                  <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:6,fontFamily:inter}}>Double-Entry Accounting</div>
+                  <div style={{fontSize:11,color:T.muted,lineHeight:1.8,fontFamily:inter}}>
+                    <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Spend → increases Expenses; Repayment / Refund → reduces card liability</div>
+                    <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Spend → increases card liability; Repayment → reduces bank cash</div>
+                  </div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:8,fontFamily:inter}}>Every transaction has equal debits and credits (sum = 0)</div>
+                </div>
+              </div>
+            );
+          })()}
 
         </div>
       </div>
