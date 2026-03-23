@@ -107,16 +107,16 @@ const incomeData = [
   { y: "2024", rev: 391.0, net: 101.0 },
 ];
 const HOLDINGS_INIT = [
-  { id: 1, sym: "AAPL", name: "Apple Inc.", qty: 45, price: 189.84, cost: 152.30, changeP: +0.66, value: 8542.80, weight: 22.1, sector: "Technology", broker: "Tiger Brokers", addedDate: "Jan 12, 2025", tradeCcy: "USD", exchange: "NASDAQ" },
-  { id: 2, sym: "MSFT", name: "Microsoft Corp.", qty: 22, price: 415.60, cost: 310.40, changeP: -0.51, value: 9143.20, weight: 23.7, sector: "Technology", broker: "IBKR", addedDate: "Feb 3, 2025", tradeCcy: "USD", exchange: "NASDAQ" },
-  { id: 3, sym: "VOO", name: "Vanguard S&P 500 ETF", qty: 18, price: 498.25, cost: 380.10, changeP: +0.69, value: 8968.50, weight: 23.2, sector: "ETF", broker: "Tiger Brokers", addedDate: "Feb 20, 2025", tradeCcy: "USD", exchange: "NYSE" },
-  { id: 4, sym: "NVDA", name: "NVIDIA Corp.", qty: 12, price: 875.40, cost: 420.00, changeP: +1.77, value: 10504.80, weight: 27.2, sector: "Technology", broker: "Moomoo", addedDate: "Mar 1, 2025", tradeCcy: "USD", exchange: "NASDAQ" },
-  { id: 5, sym: "JNJ", name: "Johnson & Johnson", qty: 30, price: 152.30, cost: 161.80, changeP: -0.30, value: 4569.00, weight: 11.8, sector: "Healthcare", broker: "IBKR", addedDate: "Mar 8, 2025", tradeCcy: "USD", exchange: "NYSE" },
-  { id: 6, sym: "AMZN", name: "Amazon.com Inc.", qty: 8, price: 182.50, cost: 140.20, changeP: +0.92, value: 1460.00, weight: 3.8, sector: "Technology", broker: "Tiger Brokers", addedDate: "Mar 10, 2025", tradeCcy: "USD", exchange: "NASDAQ" },
-  { id: 7, sym: "GOOGL", name: "Alphabet Inc.", qty: 15, price: 165.30, cost: 130.80, changeP: -0.44, value: 2479.50, weight: 6.4, sector: "Technology", broker: "IBKR", addedDate: "Mar 12, 2025", tradeCcy: "USD", exchange: "NASDAQ" },
-  { id: 8, sym: "META", name: "Meta Platforms Inc.", qty: 10, price: 512.40, cost: 320.00, changeP: +1.21, value: 5124.00, weight: 13.3, sector: "Technology", broker: "Moomoo", addedDate: "Mar 15, 2025", tradeCcy: "USD", exchange: "NASDAQ" },
-  { id: 9, sym: "BRK.B", name: "Berkshire Hathaway B", qty: 20, price: 410.10, cost: 360.50, changeP: +0.18, value: 8202.00, weight: 21.2, sector: "Financials", broker: "IBKR", addedDate: "Mar 18, 2025", tradeCcy: "USD", exchange: "NYSE" },
-  { id: 10, sym: "VTI", name: "Vanguard Total Market ETF", qty: 25, price: 240.80, cost: 210.40, changeP: +0.55, value: 6020.00, weight: 15.6, sector: "ETF", broker: "Tiger Brokers", addedDate: "Mar 20, 2025", tradeCcy: "USD", exchange: "NYSE" },
+  { id: 1, sym: "AAPL", name: "Apple Inc.", qty: 45, price: 189.84, cost: 152.30, changeP: +0.66, value: 8542.80, weight: 22.1, sector: "Technology", broker: "Tiger Brokers", addedDate: "Jan 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 189.84, priceDate: "2026-03-16" },
+  { id: 2, sym: "MSFT", name: "Microsoft Corp.", qty: 22, price: 415.60, cost: 310.40, changeP: -0.51, value: 9143.20, weight: 23.7, sector: "Technology", broker: "IBKR", addedDate: "Feb 3, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 415.60, priceDate: "2026-03-16" },
+  { id: 3, sym: "VOO", name: "Vanguard S&P 500 ETF", qty: 18, price: 498.25, cost: 380.10, changeP: +0.69, value: 8968.50, weight: 23.2, sector: "ETF", broker: "Tiger Brokers", addedDate: "Feb 20, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 498.25, priceDate: "2026-03-16" },
+  { id: 4, sym: "NVDA", name: "NVIDIA Corp.", qty: 12, price: 875.40, cost: 420.00, changeP: +1.77, value: 10504.80, weight: 27.2, sector: "Technology", broker: "Moomoo", addedDate: "Mar 1, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 875.40, priceDate: "2026-03-16" },
+  { id: 5, sym: "JNJ", name: "Johnson & Johnson", qty: 30, price: 152.30, cost: 161.80, changeP: -0.30, value: 4569.00, weight: 11.8, sector: "Healthcare", broker: "IBKR", addedDate: "Mar 8, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 152.30, priceDate: "2026-03-16" },
+  { id: 6, sym: "AMZN", name: "Amazon.com Inc.", qty: 8, price: 182.50, cost: 140.20, changeP: +0.92, value: 1460.00, weight: 3.8, sector: "Technology", broker: "Tiger Brokers", addedDate: "Mar 10, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 182.50, priceDate: "2026-03-16" },
+  { id: 7, sym: "GOOGL", name: "Alphabet Inc.", qty: 15, price: 165.30, cost: 130.80, changeP: -0.44, value: 2479.50, weight: 6.4, sector: "Technology", broker: "IBKR", addedDate: "Mar 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 165.30, priceDate: "2026-03-16" },
+  { id: 8, sym: "META", name: "Meta Platforms Inc.", qty: 10, price: 512.40, cost: 320.00, changeP: +1.21, value: 5124.00, weight: 13.3, sector: "Technology", broker: "Moomoo", addedDate: "Mar 15, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 512.40, priceDate: "2026-03-16" },
+  { id: 9, sym: "BRK.B", name: "Berkshire Hathaway B", qty: 20, price: 410.10, cost: 360.50, changeP: +0.18, value: 8202.00, weight: 21.2, sector: "Financials", broker: "IBKR", addedDate: "Mar 18, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 410.10, priceDate: "2026-03-16" },
+  { id: 10, sym: "VTI", name: "Vanguard Total Market ETF", qty: 25, price: 240.80, cost: 210.40, changeP: +0.55, value: 6020.00, weight: 15.6, sector: "ETF", broker: "Tiger Brokers", addedDate: "Mar 20, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 240.80, priceDate: "2026-03-16" },
 ];
 const allocData = [
   { name: "Technology", value: 73, color: T.accent },
@@ -311,14 +311,19 @@ function HoldingsPanel() {
             </div>
           </div>
           {/* Column headers */}
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 0.7fr 0.8fr 1fr 1fr 1fr", padding: "9px 20px", background: T.sidebar, borderBottom: `1px solid ${T.border}` }}>
-            {[["Assets","left"],["Quantity","left"],["Type","left"],["Price","right"],["Change","right"],["Value","right"]].map(([h, align]) => (
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.7fr 0.9fr 0.9fr 1fr 0.9fr", padding: "9px 20px", background: T.sidebar, borderBottom: `1px solid ${T.border}` }}>
+            {[["Assets","left"],["Qty","left"],["Type","left"],["Avg. Cost","right"],["Mkt. Price","right"],["Unrealized P/L","right"],["Value","right"]].map(([h, align]) => (
               <div key={h} style={{ fontSize: 11, color: T.muted, fontWeight: 500, textAlign: align }}>{h}</div>
             ))}
           </div>
           {/* Rows */}
-          {HOLDINGS_INIT.filter(h => filter === "All Categories" || h.sector === filter).map((h, i, arr) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.7fr 0.8fr 1fr 1fr 1fr", padding: "13px 20px", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none", alignItems: "center", cursor: "pointer" }}
+          {HOLDINGS_INIT.filter(h => filter === "All Categories" || h.sector === filter).map((h, i, arr) => {
+            const mp     = h.marketPrice || h.price || 0;
+            const plVal  = (mp - h.cost) * h.qty;
+            const plPct  = h.cost > 0 ? ((mp - h.cost) / h.cost * 100) : 0;
+            const plPos  = plVal >= 0;
+            return (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.7fr 0.9fr 0.9fr 1fr 0.9fr", padding: "13px 20px", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none", alignItems: "center", cursor: "pointer" }}
               onMouseEnter={e => e.currentTarget.style.background = T.hover}
               onMouseLeave={e => e.currentTarget.style.background = ""}>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -333,17 +338,33 @@ function HoldingsPanel() {
               </div>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{h.qty}<div style={{ fontSize: 11, color: T.dim, fontWeight: 400 }}>shares</div></div>
               <div><Badge>{h.sector}</Badge></div>
+              {/* Avg. Cost */}
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{h.tradeCcy} {h.price.toFixed(2)}</div>
-                <div style={{ fontSize: 11, color: T.dim }}>{h.tradeCcy !== "SGD" ? `(S$${(h.price * (FX[h.tradeCcy] || 1)).toFixed(2)})` : ""}</div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{h.tradeCcy} {h.cost.toFixed(2)}</div>
+                <div style={{ fontSize: 11, color: T.dim }}>avg cost</div>
               </div>
-              <div style={{ textAlign: "right", fontSize: 13, fontWeight: 600, color: h.changeP >= 0 ? T.up : T.down }}>{h.changeP >= 0 ? "+" : ""}{h.changeP.toFixed(2)}%</div>
+              {/* Market Price */}
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>S${h.value.toLocaleString()}</div>
-                <div style={{ fontSize: 11, color: h.changeP >= 0 ? T.up : T.down }}>{h.changeP >= 0 ? "+" : ""}S${((h.price - h.cost) * h.qty).toFixed(0)}</div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{h.tradeCcy} {mp.toFixed(2)}</div>
+                <div style={{ fontSize: 11, color: T.dim }}>{h.priceDate || "—"}</div>
+              </div>
+              {/* Unrealized P/L */}
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: plPos ? T.up : T.down }}>
+                  {plPos ? "+" : ""}S${Math.abs(toSGD(plVal, h.tradeCcy)).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: plPos ? T.up : T.down, marginTop: 1 }}>
+                  {plPos ? "+" : ""}{plPct.toFixed(2)}%
+                </div>
+              </div>
+              {/* Value */}
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>S${toSGD(h.value, h.tradeCcy).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                <div style={{ fontSize: 11, color: T.dim }}>{h.tradeCcy !== "SGD" ? `${h.tradeCcy} ${h.value.toLocaleString()}` : ""}</div>
               </div>
             </div>
-          ))}
+            );
+          })}
           {/* Footer */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px", background: T.sidebar, borderTop: `1px solid ${T.border}` }}>
             <span style={{ fontSize: 11, color: T.dim }}>Prices delayed · FX indicative</span>
@@ -382,6 +403,12 @@ function HoldingsScreen() {
   };
   const byCcy = accounts.reduce((m, a) => { (m[a.currency] = m[a.currency] || []).push(a); return m; }, {});
 
+  const totalMarketSGD = HOLDINGS_INIT.reduce((s, h) => s + toSGD((h.marketPrice||h.price)*h.qty, h.tradeCcy), 0);
+  const totalCostSGD   = HOLDINGS_INIT.reduce((s, h) => s + toSGD(h.cost * h.qty, h.tradeCcy), 0);
+  const totalPL        = totalMarketSGD - totalCostSGD;
+  const totalPLPct     = totalCostSGD > 0 ? (totalPL / totalCostSGD * 100) : 0;
+  const plPos          = totalPL >= 0;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -398,8 +425,15 @@ function HoldingsScreen() {
         </Card>
         <Card style={{ padding: "22px 24px" }}>
           <div style={{ fontSize: 13, color: T.muted }}>Unrealised P&amp;L</div>
-          <div style={{ fontSize: 30, fontWeight: 700, color: T.up, letterSpacing: "-0.03em", marginTop: 6 }}>+S$22,840.00</div>
-          <div style={{ fontSize: 12, color: T.muted, marginTop: 10 }}>Cost basis: S$95,610.32</div>
+          <div style={{ fontSize: 30, fontWeight: 700, color: plPos ? T.up : T.down, letterSpacing: "-0.03em", marginTop: 6 }}>
+            {plPos ? "+" : ""}S${Math.abs(totalPL).toLocaleString("en-SG",{minimumFractionDigits:2,maximumFractionDigits:2})}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: plPos ? T.up : T.down }}>
+              {plPos ? "+" : ""}{totalPLPct.toFixed(2)}%
+            </span>
+            <span style={{ fontSize: 12, color: T.muted }}>· Cost basis: S${totalCostSGD.toLocaleString("en-SG",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+          </div>
         </Card>
       </div>
 
@@ -1096,6 +1130,8 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
   const [confirmId, setConfirmId] = useState(null);
   const [partialId, setPartialId] = useState(null);
   const [sellF, setSellF] = useState({ qty: "", price: "", date: "", fees: "" });
+  const [priceF, setPriceF] = useState({ price: "" });
+  const [updatePriceId, setUpdatePriceId] = useState(null);
   const [search, setSearch] = useState("");
 
   const handleRemove = (id) => {
@@ -1320,32 +1356,97 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
               style={{ width: "100%", boxSizing: "border-box", background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 14px 9px 36px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none" }} />
           </div>
           <Card style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 1.2fr 1fr 130px", padding: "9px 20px", background: T.sidebar, borderBottom: `1px solid ${T.border}` }}>
-              {["Stock / ETF", "Shares", "Avg. Cost", "Broker", ""].map((h, i) => (
-                <div key={i} style={{ fontSize: 11, color: T.muted, fontWeight: 500, textAlign: i === 4 ? "right" : "left" }}>{h}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 0.7fr 1fr 1fr 1.4fr 190px", padding: "9px 20px", background: T.sidebar, borderBottom: `1px solid ${T.border}` }}>
+              {["Stock / ETF", "Shares", "Avg. Cost", "Market Price", "Unrealized P/L", ""].map((h, i) => (
+                <div key={i} style={{ fontSize: 11, color: T.muted, fontWeight: 500, textAlign: i >= 3 && i <= 4 ? "right" : "left" }}>{h}</div>
               ))}
             </div>
             {filtered.length === 0 && <div style={{ padding: "36px 20px", textAlign: "center", fontSize: 13, color: T.dim }}>No holdings found.</div>}
-            {filtered.map((h) => (
+            {filtered.map((h) => {
+              const mp    = h.marketPrice || h.price || 0;
+              const plVal = (mp - h.cost) * h.qty;
+              const plPct = h.cost > 0 ? ((mp - h.cost) / h.cost * 100) : 0;
+              const plPos = plVal >= 0;
+              return (
               <div key={h.id}>
-                <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 1.2fr 1fr 130px", padding: "13px 20px", borderBottom: `1px solid ${T.border}`, alignItems: "center" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 0.7fr 1fr 1fr 1.4fr 190px", padding: "13px 20px", borderBottom: `1px solid ${T.border}`, alignItems: "center" }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                     <div style={{ width: 34, height: 34, borderRadius: 8, background: T.inputBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: T.muted }}>{h.sym.slice(0, 2)}</div>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>{h.name}</div>
-                      <div style={{ fontSize: 11, color: T.dim }}>{h.sym} · Added {h.addedDate}</div>
+                      <div style={{ fontSize: 11, color: T.dim, marginTop: 2 }}>{h.sym} · <span style={{ background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 5px", fontSize: 10 }}>{h.broker}</span></div>
                     </div>
                   </div>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{h.qty}</div>
-                  <div style={{ fontSize: 13, color: T.muted }}>S${h.cost.toFixed(2)}</div>
-                  <div><Badge>{h.broker}</Badge></div>
-                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                    <button onClick={() => { setPartialId(partialId === h.id ? null : h.id); setConfirmId(null); setSellF({ qty: "", price: "", date: "", fees: "" }); }}
-                      style={{ background: partialId === h.id ? T.selected : T.inputBg, color: partialId === h.id ? T.selectedText : T.muted, border: `1px solid ${partialId === h.id ? T.selected : T.border}`, borderRadius: 7, padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Sell</button>
-                    <button onClick={() => { setConfirmId(confirmId === h.id ? null : h.id); setPartialId(null); }}
-                      style={{ background: confirmId === h.id ? T.downBg : T.inputBg, color: confirmId === h.id ? T.down : T.muted, border: `1px solid ${confirmId === h.id ? T.down + "40" : T.border}`, borderRadius: 7, padding: "5px 12px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Remove</button>
+                  <div style={{ fontSize: 13, color: T.muted }}>${h.cost.toFixed(2)}</div>
+                  {/* Market Price */}
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>${mp.toFixed(2)}</div>
+                    <div style={{ fontSize: 10, color: T.dim, marginTop: 2 }}>{h.priceDate || "—"}</div>
+                  </div>
+                  {/* Unrealized P/L */}
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: plPos ? T.up : T.down }}>
+                      {plPos ? "+" : ""}${Math.abs(plVal).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
+                    </div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: plPos ? T.up : T.down, marginTop: 2 }}>
+                      {plPos ? "+" : ""}{plPct.toFixed(2)}%
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", padding: "0 4px" }}>
+                    <button onClick={() => { setUpdatePriceId(updatePriceId === h.id ? null : h.id); setPriceF({ price: String(mp) }); setPartialId(null); setConfirmId(null); }}
+                      style={{ background: updatePriceId === h.id ? T.accentBg : T.inputBg, color: updatePriceId === h.id ? T.accent : T.muted, border: `1px solid ${updatePriceId === h.id ? T.accent + "60" : T.border}`, borderRadius: 7, padding: "5px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>$ Price</button>
+                    <button onClick={() => { setPartialId(partialId === h.id ? null : h.id); setConfirmId(null); setUpdatePriceId(null); setSellF({ qty: "", price: "", date: "", fees: "" }); }}
+                      style={{ background: partialId === h.id ? T.selected : T.inputBg, color: partialId === h.id ? T.selectedText : T.muted, border: `1px solid ${partialId === h.id ? T.selected : T.border}`, borderRadius: 7, padding: "5px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Sell</button>
+                    <button onClick={() => {
+                        setPartialId(null); setConfirmId(null); setUpdatePriceId(null);
+                        setForm({ ...EMPTY, sym: h.sym, name: h.name, txType: "Buy", broker: h.broker || "" });
+                        setTab("add");
+                      }}
+                      style={{ background: T.upBg, color: T.up, border: `1px solid #BBF7D0`, borderRadius: 7, padding: "5px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>Buy</button>
                   </div>
                 </div>
+
+                {/* Update Price inline panel */}
+                {updatePriceId === h.id && (
+                  <div style={{ padding: "14px 20px 14px 64px", borderBottom: `1px solid ${T.border}`, background: T.accentBg }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: T.accent, marginBottom: 12 }}>Update Market Price — {h.sym}</div>
+                    <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
+                      <div style={{ flex: "0 0 180px" }}>
+                        <Label>New Market Price ($)</Label>
+                        <Input type="number" step="0.01" placeholder={String(mp)} value={priceF.price} onChange={e => setPriceF({ price: e.target.value })} />
+                      </div>
+                      {priceF.price && parseFloat(priceF.price) > 0 && (() => {
+                        const newMp  = parseFloat(priceF.price);
+                        const newPl  = (newMp - h.cost) * h.qty;
+                        const newPct = h.cost > 0 ? ((newMp - h.cost) / h.cost * 100) : 0;
+                        const pos    = newPl >= 0;
+                        return (
+                          <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", display: "flex", gap: 20 }}>
+                            <div><div style={{ fontSize: 10, color: T.dim, marginBottom: 2 }}>New P/L Value</div><div style={{ fontSize: 13, fontWeight: 700, color: pos ? T.up : T.down }}>{pos?"+":""}${Math.abs(newPl).toFixed(2)}</div></div>
+                            <div><div style={{ fontSize: 10, color: T.dim, marginBottom: 2 }}>New P/L %</div><div style={{ fontSize: 13, fontWeight: 700, color: pos ? T.up : T.down }}>{pos?"+":""}{newPct.toFixed(2)}%</div></div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                      <button onClick={() => {
+                        const newMp = parseFloat(priceF.price);
+                        if (!newMp || newMp <= 0) return;
+                        const today = new Date().toISOString().slice(0,10);
+                        setHoldings(prev => prev.map(x => x.id === h.id
+                          ? { ...x, marketPrice: newMp, priceDate: today, price: newMp, value: newMp * x.qty }
+                          : x));
+                        setUpdatePriceId(null);
+                        showToast(`${h.sym} price updated to $${newMp.toFixed(2)}`, "success");
+                      }}
+                        style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 7, padding: "8px 20px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>
+                        Update Price
+                      </button>
+                      <button onClick={() => setUpdatePriceId(null)} style={{ background: "transparent", color: T.muted, border: `1px solid ${T.border}`, borderRadius: 7, padding: "8px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Sell inline panel */}
                 {partialId === h.id && (
@@ -1381,7 +1482,7 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
                   </div>
                 )}
               </div>
-            ))}
+            ); })}
           </Card>
         </div>
       )}
