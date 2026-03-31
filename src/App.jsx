@@ -2159,6 +2159,7 @@ const RE_STATUS_COLORS = {
   "Vacant":             { bg:"#F9FAFB", color:"#6B7280", border:"#E5E7EB" },
   "Under Construction": { bg:"#FFFBEB", color:"#D97706", border:"#FDE68A" },
   "Holiday / Short-term":{ bg:"#FDF4FF", color:"#9333EA", border:"#E9D5FF" },
+  "Sold":               { bg:"#FEF2F2", color:"#DC2626", border:"#FECACA" },
 };
 
 const EMPTY_PROP = {
@@ -2237,9 +2238,15 @@ function REPropCard({ p, selPropId, onSelect, insured }) {
           )}
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end",marginLeft:10}}>
-          <span style={{fontSize:10,fontWeight:600,color:sc.color,background:sc.bg,border:`1px solid ${sc.border}`,borderRadius:6,padding:"3px 8px",whiteSpace:"nowrap"}}>
-            {p.purpose}
-          </span>
+          {p.sold ? (
+            <span style={{fontSize:10,fontWeight:600,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"3px 8px",whiteSpace:"nowrap"}}>
+              Sold
+            </span>
+          ) : (
+            <span style={{fontSize:10,fontWeight:600,color:sc.color,background:sc.bg,border:`1px solid ${sc.border}`,borderRadius:6,padding:"3px 8px",whiteSpace:"nowrap"}}>
+              {p.purpose}
+            </span>
+          )}
           {insured && (
             <span style={{fontSize:10,fontWeight:600,color:"#15803D",background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:6,padding:"2px 7px",whiteSpace:"nowrap"}}>
               🛡 Insured
@@ -2286,6 +2293,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
   const [finTab, setFinTab] = useState("contracts");
   const [showAddContract, setShowAddContract] = useState(false);
   const [showAddRepay, setShowAddRepay] = useState(false);
+  const [showSold, setShowSold] = useState(false);
 
   const ctry = RE_COUNTRIES[p.country] || RE_COUNTRIES.Singapore;
   const sym = ctry.symbol;
@@ -2570,6 +2578,50 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
     );
   };
 
+  // ── Sold Modal ──────────────────────────────────────
+  const SoldModal = ({ onClose }) => {
+    const [f, setFL] = useState({ soldPrice: "", soldDate: new Date().toISOString().slice(0,10), buyerName: "" });
+    const upd = (k,v) => setFL(prev=>({...prev,[k]:v}));
+    const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+    const canSave = parseFloat(f.soldPrice) > 0 && f.soldDate && f.buyerName.trim();
+    return (
+      <>
+        <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:400}}/>
+        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:420,boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+          <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:700}}>Mark as Sold</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:2}}>{p.name}</div>
+            </div>
+            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
+          </div>
+          <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+            <div><Label>Sold Price ({sym})</Label>
+              <input type="number" value={f.soldPrice} onChange={e=>upd("soldPrice",e.target.value)} placeholder="0" style={iStyle}/></div>
+            <div><Label>Sold Date</Label>
+              <input type="date" value={f.soldDate} onChange={e=>upd("soldDate",e.target.value)} style={iStyle}/></div>
+            <div><Label>Buyer Name</Label>
+              <input value={f.buyerName} onChange={e=>upd("buyerName",e.target.value)} placeholder="Name of the buyer" style={iStyle}/></div>
+          </div>
+          <div style={{padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10}}>
+            <button disabled={!canSave}
+              onClick={()=>{
+                update({ sold: true, soldPrice: parseFloat(f.soldPrice)||0, soldDate: f.soldDate, buyerName: f.buyerName.trim() });
+                onClose();
+                showToast("Property marked as sold","success");
+              }}
+              style={{flex:1, background:canSave?"#DC2626":T.inputBg, color:canSave?"#fff":T.dim,
+                border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,
+                cursor:canSave?"pointer":"not-allowed",fontFamily:"inherit"}}>
+              Confirm Sale
+            </button>
+            <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+          </div>
+        </div>
+      </>
+    );
+  };
+
   const TABS = ["overview","financials","rental","costs","insurance","postings"];
   const tabLabel = {overview:"Overview",financials:"Loan & Finance",rental:"Rental",costs:"Costs & Fees",insurance:"Insurance",postings:"Postings"};
 
@@ -2604,12 +2656,15 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:22}}>{ctry.flag}</span>
             <div>
-              <div style={{fontSize:15,fontWeight:800}}>{p.name}</div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:15,fontWeight:800}}>{p.name}</span>
+                {p.sold && <span style={{fontSize:10,fontWeight:700,color:"#DC2626",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:6,padding:"2px 8px"}}>SOLD</span>}
+              </div>
               <div style={{fontSize:11,color:T.muted}}>{p.type} · {p.country}</div>
             </div>
           </div>
           <div style={{display:"flex",gap:6}}>
-            {propTab !== "insurance" && propTab !== "financials" && propTab !== "postings" && (
+            {!p.sold && propTab !== "insurance" && propTab !== "financials" && propTab !== "postings" && (
               <>
                 <button onClick={editing ? handleSave : handleEdit}
                   style={{padding:"6px 14px",borderRadius:8,border:`1px solid ${editing?T.up:T.border}`,background:editing?T.upBg:T.bg,color:editing?T.up:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
@@ -2622,6 +2677,12 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                   </button>
                 )}
               </>
+            )}
+            {!p.sold && (
+              <button onClick={()=>setShowSold(true)}
+                style={{padding:"6px 14px",borderRadius:8,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
+                Sold
+              </button>
             )}
             <button onClick={onClose}
               style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.bg,color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12}}>
@@ -2863,10 +2924,12 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                       ))}
                     </div>
                   ))}
-                  <button onClick={()=>setShowAddContract(true)}
-                    style={{width:"100%",padding:"10px",borderRadius:10,border:`1px dashed ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600}}>
-                    + Add Loan Contract
-                  </button>
+                  {!p.sold && (
+                    <button onClick={()=>setShowAddContract(true)}
+                      style={{width:"100%",padding:"10px",borderRadius:10,border:`1px dashed ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600}}>
+                      + Add Loan Contract
+                    </button>
+                  )}
                 </>
               )}
 
@@ -3450,6 +3513,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
       </div></div>
       {showAddContract && <AddContractModal onClose={()=>setShowAddContract(false)}/>}
       {showAddRepay && <AddRepayModal onClose={()=>setShowAddRepay(false)}/>}
+      {showSold && <SoldModal onClose={()=>setShowSold(false)}/>}
     </div>
   );
 }

@@ -1,16 +1,25 @@
-# React + Vite
+# WealthOS UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A React-based wealth management dashboard for tracking stock holdings, dividends, credit cards, insurance policies, and real estate.
 
-Currently, two official plugins are available:
+## Getting Started
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```bash
+npm install
+npm run dev       # Start dev server at http://localhost:5173
+npm run build     # Production build
+npm run lint      # Run ESLint
+npm run preview   # Preview production build
+```
 
-## React Compiler
+## Changelog
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Real Estate — Mark Property as Sold
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- Added a **Sold** button in the property detail header (beside the Edit button)
+- Clicking Sold opens a modal prompting for **sold price**, **sold date**, and **buyer name**
+- Once a property is marked as sold:
+  - The **Edit** button is hidden — overview information can no longer be modified
+  - The **Add Loan Contract** button is hidden — no new loan contracts can be added
+  - A red **SOLD** badge appears next to the property name in the detail view
+  - The property listing card displays a red **Sold** status badge in place of the purpose badge
