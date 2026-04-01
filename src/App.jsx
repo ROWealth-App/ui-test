@@ -36,6 +36,10 @@ import {
     "  .wo-table-scroll > div[style*='display'] { min-width: 700px; }",
     "  .wo-modal-content { width: 95vw !important; max-width: 95vw !important; min-width: 0 !important; }",
     "  .wo-default-page h1 { font-size: 20px !important; }",
+    "  div[style*='position: fixed'][style*='translate(-50'] { max-width: calc(100vw - 32px) !important; max-height: 90vh !important; overflow-y: auto !important; }",
+    "  div[style*='position:fixed'][style*='translate(-50'] { max-width: calc(100vw - 32px) !important; max-height: 90vh !important; overflow-y: auto !important; }",
+    "  div[style*='position: fixed'][style*='justify-content: center'] > div[style*='border-radius'] { max-width: calc(100vw - 32px) !important; max-height: 90vh !important; overflow-y: auto !important; }",
+    "  div[style*='position: fixed'] div[style*='grid-template-columns: 1fr 1fr 1fr'] { grid-template-columns: 1fr 1fr !important; }",
     "}",
     "@media (max-width: 480px) {",
     "  .wo-summary-grid { grid-template-columns: 1fr !important; }",
@@ -691,6 +695,7 @@ function HoldingsScreen() {
 
 /* ── Stock Chart ─────────────────────────────────────────────── */
 function ChartScreen({ holdings }) {
+  const isMobile = useIsMobile();
   const list = holdings && holdings.length > 0 ? holdings : HOLDINGS_INIT;
   const [tf, setTf] = useState("1D");
   const [ticker, setTicker] = useState((list[0] && list[0].sym) || "AAPL");
@@ -803,17 +808,33 @@ function ChartScreen({ holdings }) {
         </ResponsiveContainer>
       </Card>
       {/* Stats grid */}
-      <div className="wo-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-        {[
-          { l: "Open", v: "S$188.60" }, { l: "52W High", v: "S$199.62" }, { l: "Market Cap", v: "S$2.94T" }, { l: "P/E Ratio", v: "31.2×" },
-          { l: "Volume", v: "97.2M" }, { l: "52W Low", v: "S$164.08" }, { l: "Avg Volume", v: "54.8M" }, { l: "Dividend Yield", v: "0.53%" },
-        ].map((s, i) => (
-          <Card key={i} style={{ padding: "14px 16px" }}>
-            <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>{s.l}</div>
-            <div style={{ fontSize: 15, fontWeight: 600 }}>{s.v}</div>
-          </Card>
-        ))}
-      </div>
+      {isMobile ? (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+            {[
+              { l: "Open", v: "S$188.60" }, { l: "52W High", v: "S$199.62" }, { l: "Market Cap", v: "S$2.94T" }, { l: "P/E Ratio", v: "31.2×" },
+              { l: "Volume", v: "97.2M" }, { l: "52W Low", v: "S$164.08" }, { l: "Avg Volume", v: "54.8M" }, { l: "Dividend Yield", v: "0.53%" },
+            ].map((s, i) => (
+              <div key={i} style={{ padding: "10px 14px", borderBottom: i < 6 ? `1px solid ${T.border}` : "none", borderRight: i % 2 === 0 ? `1px solid ${T.border}` : "none" }}>
+                <div style={{ fontSize: 11, color: T.muted }}>{s.l}</div>
+                <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{s.v}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <div className="wo-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+          {[
+            { l: "Open", v: "S$188.60" }, { l: "52W High", v: "S$199.62" }, { l: "Market Cap", v: "S$2.94T" }, { l: "P/E Ratio", v: "31.2×" },
+            { l: "Volume", v: "97.2M" }, { l: "52W Low", v: "S$164.08" }, { l: "Avg Volume", v: "54.8M" }, { l: "Dividend Yield", v: "0.53%" },
+          ].map((s, i) => (
+            <Card key={i} style={{ padding: "14px 16px" }}>
+              <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>{s.l}</div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>{s.v}</div>
+            </Card>
+          ))}
+        </div>
+      )}
       {/* Analyst consensus */}
       <Card style={{ padding: "18px 22px" }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>Analyst Consensus</div>
@@ -913,7 +934,7 @@ function AddDividendModal({ onClose, onAdd }) {
       {/* Backdrop */}
       <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200 }} />
       {/* Modal */}
-      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 201, background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, width: 480, boxShadow: "0 20px 60px rgba(0,0,0,0.18)", overflow: "hidden" }}>
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 201, background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, width: 480, maxWidth: "calc(100vw - 32px)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 22px", borderBottom: `1px solid ${T.border}` }}>
           <div>
@@ -1031,6 +1052,7 @@ const DIVIDEND_SCHEDULE = [
 ];
 
 function DividendsScreen({ manualDivs = [] }) {
+  const isMobile = useIsMobile();
   const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
   const todayDay = new Date().getDate();
 
@@ -1129,14 +1151,27 @@ function DividendsScreen({ manualDivs = [] }) {
         </div>
       )}
 
-      <div className="wo-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
-        {[{ l: "Projected Annual Income", v: "S$1,916" }, { l: "YTD Received", v: "S$360.00" }, { l: "Yield on Cost", v: "2.14%" }].map((s, i) => (
-          <Card key={i} style={{ padding: "20px 22px" }}>
-            <div style={{ fontSize: 12, color: T.muted, marginBottom: 8 }}>{s.l}</div>
-            <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em" }}>{s.v}</div>
-          </Card>
-        ))}
-      </div>
+      {isMobile ? (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+            {[{ l: "Projected Annual Income", v: "S$1,916" }, { l: "YTD Received", v: "S$360.00" }, { l: "Yield on Cost", v: "2.14%" }].map((s, i) => (
+              <div key={i} style={{ padding: "12px 14px", borderBottom: i < 2 ? `1px solid ${T.border}` : "none", borderRight: i % 2 === 0 ? `1px solid ${T.border}` : "none" }}>
+                <div style={{ fontSize: 11, color: T.muted }}>{s.l}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, marginTop: 3 }}>{s.v}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <div className="wo-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
+          {[{ l: "Projected Annual Income", v: "S$1,916" }, { l: "YTD Received", v: "S$360.00" }, { l: "Yield on Cost", v: "2.14%" }].map((s, i) => (
+            <Card key={i} style={{ padding: "20px 22px" }}>
+              <div style={{ fontSize: 12, color: T.muted, marginBottom: 8 }}>{s.l}</div>
+              <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em" }}>{s.v}</div>
+            </Card>
+          ))}
+        </div>
+      )}
       <Card style={{ padding: "20px 22px" }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Dividend Calendar · March 2026</div>
         <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>Ex-div and payment dates across your holdings</div>

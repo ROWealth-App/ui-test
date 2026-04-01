@@ -28,7 +28,11 @@ npm run preview   # Preview production build
 - **Postings tabs → Card entries on mobile**: All 7 postings sections (CC, Loans, Insurance, Real Estate, Retirement, Bonds, Manage Stocks) replace the 5-column ledger table with vertical **card-style journal entries** on mobile
   - Each entry shows: date header with days-ago, description, DR line (green) with account + amount, CR line (red) with account + amount
   - Reusable `MobilePostingsList` component shared across all postings tabs
-- **Stocks & Shares mobile cards**: Holdings stock table replaced with simplified card list (ticker, name, shares, value, P&L). Cash accounts currency breakdown also uses mobile cards. Dividends stat cards stack to single column. Manage Stocks history table uses mobile transaction cards.
+- **Stocks & Shares mobile optimisation**:
+  - **Holdings**: Stock grid table → simplified card list (ticker, name, shares, value, P&L). Cash accounts currency rows → mobile cards with flag icons
+  - **Stock Chart**: 8 stat cards (Open, 52W High, Market Cap, etc.) consolidated into a single **compact 2×4 grid** inside one card — reduces ~640px of scroll to ~240px
+  - **Dividends**: 3-column stat cards stack to single column
+  - **Manage Stocks**: Holdings/Transactions tabs use mobile card lists; Postings tab uses mobile journal cards
 - **Drawer overlays**: Full viewport width on mobile (100vw instead of 960px)
 - **Filter toolbars**: Wrap naturally on mobile
 - **Page headers**: Stack vertically (title above button) on mobile
