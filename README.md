@@ -31,8 +31,12 @@ npm run preview   # Preview production build
 - **Stocks & Shares mobile optimisation**:
   - **Holdings**: Stock grid table → simplified card list (ticker, name, shares, value, P&L). Cash accounts currency rows → mobile cards with flag icons
   - **Stock Chart**: 8 stat cards (Open, 52W High, Market Cap, etc.) consolidated into a single **compact 2×4 grid** inside one card — reduces ~640px of scroll to ~240px
-  - **Dividends**: 3-column stat cards stack to single column
+  - **Dividends**: 3 stat cards (Projected Income, YTD Received, Yield) consolidated into a **compact 2-column grid** inside one card
   - **Manage Stocks**: Holdings/Transactions tabs use mobile card lists; Postings tab uses mobile journal cards
+- **Modals**: All modals across the app (Add Loan, Add Dividend, Add Plan, Add Holding, Add Policy, etc.) are responsive on mobile via global CSS rules
+  - Fixed-width modals capped to `calc(100vw - 32px)` — no overflow or cut-off text
+  - 3-column form grids inside modals automatically wrap to 2-column on mobile
+  - All modals scrollable with `max-height: 90vh` and `overflow-y: auto`
 - **Drawer overlays**: Full viewport width on mobile (100vw instead of 960px)
 - **Filter toolbars**: Wrap naturally on mobile
 - **Page headers**: Stack vertically (title above button) on mobile
