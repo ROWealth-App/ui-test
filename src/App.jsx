@@ -3520,7 +3520,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
 
 /* ── Real Estate Screen ─────────────────────────────────────────── */
 function RealEstateScreen({ properties, setProperties, policies, showToast }) {
-  const [selProp,    setSelProp]    = useState(null);
+  const [selectedProp, setSelectedProp] = useState(null);
   const [propTab,    setPropTab]    = useState("overview");
   const [showAdd,    setShowAdd]    = useState(false);
   const [filterCtry, setFilterCtry] = useState("All");
@@ -3545,95 +3545,198 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
   const totalLoan  = properties.reduce((s,p) => s + (p.loanAmount||0), 0);
   const totalRent  = properties.filter(p=>p.isRented).reduce((s,p) => s + (p.monthlyRent||0), 0);
   const equity     = totalValue - totalLoan;
+  const rentedCount = properties.filter(p=>p.isRented).length;
 
   const cp = RE_COUNTRIES[addForm.country] || RE_COUNTRIES.Singapore;
   const previewMonthly = calcMonthly(parseFloat(addForm.loanAmount)||0, parseFloat(addForm.interestRate)||0, parseInt(addForm.loanTenureYears)||25);
 
-  const selPropData = selProp ? properties.find(x => x.id === selProp.id) : null;
+  const selPropData = selectedProp ? properties.find(x => x.id === selectedProp.id) : null;
+
+  // Value by country breakdown
+  const countryBreakdown = {};
+  properties.forEach(p => {
+    const val = p.currentValuation || p.purchasePrice || 0;
+    countryBreakdown[p.country] = (countryBreakdown[p.country]||0) + val;
+  });
 
   return (
-    <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
 
-      {/* Left panel */}
-      <div style={{width:380,flexShrink:0,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-
-        {/* Summary */}
-        <div style={{padding:"16px 18px",borderBottom:`1px solid ${T.border}`,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-          <RESummaryCard l="Total Value"           v={`S$${totalValue.toLocaleString()}`}                      c={T.text}/>
-          <RESummaryCard l="Total Equity"          v={`S$${equity.toLocaleString()}`}                          c={T.up}/>
-          <RESummaryCard l="Monthly Rental"        v={totalRent>0?`+S$${totalRent.toLocaleString()}`:"—"}      c={T.up}/>
-          <RESummaryCard l="Properties"            v={`${properties.length} total`}                            c={T.text}
-            sub={`${properties.filter(p=>p.isRented).length} rented`}/>
+      {/* ── Page header ── */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>Property Portfolio</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>{properties.length} propert{properties.length!==1?"ies":"y"} · {rentedCount} rented</div>
         </div>
+        <button onClick={()=>{setAddForm({...EMPTY_PROP,id:`P${Date.now()}`});setShowAdd(true);}}
+          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+          + Add Property
+        </button>
+      </div>
 
-        {/* Filters */}
-        <div style={{padding:"12px 18px",borderBottom:`1px solid ${T.border}`,display:"flex",flexDirection:"column",gap:8}}>
-          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search properties…"
-            style={{width:"100%",boxSizing:"border-box",padding:"8px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.inputBg,fontFamily:"inherit",fontSize:13,outline:"none",color:T.text}}/>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {["All", ...COUNTRIES_LIST].map(c => (
-              <button key={c} onClick={()=>setFilterCtry(c)}
-                style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${filterCtry===c?T.selected:T.border}`,background:filterCtry===c?T.selected:T.inputBg,color:filterCtry===c?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:filterCtry===c?700:400}}>
-                {c==="All" ? "All" : RE_COUNTRIES[c].flag+" "+c}
-              </button>
-            ))}
-          </div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {["All", ...RE_PURPOSE].map(p => (
-              <button key={p} onClick={()=>setFilterPurp(p)}
-                style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${filterPurp===p?T.selected:T.border}`,background:filterPurp===p?T.selected:T.inputBg,color:filterPurp===p?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:filterPurp===p?700:400}}>
-                {p}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* List */}
-        <div style={{flex:1,overflowY:"auto",minHeight:0}}><div style={{padding:"12px 18px 24px",display:"flex",flexDirection:"column",gap:10}}>
-          {filtered.length === 0 ? (
-            <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}>
-              <div style={{fontSize:32,marginBottom:10}}>🏘</div>
-              <div style={{fontSize:14,fontWeight:600}}>No properties found</div>
-              <div style={{fontSize:12,marginTop:6}}>Add your first property below</div>
+      {/* ── Summary cards — 4 col grid ── */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:18}}>
+        {[
+          {label:"Total Valuation",value:fmtCompact(totalValue),sub:`${properties.length} properties`,icon:"🏠",color:T.text},
+          {label:"Total Equity",value:fmtCompact(equity),sub:`${totalLoan>0?(equity/totalValue*100).toFixed(0)+"% equity ratio":"Fully owned"}`,icon:"📈",color:T.up},
+          {label:"Outstanding Loans",value:fmtCompact(totalLoan),sub:`${properties.filter(p=>p.loanAmount>0).length} mortgaged`,icon:"🏦",color:totalLoan>0?T.down:T.muted},
+          {label:"Monthly Rental",value:totalRent>0?fmtCompact(totalRent):"—",sub:totalRent>0?`${rentedCount} tenanted propert${rentedCount!==1?"ies":"y"}`:"No rental income",icon:"🔑",color:totalRent>0?T.up:T.muted},
+        ].map((c,i)=>(
+          <Card key={i} style={{padding:"18px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+              <span style={{fontSize:20}}>{c.icon}</span>
             </div>
-          ) : filtered.map(p => (
-            <REPropCard key={p.id} p={p} selPropId={selProp && selProp.id}
-              insured={!!(policies||[]).find(pol=>pol.id===p.linkedInsuranceId)}
-              onSelect={prop=>{setSelProp(prop);setPropTab("overview");}}/>
+            <div style={{fontSize:22,fontWeight:700,marginTop:8,color:T.text}}>{c.value}</div>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* ── Value by country — like insurance coverage bar ── */}
+      {Object.keys(countryBreakdown).length > 0 && (
+        <Card style={{padding:"16px 20px",marginBottom:18}}>
+          <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Portfolio Value by Country</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+            {Object.entries(countryBreakdown).map(([country, val])=>{
+              const pct = totalValue > 0 ? (val/totalValue*100).toFixed(0) : 0;
+              const ctry = RE_COUNTRIES[country] || RE_COUNTRIES.Singapore;
+              const countryColors = {"Singapore":"#E31837","Malaysia":"#003B95","Australia":"#FFB81C","United Kingdom":"#003DA5","Japan":"#BC002D","New Zealand":"#00247D"};
+              const cc = countryColors[country] || T.muted;
+              return (
+                <div key={country} style={{flex:"1 1 140px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:12,color:T.muted,fontWeight:500}}>{ctry.flag} {country}</span>
+                    <span style={{fontSize:12,fontWeight:600}}>{pct}%</span>
+                  </div>
+                  <div style={{height:6,background:T.inputBg,borderRadius:3,overflow:"hidden"}}>
+                    <div style={{width:`${pct}%`,height:"100%",background:cc,borderRadius:3}}/>
+                  </div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:4}}>{fmtCompact(val)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* ── Filter toolbar ── */}
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:"1 1 200px"}}>
+          <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search name, address…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+        </div>
+        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+          {["All",...COUNTRIES_LIST].map(c=>(
+            <button key={c} onClick={()=>setFilterCtry(c)}
+              style={{background:filterCtry===c?T.selected:T.inputBg,color:filterCtry===c?T.selectedText:T.muted,border:`1px solid ${filterCtry===c?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterCtry===c?600:400}}>
+              {c==="All"?"All":RE_COUNTRIES[c].flag+" "+c}
+            </button>
           ))}
         </div>
-
-        {/* Add button */}
-        <div style={{padding:"14px 18px",borderTop:`1px solid ${T.border}`}}>
-          <button onClick={()=>{setAddForm({...EMPTY_PROP,id:`P${Date.now()}`});setShowAdd(true);}}
-            style={{width:"100%",padding:"11px",borderRadius:10,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:14,fontWeight:700}}>
-            + Add Property
-          </button>
-        </div>
-      </div></div>
-
-      {/* Right panel */}
-      <div style={{flex:1,overflow:"hidden",minHeight:0,background:T.bg,position:"relative"}}>
-        {selPropData ? (
-          <REDrawer
-            key={selPropData.id}
-            p={selPropData}
-            properties={properties}
-            setProperties={setProperties}
-            policies={policies}
-            propTab={propTab}
-            setPropTab={setPropTab}
-            showToast={showToast}
-            onClose={()=>setSelProp(null)}
-          />
-        ) : (
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",color:T.muted}}>
-            <div style={{fontSize:48,marginBottom:16}}>🏠</div>
-            <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>Real Estate Portfolio</div>
-            <div style={{fontSize:13}}>Select a property to view details</div>
-          </div>
-        )}
+        <select value={filterPurp} onChange={e=>setFilterPurp(e.target.value)}
+          style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 12px",fontSize:12,fontFamily:"inherit",color:T.text,cursor:"pointer",outline:"none"}}>
+          {["All",...RE_PURPOSE].map(p=><option key={p} value={p}>{p}</option>)}
+        </select>
+        <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filtered.length} of {properties.length}</span>
       </div>
+
+      {/* ── Property table ── */}
+      {filtered.length === 0 ? (
+        <Card style={{padding:"48px 24px",textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>🏠</div>
+          <div style={{fontSize:14,fontWeight:600}}>No properties found</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting filters or add a new property</div>
+        </Card>
+      ) : (
+        <Card style={{padding:0,overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1fr 1fr 0.8fr",padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`}}>
+            {[["Property","left"],["Type / Tenure","left"],["Valuation","right"],["Loan / Equity","right"],["Rental","right"],["Status","left"]].map(([h,a])=>(
+              <div key={h} style={{fontSize:11,color:T.muted,fontWeight:500,textAlign:a}}>{h}</div>
+            ))}
+          </div>
+          {filtered.map((p,i)=>{
+            const ctry = RE_COUNTRIES[p.country] || RE_COUNTRIES.Singapore;
+            const gain = (p.currentValuation||0) - (p.purchasePrice||0);
+            const sc = RE_STATUS_COLORS[p.purpose] || RE_STATUS_COLORS["Vacant"];
+            const propEquity = (p.currentValuation||p.purchasePrice||0) - (p.loanAmount||0);
+            const insured = !!(policies||[]).find(pol=>pol.id===p.linkedInsuranceId);
+            return (
+              <div key={p.id} onClick={()=>{setSelectedProp(p);setPropTab("overview");}}
+                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:i<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+                  opacity:p.sold?0.55:1,background:p.sold?T.sidebar:""}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                onMouseLeave={e=>e.currentTarget.style.background=(p.sold?T.sidebar:"")}>
+                {/* Property */}
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{width:34,height:34,borderRadius:9,background:T.inputBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{ctry.flag}</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600}}>{p.name}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{p.address ? (p.address.length>35 ? p.address.slice(0,35)+"…" : p.address) : p.country}</div>
+                  </div>
+                </div>
+                {/* Type / Tenure */}
+                <div>
+                  <div style={{fontSize:12,color:T.text}}>{p.type || "—"}</div>
+                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>{p.tenure || "—"}</div>
+                </div>
+                {/* Valuation */}
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:13,fontWeight:700}}>{fmtCompact(p.currentValuation||p.purchasePrice||0)}</div>
+                  <div style={{fontSize:10,color:gain>=0?T.up:T.down,marginTop:1}}>{gain>=0?"+":""}{fmtCompact(gain)}</div>
+                </div>
+                {/* Loan / Equity */}
+                <div style={{textAlign:"right"}}>
+                  {p.loanAmount > 0 ? (
+                    <>
+                      <div style={{fontSize:12,color:T.down}}>Loan: {fmtCompact(p.loanAmount)}</div>
+                      <div style={{fontSize:10,color:T.up,marginTop:1}}>Eq: {fmtCompact(propEquity)}</div>
+                    </>
+                  ) : (
+                    <div style={{fontSize:12,fontWeight:600,color:T.up}}>Fully owned</div>
+                  )}
+                </div>
+                {/* Rental */}
+                <div style={{textAlign:"right"}}>
+                  {p.isRented ? (
+                    <div style={{fontSize:13,fontWeight:600,color:T.up}}>+{fmtCompact(p.monthlyRent)}/mo</div>
+                  ) : <span style={{fontSize:12,color:T.dim}}>—</span>}
+                </div>
+                {/* Status */}
+                <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+                  {p.sold ? (
+                    <Badge bg={T.downBg} color={T.down}>Sold</Badge>
+                  ) : (
+                    <Badge bg={sc.bg} color={sc.color}>{p.purpose.length>12?p.purpose.slice(0,12)+"…":p.purpose}</Badge>
+                  )}
+                  {insured && <span style={{width:7,height:7,borderRadius:"50%",background:T.up,display:"inline-block"}} title="Insured"/>}
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* ══ PROPERTY DETAIL DRAWER — slide-in overlay ══ */}
+      {selPropData && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+          onClick={e=>{if(e.target===e.currentTarget){setSelectedProp(null);}}}>
+          <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
+            <REDrawer
+              key={selPropData.id}
+              p={selPropData}
+              properties={properties}
+              setProperties={setProperties}
+              policies={policies}
+              propTab={propTab}
+              setPropTab={setPropTab}
+              showToast={showToast}
+              onClose={()=>setSelectedProp(null)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Add Property Modal */}
       {showAdd && (
@@ -5711,6 +5814,985 @@ const CC_TRANSACTIONS_INIT = [
   { id:"T018", cardId:"CC006", date:"2026-03-09", description:"Giant Hypermart",   category:"Groceries",    amount:55.80,  type:"Debit"  },
 ];
 
+// ── Loans mock data ───────────────────────────────────────────
+const LOAN_TYPES = ["Personal Loan","Car Loan","Education Loan","Renovation Loan","Medical Loan","Business Term Loan"];
+
+const LOAN_STATUS_COLORS = {
+  Active:    { bg: T.upBg,   color: T.up },
+  Completed: { bg: T.inputBg, color: T.muted },
+  Overdue:   { bg: T.downBg,  color: T.down },
+};
+
+const EMPTY_LOAN = {
+  id:"", loanType:"Personal Loan", lender:"DBS", borrowerName:"dilwyn",
+  principalAmount:0, outstandingBalance:0, interestRate:0, rateType:"Fixed",
+  tenureMonths:12, monthlyPayment:0, startDate:"", maturityDate:"",
+  accountNumber:"", disbursedDate:"", purpose:"",
+  status:"Active", notes:"",
+  nextPaymentDue:"", reminderEnabled:true, reminderDays:14,
+};
+
+const LOANS_INIT = [
+  {
+    id:"LN001", loanType:"Car Loan", lender:"DBS", borrowerName:"dilwyn",
+    principalAmount:85000, outstandingBalance:62340, interestRate:2.78, rateType:"Fixed",
+    tenureMonths:84, monthlyPayment:1190, startDate:"2024-01-15", maturityDate:"2031-01-15",
+    accountNumber:"DBS-AL-88214", disbursedDate:"2024-01-20", purpose:"Toyota Corolla Cross Hybrid — COE Jan 2024",
+    status:"Active", notes:"7-year hire purchase via DBS AutoLoan. No early repayment penalty after 2 years.",
+    nextPaymentDue:"2026-04-15", reminderEnabled:true, reminderDays:14,
+    repayments:[
+      { id:"LRP001", date:"2026-03-01", amount:1190, principal:980, interest:210, fees:0, repaymentType:"Monthly", notes:"Mar 2026" },
+      { id:"LRP002", date:"2026-02-01", amount:1190, principal:975, interest:215, fees:0, repaymentType:"Monthly", notes:"Feb 2026" },
+      { id:"LRP003", date:"2026-01-01", amount:1190, principal:970, interest:220, fees:0, repaymentType:"Monthly", notes:"Jan 2026" },
+      { id:"LRP004", date:"2025-12-01", amount:1190, principal:965, interest:225, fees:0, repaymentType:"Monthly", notes:"Dec 2025" },
+      { id:"LRP005", date:"2025-11-01", amount:1190, principal:960, interest:230, fees:0, repaymentType:"Monthly", notes:"Nov 2025" },
+    ],
+  },
+  {
+    id:"LN002", loanType:"Personal Loan", lender:"Standard Chartered", borrowerName:"dilwyn",
+    principalAmount:30000, outstandingBalance:18200, interestRate:3.88, rateType:"Fixed",
+    tenureMonths:36, monthlyPayment:886, startDate:"2025-04-01", maturityDate:"2028-04-01",
+    accountNumber:"SC-PL-44210", disbursedDate:"2025-04-05", purpose:"Wedding expenses and honeymoon travel",
+    status:"Active", notes:"SC CashOne personal loan. 3-year fixed rate. Early repayment fee 2% of outstanding.",
+    nextPaymentDue:"2026-04-01", reminderEnabled:true, reminderDays:7,
+    repayments:[
+      { id:"LRP006", date:"2026-03-01", amount:886, principal:828, interest:58, fees:0, repaymentType:"Monthly", notes:"Mar 2026" },
+      { id:"LRP007", date:"2026-02-01", amount:886, principal:825, interest:61, fees:0, repaymentType:"Monthly", notes:"Feb 2026" },
+      { id:"LRP008", date:"2026-01-01", amount:886, principal:822, interest:64, fees:0, repaymentType:"Monthly", notes:"Jan 2026" },
+    ],
+  },
+  {
+    id:"LN003", loanType:"Education Loan", lender:"OCBC", borrowerName:"dilwyn",
+    principalAmount:45000, outstandingBalance:31500, interestRate:4.50, rateType:"Fixed",
+    tenureMonths:120, monthlyPayment:466, startDate:"2022-08-01", maturityDate:"2032-08-01",
+    accountNumber:"OCBC-EL-92001", disbursedDate:"2022-08-10", purpose:"NUS MBA programme tuition fees",
+    status:"Active", notes:"OCBC study loan. Interest-only during study period (ended Jun 2024), full repayment since Jul 2024.",
+    nextPaymentDue:"2026-04-01", reminderEnabled:true, reminderDays:14,
+    repayments:[
+      { id:"LRP009", date:"2026-03-01", amount:466, principal:348, interest:118, fees:0, repaymentType:"Monthly", notes:"Mar 2026" },
+      { id:"LRP010", date:"2026-02-01", amount:466, principal:345, interest:121, fees:0, repaymentType:"Monthly", notes:"Feb 2026" },
+      { id:"LRP011", date:"2026-01-01", amount:466, principal:342, interest:124, fees:0, repaymentType:"Monthly", notes:"Jan 2026" },
+    ],
+  },
+  {
+    id:"LN004", loanType:"Renovation Loan", lender:"UOB", borrowerName:"dilwyn",
+    principalAmount:50000, outstandingBalance:8400, interestRate:3.50, rateType:"Fixed",
+    tenureMonths:60, monthlyPayment:910, startDate:"2021-06-01", maturityDate:"2026-06-01",
+    accountNumber:"UOB-RL-60198", disbursedDate:"2021-06-10", purpose:"HDB Tampines flat full renovation — kitchen, bathrooms, flooring",
+    status:"Active", notes:"UOB renovation loan. Final repayment Jun 2026. Almost fully paid off.",
+    nextPaymentDue:"2026-03-08", reminderEnabled:true, reminderDays:14,
+    repayments:[
+      { id:"LRP012", date:"2026-03-01", amount:910, principal:885, interest:25, fees:0, repaymentType:"Monthly", notes:"Mar 2026" },
+      { id:"LRP013", date:"2026-02-01", amount:910, principal:882, interest:28, fees:0, repaymentType:"Monthly", notes:"Feb 2026" },
+      { id:"LRP014", date:"2026-01-01", amount:910, principal:879, interest:31, fees:0, repaymentType:"Monthly", notes:"Jan 2026" },
+    ],
+  },
+  {
+    id:"LN005", loanType:"Personal Loan", lender:"HSBC", borrowerName:"dilwyn",
+    principalAmount:15000, outstandingBalance:0, interestRate:4.20, rateType:"Fixed",
+    tenureMonths:24, monthlyPayment:654, startDate:"2023-09-01", maturityDate:"2025-09-01",
+    accountNumber:"HSBC-PL-77031", disbursedDate:"2023-09-05", purpose:"Emergency dental surgery and medical bills",
+    status:"Completed", notes:"Fully repaid Sep 2025. No outstanding balance.",
+    nextPaymentDue:"", reminderEnabled:false, reminderDays:14,
+    repayments:[
+      { id:"LRP015", date:"2025-09-01", amount:654, principal:650, interest:4, fees:0, repaymentType:"Full", notes:"Final repayment — Sep 2025" },
+    ],
+  },
+  {
+    id:"LN006", loanType:"Business Term Loan", lender:"DBS", borrowerName:"dilwyn",
+    principalAmount:100000, outstandingBalance:74500, interestRate:5.25, rateType:"Floating",
+    tenureMonths:60, monthlyPayment:1898, startDate:"2025-01-15", maturityDate:"2030-01-15",
+    accountNumber:"DBS-BL-10455", disbursedDate:"2025-01-20", purpose:"Working capital for Dilwyn Ventures Pte Ltd — equipment and inventory",
+    status:"Active", notes:"DBS SME term loan. SORA + 2.5%. Quarterly rate review. Secured against personal guarantee.",
+    nextPaymentDue:"2026-04-15", reminderEnabled:true, reminderDays:30,
+    repayments:[
+      { id:"LRP016", date:"2026-03-01", amount:1898, principal:1572, interest:326, fees:0, repaymentType:"Monthly", notes:"Mar 2026" },
+      { id:"LRP017", date:"2026-02-01", amount:1898, principal:1565, interest:333, fees:0, repaymentType:"Monthly", notes:"Feb 2026" },
+      { id:"LRP018", date:"2026-01-01", amount:1898, principal:1558, interest:340, fees:0, repaymentType:"Monthly", notes:"Jan 2026" },
+    ],
+  },
+];
+
+const LOAN_TYPE_ICONS = {
+  "Personal Loan": "💰",
+  "Car Loan": "🚗",
+  "Education Loan": "🎓",
+  "Renovation Loan": "🔨",
+  "Medical Loan": "🏥",
+  "Business Term Loan": "🏢",
+};
+
+// ── Loan Modal ────────────────────────────────────────────────
+function LoanModal({ loan, onSave, onClose }) {
+  const [f, setF] = useState({ ...loan });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.35)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:999 }}
+      onClick={onClose}>
+      <div style={{ background:T.bg, borderRadius:16, width:520, maxHeight:"85vh", overflow:"auto", padding:"28px 28px 20px", border:`1px solid ${T.border}` }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize:16, fontWeight:800, marginBottom:20 }}>{f.id ? "Edit Loan" : "Add Loan"}</div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+          <div><Label required>Loan Type</Label><Sel value={f.loanType} onChange={e=>set("loanType",e.target.value)} options={LOAN_TYPES}/></div>
+          <div><Label required>Lender / Bank</Label><Sel value={f.lender} onChange={e=>set("lender",e.target.value)} options={Object.keys(BANK_COLORS)}/></div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+          <div><Label required>Principal Amount</Label><Input type="number" prefix="S$" value={f.principalAmount} onChange={e=>set("principalAmount",+e.target.value)}/></div>
+          <div><Label required>Outstanding Balance</Label><Input type="number" prefix="S$" value={f.outstandingBalance} onChange={e=>set("outstandingBalance",+e.target.value)}/></div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+          <div><Label required>Interest Rate (%)</Label><Input type="number" value={f.interestRate} onChange={e=>set("interestRate",+e.target.value)}/></div>
+          <div><Label>Rate Type</Label><Sel value={f.rateType} onChange={e=>set("rateType",e.target.value)} options={["Fixed","Floating"]}/></div>
+          <div><Label required>Tenure (months)</Label><Input type="number" value={f.tenureMonths} onChange={e=>set("tenureMonths",+e.target.value)}/></div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+          <div><Label required>Monthly Payment</Label><Input type="number" prefix="S$" value={f.monthlyPayment} onChange={e=>set("monthlyPayment",+e.target.value)}/></div>
+          <div><Label>Account Number</Label><Input value={f.accountNumber} onChange={e=>set("accountNumber",e.target.value)}/></div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+          <div><Label required>Start Date</Label><Input type="date" value={f.startDate} onChange={e=>set("startDate",e.target.value)}/></div>
+          <div><Label required>Maturity Date</Label><Input type="date" value={f.maturityDate} onChange={e=>set("maturityDate",e.target.value)}/></div>
+          <div><Label>Disbursed Date</Label><Input type="date" value={f.disbursedDate} onChange={e=>set("disbursedDate",e.target.value)}/></div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+          <div>
+            <Label>Next Payment Due</Label>
+            <Input type="date" value={f.nextPaymentDue||""} onChange={e=>set("nextPaymentDue",e.target.value)}/>
+            {f.nextPaymentDue && (() => {
+              const today = new Date();
+              const due = new Date(f.nextPaymentDue);
+              const daysUntil = Math.ceil((due - today) / 86400000);
+              const color = daysUntil < 0 ? T.down : daysUntil <= 14 ? T.warn : T.up;
+              const label = daysUntil < 0 ? `${Math.abs(daysUntil)}d overdue` : daysUntil === 0 ? "Due today" : `${daysUntil}d away`;
+              return <div style={{ fontSize: 11, color, marginTop: 5, fontWeight: 500 }}>● {label}</div>;
+            })()}
+          </div>
+          <div><Label>Purpose</Label><Input value={f.purpose} onChange={e=>set("purpose",e.target.value)} placeholder="What is this loan for?"/></div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={["Active","Completed","Overdue"]}/></div>
+          <div><Label>Borrower Name</Label><Input value={f.borrowerName} onChange={e=>set("borrowerName",e.target.value)}/></div>
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <Label>Notes</Label>
+          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes..."
+            style={{ width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none", resize:"vertical" }}/>
+        </div>
+
+        {/* Reminder toggle — matches insurance modal */}
+        <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:14, marginBottom:20 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: f.reminderEnabled ? 12 : 0 }}>
+            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+              <span style={{ fontSize:16 }}>🔔</span>
+              <div>
+                <div style={{ fontSize:13, fontWeight:600 }}>Payment Reminder</div>
+                <div style={{ fontSize:11, color:T.muted }}>Get alerted before the due date</div>
+              </div>
+            </div>
+            <div onClick={()=>set("reminderEnabled",!f.reminderEnabled)}
+              style={{ width:40, height:22, borderRadius:11, background:f.reminderEnabled?T.selected:T.border, cursor:"pointer", position:"relative", transition:"background 0.2s", flexShrink:0 }}>
+              <div style={{ position:"absolute", top:3, left:f.reminderEnabled?21:3, width:16, height:16, borderRadius:"50%", background:T.bg, transition:"left 0.2s" }}/>
+            </div>
+          </div>
+          {f.reminderEnabled && (
+            <div>
+              <Label>Remind me</Label>
+              <div style={{ display:"flex", gap:8 }}>
+                {[7,14,30,60].map(d=>(
+                  <button key={d} onClick={()=>set("reminderDays",d)}
+                    style={{ flex:1, padding:"8px 4px", borderRadius:8, cursor:"pointer", fontFamily:"inherit", fontSize:12, fontWeight:f.reminderDays===d?600:400,
+                      border:`1px solid ${f.reminderDays===d?T.selected:T.border}`, background:f.reminderDays===d?T.selected:T.bg, color:f.reminderDays===d?T.selectedText:T.muted }}>
+                    {d}d before
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display:"flex", justifyContent:"flex-end", gap:10 }}>
+          <button onClick={onClose} style={{ padding:"9px 20px", borderRadius:8, border:`1px solid ${T.border}`, background:"transparent", color:T.muted, cursor:"pointer", fontFamily:"inherit", fontSize:13 }}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.loanType||!f.lender||!f.principalAmount||!f.startDate||!f.maturityDate}
+            style={{ padding:"9px 20px", borderRadius:8, border:"none", background:T.selected, color:T.selectedText, cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:700, opacity:(!f.loanType||!f.lender||!f.principalAmount||!f.startDate||!f.maturityDate)?0.4:1 }}>
+            {f.id ? "Save Changes" : "Add Loan"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Loan Repayment Modal ──────────────────────────────────────
+function LoanRepaymentModal({ loan, onSave, onClose }) {
+  const [f, setF] = useState({
+    date: new Date().toISOString().slice(0,10),
+    repaymentType: "Monthly",
+    amount: loan.monthlyPayment,
+    principal: 0,
+    interest: 0,
+    fees: 0,
+    notes: "",
+  });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  // Auto-calculate principal = amount - interest - fees
+  const computedPrincipal = Math.max(0, f.amount - f.interest - f.fees);
+
+  // When repayment type changes, pre-fill amount
+  const handleTypeChange = (type) => {
+    set("repaymentType", type);
+    if (type === "Monthly") set("amount", loan.monthlyPayment);
+    else if (type === "Full") set("amount", loan.outstandingBalance);
+    // Partial: user enters custom amount
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.35)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:999 }}
+      onClick={onClose}>
+      <div style={{ background:T.bg, borderRadius:16, width:460, maxHeight:"85vh", overflow:"auto", padding:"28px 28px 20px", border:`1px solid ${T.border}` }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize:16, fontWeight:800, marginBottom:6 }}>Record Repayment</div>
+        <div style={{ fontSize:12, color:T.muted, marginBottom:20 }}>{loan.loanType} · {loan.lender} · Outstanding: S${loan.outstandingBalance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+
+        {/* Repayment type selector */}
+        <div style={{ marginBottom:14 }}>
+          <Label required>Repayment Type</Label>
+          <div style={{ display:"flex", gap:8 }}>
+            {["Monthly","Partial","Full"].map(t=>(
+              <button key={t} onClick={()=>handleTypeChange(t)}
+                style={{ flex:1, padding:"10px 4px", borderRadius:8, cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:f.repaymentType===t?700:400,
+                  border:`1px solid ${f.repaymentType===t?T.selected:T.border}`, background:f.repaymentType===t?T.selected:T.bg, color:f.repaymentType===t?T.selectedText:T.muted }}>
+                {t === "Monthly" ? "💳 Monthly" : t === "Partial" ? "📝 Partial" : "✅ Full"}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize:11, color:T.dim, marginTop:6 }}>
+            {f.repaymentType === "Monthly" && "Regular monthly installment payment"}
+            {f.repaymentType === "Partial" && "Custom partial payment — enter any amount below the outstanding balance"}
+            {f.repaymentType === "Full" && "Full settlement of the remaining loan balance"}
+          </div>
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+          <div><Label required>Payment Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
+          <div><Label required>Total Amount</Label><Input type="number" prefix="S$" value={f.amount} onChange={e=>set("amount",+e.target.value)} disabled={f.repaymentType==="Full"}/></div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+          <div><Label>Interest Portion</Label><Input type="number" prefix="S$" value={f.interest} onChange={e=>set("interest",+e.target.value)}/></div>
+          <div><Label>Fees</Label><Input type="number" prefix="S$" value={f.fees} onChange={e=>set("fees",+e.target.value)}/></div>
+          <div>
+            <Label>Principal (auto)</Label>
+            <div style={{ background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, color:T.up, fontWeight:600 }}>
+              S${computedPrincipal.toLocaleString(undefined,{minimumFractionDigits:2})}
+            </div>
+          </div>
+        </div>
+        <div style={{ marginBottom:20 }}>
+          <Label>Notes</Label>
+          <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Apr 2026 monthly installment, early partial payment..."
+            style={{ width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none", resize:"vertical" }}/>
+        </div>
+
+        {/* Summary */}
+        <div style={{ background:T.inputBg, borderRadius:10, padding:"12px 14px", marginBottom:20, fontSize:12 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+            <span style={{ color:T.muted }}>Payment Amount</span>
+            <span style={{ fontWeight:700 }}>S${f.amount.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+          </div>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+            <span style={{ color:T.muted }}>→ Principal</span>
+            <span style={{ fontWeight:600, color:T.up }}>S${computedPrincipal.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+          </div>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+            <span style={{ color:T.muted }}>→ Interest</span>
+            <span style={{ fontWeight:600, color:T.down }}>S${f.interest.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+          </div>
+          {f.fees > 0 && (
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+              <span style={{ color:T.muted }}>→ Fees</span>
+              <span style={{ fontWeight:600, color:T.warn }}>S${f.fees.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+            </div>
+          )}
+          <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:4, marginTop:4, display:"flex", justifyContent:"space-between" }}>
+            <span style={{ color:T.muted }}>New Outstanding</span>
+            <span style={{ fontWeight:700, color:T.text }}>S${Math.max(0, loan.outstandingBalance - computedPrincipal).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+          </div>
+        </div>
+
+        <div style={{ display:"flex", justifyContent:"flex-end", gap:10 }}>
+          <button onClick={onClose} style={{ padding:"9px 20px", borderRadius:8, border:`1px solid ${T.border}`, background:"transparent", color:T.muted, cursor:"pointer", fontFamily:"inherit", fontSize:13 }}>Cancel</button>
+          <button onClick={()=>onSave({ ...f, principal:computedPrincipal })} disabled={!f.date||f.amount<=0}
+            style={{ padding:"9px 20px", borderRadius:8, border:"none", background:T.selected, color:T.selectedText, cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:700, opacity:(!f.date||f.amount<=0)?0.4:1 }}>
+            Record Payment
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Loan Drawer (right panel detail) ──────────────────────────
+function LoanDrawer({ loan, setLoans, showToast, onClose }) {
+  const [tab, setTab] = useState("overview");
+  const [showRepaymentModal, setShowRepaymentModal] = useState(false);
+  const bc = BANK_COLORS[loan.lender] || { from:"#374151", to:"#1F2937", text:"#fff" };
+  const icon = LOAN_TYPE_ICONS[loan.loanType] || "💰";
+  const sc = LOAN_STATUS_COLORS[loan.status] || LOAN_STATUS_COLORS.Active;
+  const paidPct = loan.principalAmount > 0 ? ((loan.principalAmount - loan.outstandingBalance) / loan.principalAmount * 100) : 0;
+  const totalPaid = loan.principalAmount - loan.outstandingBalance;
+  const repayments = (loan.repayments || []).sort((a,b)=>b.date.localeCompare(a.date));
+  const totalInterestPaid = repayments.reduce((s, r) => s + r.interest, 0);
+  const totalPrincipalPaid = repayments.reduce((s, r) => s + r.principal, 0);
+  const paidColor = paidPct > 80 ? T.up : paidPct > 40 ? T.warn : T.down;
+
+  // Months remaining
+  const today = new Date();
+  const maturity = new Date(loan.maturityDate);
+  const monthsRemaining = Math.max(0, Math.ceil((maturity - today) / (1000 * 60 * 60 * 24 * 30.44)));
+
+  // Next payment due (assume same day-of-month as start)
+  const startDay = new Date(loan.startDate).getDate() || 1;
+  const nextDueDate = (() => {
+    const d = new Date(today.getFullYear(), today.getMonth(), startDay);
+    if (d <= today) return new Date(today.getFullYear(), today.getMonth()+1, startDay);
+    return d;
+  })();
+  const daysUntilDue = Math.ceil((nextDueDate - today) / (1000*60*60*24));
+  const nextDueDateStr = nextDueDate.toLocaleDateString("en-SG",{day:"numeric",month:"short",year:"numeric"});
+
+  const TABS = [{id:"overview",label:"Overview"},{id:"repayments",label:"Repayments"},{id:"postings",label:"Postings"}];
+
+  const handleAddRepayment = (repayment) => {
+    const newRep = { ...repayment, id:"LRP"+Date.now() };
+    const newOutstanding = Math.max(0, loan.outstandingBalance - repayment.principal);
+    const newStatus = newOutstanding <= 0 ? "Completed" : loan.status;
+    setLoans(prev => prev.map(l => l.id === loan.id ? {
+      ...l,
+      repayments: [...(l.repayments||[]), newRep],
+      outstandingBalance: newOutstanding,
+      status: newStatus,
+    } : l));
+    setShowRepaymentModal(false);
+    showToast(repayment.repaymentType === "Full" ? "Loan fully repaid!" : "Repayment recorded", "success");
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      {/* Header — matches CCDrawer: sidebar bg, name + badge, pill tabs */}
+      <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{fontSize:14,fontWeight:800}}>{icon} {loan.loanType}</div>
+            <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:sc.bg,color:sc.color}}>
+              {loan.status}
+            </span>
+          </div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>✕</button>
+        </div>
+        {/* Pill tabs — same style as CCDrawer */}
+        <div style={{display:"flex",gap:4}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{padding:"6px 14px",borderRadius:8,border:"none",background:tab===t.id?T.selected:T.inputBg,
+                color:tab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:tab===t.id?700:400}}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Content — scrollable, same padding as CCDrawer */}
+      <div style={{flex:1,overflowY:"auto",minHeight:0}}>
+        <div style={{padding:"18px 22px 32px",display:"flex",flexDirection:"column",gap:16}}>
+
+          {/* ── OVERVIEW ── */}
+          {tab === "overview" && (
+            <>
+              {/* Payment due alerts — matches CC due alerts */}
+              {loan.status === "Active" && daysUntilDue <= 7 && (
+                <div style={{background:T.warnBg,border:"1px solid #FDE68A",borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                  <span style={{fontSize:18}}>⚠️</span>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:T.warn}}>Payment due in {daysUntilDue} day{daysUntilDue!==1?"s":""}</div>
+                    <div style={{fontSize:12,color:T.warn}}>S${loan.monthlyPayment.toLocaleString(undefined,{minimumFractionDigits:2})} due {nextDueDateStr}</div>
+                  </div>
+                </div>
+              )}
+              {loan.status === "Active" && daysUntilDue > 7 && (
+                <div style={{background:T.accentBg,border:"1px solid #BFDBFE",borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                  <span style={{fontSize:18}}>🔁</span>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:T.accent}}>Recurring payment — {daysUntilDue} days until due</div>
+                    <div style={{fontSize:12,color:T.accent}}>S${loan.monthlyPayment.toLocaleString(undefined,{minimumFractionDigits:2})}/mo · next due {nextDueDateStr} (day {startDay} monthly)</div>
+                  </div>
+                </div>
+              )}
+              {loan.status === "Completed" && (
+                <div style={{background:T.upBg,border:"1px solid #BBF7D0",borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                  <span>✅</span>
+                  <div style={{fontSize:13,fontWeight:600,color:T.up}}>No outstanding balance — fully repaid</div>
+                </div>
+              )}
+              {loan.status === "Overdue" && (
+                <div style={{background:T.downBg,border:"1px solid #FECACA",borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                  <span style={{fontSize:18}}>🚨</span>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:T.down}}>Payment overdue</div>
+                    <div style={{fontSize:12,color:T.down}}>S${loan.outstandingBalance.toLocaleString(undefined,{minimumFractionDigits:2})} outstanding — contact lender immediately</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Repayment progress gauge — mirrors CC utilisation gauge */}
+              <div style={{background:T.inputBg,borderRadius:12,padding:"16px 18px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+                  <div style={{fontSize:12,fontWeight:700,color:T.muted}}>REPAYMENT PROGRESS</div>
+                  <div style={{fontSize:13,fontWeight:800,color:paidColor}}>{paidPct.toFixed(1)}%</div>
+                </div>
+                <div style={{height:10,borderRadius:5,background:T.border,overflow:"hidden",marginBottom:10}}>
+                  <div style={{width:`${paidPct}%`,height:"100%",borderRadius:5,background:paidColor,transition:"width 0.4s"}}/>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                  {[
+                    {label:"Paid",value:`S$${totalPaid.toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.up},
+                    {label:"Outstanding",value:`S$${loan.outstandingBalance.toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.down},
+                    {label:"Principal",value:`S$${loan.principalAmount.toLocaleString()}`,color:T.text},
+                  ].map(s=>(
+                    <div key={s.label} style={{textAlign:"center"}}>
+                      <div style={{fontSize:10,color:T.muted,marginBottom:3}}>{s.label}</div>
+                      <div style={{fontSize:13,fontWeight:700,color:s.color}}>{s.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Spend stats — same 2-col grid as CC */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {[
+                  {label:"Monthly Payment",value:`S$${loan.monthlyPayment.toLocaleString(undefined,{minimumFractionDigits:2})}`,sub:`${loan.rateType} rate at ${loan.interestRate}%`},
+                  {label:"Months Remaining",value:loan.status==="Completed"?"—":String(monthsRemaining),sub:loan.status==="Completed"?"Fully repaid":`Maturity: ${loan.maturityDate}`},
+                ].map(s=>(
+                  <div key={s.label} style={{background:T.inputBg,borderRadius:10,padding:"14px 16px"}}>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>{s.label}</div>
+                    <div style={{fontSize:16,fontWeight:800}}>{s.value}</div>
+                    <div style={{fontSize:11,color:T.dim,marginTop:2}}>{s.sub}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Interest breakdown — same rounded bar category style as CC spend by category */}
+              {repayments.length > 0 && (
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📊 Interest vs Principal Breakdown</div>
+                  {[
+                    {label:"Principal Paid",amount:totalPrincipalPaid,icon:"💵",color:T.up},
+                    {label:"Interest Paid",amount:totalInterestPaid,icon:"🏦",color:T.down},
+                    {label:"Total Cost",amount:totalPrincipalPaid+totalInterestPaid,icon:"📈",color:T.text},
+                  ].map((item,i)=>{
+                    const pct = (totalPrincipalPaid+totalInterestPaid) > 0 ? (item.amount/(totalPrincipalPaid+totalInterestPaid)*100) : 0;
+                    return (
+                      <div key={item.label} style={{padding:"10px 16px",borderTop:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:10}}>
+                        <span style={{fontSize:16,width:22}}>{item.icon}</span>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                            <span style={{fontSize:12,fontWeight:600}}>{item.label}</span>
+                            <span style={{fontSize:12,fontWeight:700}}>S${item.amount.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                          </div>
+                          {item.label !== "Total Cost" && (
+                            <div style={{height:4,borderRadius:2,background:T.border,overflow:"hidden"}}>
+                              <div style={{width:`${pct}%`,height:"100%",borderRadius:2,background:item.color}}/>
+                            </div>
+                          )}
+                        </div>
+                        {item.label !== "Total Cost" && <span style={{fontSize:11,color:T.muted,width:36,textAlign:"right"}}>{pct.toFixed(0)}%</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Loan details — same key/value row style as CC Card Details */}
+              <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📋 Loan Details</div>
+                {[
+                  ["Loan Type", loan.loanType],
+                  ["Lender / Bank", loan.lender],
+                  ["Interest Rate", `${loan.interestRate}% p.a. (${loan.rateType})`],
+                  ["Tenure", `${loan.tenureMonths} months`],
+                  loan.status !== "Completed" ? ["Months Remaining", `${monthsRemaining} months`] : null,
+                  ["Start Date", loan.startDate],
+                  ["Maturity Date", loan.maturityDate],
+                  loan.disbursedDate ? ["Disbursed Date", loan.disbursedDate] : null,
+                  loan.accountNumber ? ["Account No.", loan.accountNumber] : null,
+                  ["Borrower", loan.borrowerName],
+                  loan.purpose ? ["Purpose", loan.purpose] : null,
+                  loan.notes ? ["Notes", loan.notes] : null,
+                ].filter(Boolean).map(([k,v])=>(
+                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                    <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                    <span style={{fontSize:12,fontWeight:600,textAlign:"right",maxWidth:"60%"}}>{v}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Reminder settings display — matches insurance */}
+              {loan.status !== "Completed" && (
+                <div style={{background:T.inputBg,borderRadius:10,padding:"14px 16px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      <span style={{fontSize:16}}>🔔</span>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:600}}>Payment Reminder</div>
+                        <div style={{fontSize:11,color:T.muted}}>
+                          {loan.reminderEnabled ? `Alert ${loan.reminderDays || 14} days before due date` : "Reminders disabled"}
+                        </div>
+                      </div>
+                    </div>
+                    <Badge bg={loan.reminderEnabled ? T.upBg : T.inputBg} color={loan.reminderEnabled ? T.up : T.dim}>
+                      {loan.reminderEnabled ? "On" : "Off"}
+                    </Badge>
+                  </div>
+                  {loan.reminderEnabled && loan.nextPaymentDue && (() => {
+                    const rd = new Date(new Date(loan.nextPaymentDue).getTime() - (loan.reminderDays||14) * 86400000);
+                    return <div style={{fontSize:12,color:T.accent,marginTop:8}}>📅 Next reminder: {rd.toLocaleDateString("en-SG",{day:"numeric",month:"short",year:"numeric"})}</div>;
+                  })()}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── REPAYMENTS — mirrors CC Transactions tab ── */}
+          {tab === "repayments" && (
+            <>
+              {loan.status !== "Completed" && (
+                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                  <div style={{flex:1,fontSize:13,fontWeight:600,color:T.muted}}>{repayments.length} repayment{repayments.length!==1?"s":""}</div>
+                  <button onClick={()=>setShowRepaymentModal(true)}
+                    style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>
+                    + Add Repayment
+                  </button>
+                </div>
+              )}
+              {repayments.length === 0 ? (
+                <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}>
+                  <div style={{fontSize:28,marginBottom:8}}>🏦</div>
+                  <div style={{fontSize:13,fontWeight:600}}>No repayment records yet</div>
+                </div>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  {repayments.map((r,i)=>(
+                    <div key={r.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,
+                      borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                      <div style={{width:34,height:34,borderRadius:8,background:T.inputBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                        💳
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.notes || "Loan Repayment"}</div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                          <span>{r.date}</span>
+                          <span style={{fontSize:10,color:T.up,background:T.upBg,borderRadius:4,padding:"1px 6px"}}>Principal: S${r.principal.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                          <span style={{fontSize:10,color:T.down,background:T.downBg,borderRadius:4,padding:"1px 6px"}}>Interest: S${r.interest.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                          {r.fees > 0 && <span style={{fontSize:10,color:T.warn,background:T.warnBg,borderRadius:4,padding:"1px 6px"}}>Fees: S${r.fees.toLocaleString(undefined,{minimumFractionDigits:2})}</span>}
+                        </div>
+                      </div>
+                      <div style={{textAlign:"right",flexShrink:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:T.down}}>
+                          - S${r.amount.toLocaleString(undefined,{minimumFractionDigits:2})}
+                        </div>
+                        <div style={{fontSize:10,color:T.dim,marginTop:1}}>{r.repaymentType || "Repayment"}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── POSTINGS — mirrors CC Postings tab (double-entry ledger) ── */}
+          {tab === "postings" && (() => {
+            const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+            const mono  = "'Courier New',Courier,monospace";
+            const sym   = "S$";
+            const loanLiabilityAcct = `Liabilities:Loan:${loan.lender.replace(/ /g,"")}:${loan.loanType.replace(/ /g,"")}`;
+            const bankAcct = "Assets:Bank:Cash";
+            const interestAcct = `Expenses:Interest:${loan.loanType.replace(/ /g,"")}`;
+            const feesAcct = "Expenses:Fees:Loan";
+
+            const sorted = [...repayments].sort((a,b) => a.date.localeCompare(b.date));
+
+            const daysAgo = (d) => {
+              if (!d) return "";
+              const diff = Math.floor((Date.now() - new Date(d)) / 86400000);
+              return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago";
+            };
+
+            const fmtAmt = (v) => sym + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+
+            // Each repayment = principal reduces liability, interest is an expense, both come from bank
+            const tableRows = sorted.flatMap((r) => {
+              const rows = [];
+              // Dr Liabilities:Loan (reduces debt) for principal portion
+              rows.push({ date: r.date, desc: r.notes || "Loan repayment", account: loanLiabilityAcct, amount: fmtAmt(r.principal), debit: true, _first: true });
+              // Dr Expenses:Interest for interest portion
+              if (r.interest > 0) {
+                rows.push({ date: null, desc: "", account: interestAcct, amount: fmtAmt(r.interest), debit: true, _first: false });
+              }
+              // Dr Expenses:Fees if any
+              if (r.fees > 0) {
+                rows.push({ date: null, desc: "", account: feesAcct, amount: fmtAmt(r.fees), debit: true, _first: false });
+              }
+              // Cr Assets:Bank (cash out = total amount)
+              rows.push({ date: null, desc: "", account: bankAcct, amount: fmtAmt(r.amount), debit: false, _first: false });
+              return rows;
+            });
+
+            if (tableRows.length === 0) {
+              return (
+                <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}>
+                  <div style={{fontSize:32,marginBottom:10}}>📒</div>
+                  <div style={{fontSize:13,fontWeight:600}}>No repayments to post</div>
+                  <div style={{fontSize:12,marginTop:4}}>Repayment records will appear here as ledger postings</div>
+                </div>
+              );
+            }
+
+            return (
+              <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
+                {/* Header */}
+                <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
+                  <div style={{fontSize:12,color:T.accent,marginTop:3,fontFamily:inter}}>Double-entry bookkeeping · PTA compliant · {sorted.length} repayments</div>
+                </div>
+
+                {/* Table */}
+                <div style={{overflowX:"auto",overflowY:"auto",maxHeight:480}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",minWidth:580}}>
+                    <thead>
+                      <tr style={{borderBottom:`1px solid ${T.border}`}}>
+                        <th style={{padding:"9px 16px",textAlign:"left",width:148,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em",whiteSpace:"nowrap"}}>Date</th>
+                        <th style={{padding:"9px 16px",textAlign:"left",fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Account</th>
+                        <th style={{padding:"9px 16px",textAlign:"left",fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Description</th>
+                        <th style={{padding:"9px 16px",textAlign:"right",width:148,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Debit</th>
+                        <th style={{padding:"9px 16px",textAlign:"right",width:148,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Credit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tableRows.map((row, ri) => (
+                        <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
+                            {row._first ? (
+                              <>
+                                <div style={{fontSize:13,fontWeight:400,color:T.text,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div>
+                                <div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div>
+                              </>
+                            ) : null}
+                          </td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top"}}>
+                            <span style={{fontFamily:mono,fontSize:12,color:T.text}}>{row.account}</span>
+                          </td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",fontSize:12,color:T.muted,fontFamily:inter}}>{row.desc}</td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                            {row.debit
+                              ? <span style={{fontSize:13,fontWeight:700,color:T.up,fontFamily:inter}}>{row.amount}</span>
+                              : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                          </td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                            {!row.debit
+                              ? <span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>
+                              : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Legend */}
+                <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
+                  <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:6,fontFamily:inter}}>Double-Entry Accounting</div>
+                  <div style={{fontSize:11,color:T.muted,lineHeight:1.8,fontFamily:inter}}>
+                    <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Repayment → reduces loan liability; Interest portion → recorded as expense</div>
+                    <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Repayment → reduces bank cash (money out)</div>
+                  </div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:8,fontFamily:inter}}>Every repayment has equal debits and credits (sum = 0)</div>
+                </div>
+              </div>
+            );
+          })()}
+
+        </div>
+      </div>
+
+      {/* Repayment modal */}
+      {showRepaymentModal && (
+        <LoanRepaymentModal loan={loan} onSave={handleAddRepayment} onClose={()=>setShowRepaymentModal(false)} />
+      )}
+    </div>
+  );
+}
+
+// ── Loans Screen ──────────────────────────────────────────────
+function LoansScreen({ loans, setLoans, showToast }) {
+  const [selectedLoan, setSelectedLoan] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [editLoan, setEditLoan] = useState(null);
+  const [filterType, setFilterType] = useState("All");
+  const [filterStatus, setFilterStatus] = useState("All");
+
+  const activeLoans = loans.filter(l => l.status === "Active");
+  const totalOutstanding = activeLoans.reduce((s, l) => s + l.outstandingBalance, 0);
+  const totalMonthly = activeLoans.reduce((s, l) => s + l.monthlyPayment, 0);
+  const totalPrincipal = loans.reduce((s, l) => s + l.principalAmount, 0);
+  const totalPaid = totalPrincipal - loans.reduce((s, l) => s + l.outstandingBalance, 0);
+  const overallPaidPct = totalPrincipal > 0 ? (totalPaid / totalPrincipal * 100) : 0;
+
+  const filteredLoans = loans.filter(l =>
+    (filterType === "All" || l.loanType === filterType) &&
+    (filterStatus === "All" || l.status === filterStatus)
+  );
+
+  const handleSave = (f) => {
+    if (f.id) {
+      setLoans(prev => prev.map(l => l.id === f.id ? { ...l, ...f } : l));
+      showToast("Loan updated", "success");
+    } else {
+      const nl = { ...f, id: "LN" + Date.now(), repayments: [] };
+      setLoans(prev => [...prev, nl]);
+      showToast("Loan added", "success");
+    }
+    setShowModal(false);
+    setEditLoan(null);
+  };
+
+  // Alert data
+  const TODAY = new Date();
+  const overdueLoans = loans.filter(l => l.status === "Active" && l.nextPaymentDue && new Date(l.nextPaymentDue) < TODAY);
+  const upcomingLoans = loans.filter(l => {
+    if (!l.reminderEnabled || !l.nextPaymentDue || l.status !== "Active") return false;
+    const d = Math.ceil((new Date(l.nextPaymentDue) - TODAY) / 86400000);
+    return d >= 0 && d <= (l.reminderDays || 14);
+  }).sort((a, b) => new Date(a.nextPaymentDue) - new Date(b.nextPaymentDue));
+
+  // Type breakdown for progress bars
+  const typeBreakdown = {};
+  activeLoans.forEach(l => { typeBreakdown[l.loanType] = (typeBreakdown[l.loanType] || 0) + l.outstandingBalance; });
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+
+      {/* ── Page header ── */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+        <div>
+          <div style={{ fontSize:20, fontWeight:700 }}>Loan Portfolio</div>
+          <div style={{ fontSize:13, color:T.muted, marginTop:2 }}>{activeLoans.length} active loan{activeLoans.length!==1?"s":""} · {loans.length} total</div>
+        </div>
+        <button onClick={() => { setEditLoan({ ...EMPTY_LOAN, id:"" }); setShowModal(true); }}
+          style={{ background:T.selected, color:T.selectedText, border:"none", borderRadius:9, padding:"9px 18px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:6 }}>
+          + Add Loan
+        </button>
+      </div>
+
+      {/* ── Summary cards — 4 col grid like insurance ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:12, marginBottom:18 }}>
+        {[
+          { label:"Total Outstanding", value:fmtCompact(totalOutstanding), sub:`${activeLoans.length} active loans`, icon:"🏦", color:T.down },
+          { label:"Monthly Outflow", value:fmtCompact(totalMonthly), sub:"Total monthly payments", icon:"💳", color:T.warn },
+          { label:"Total Repaid", value:fmtCompact(totalPaid), sub:`${overallPaidPct.toFixed(1)}% of all principal`, icon:"📈", color:T.up },
+          { label:"Overdue Payments", value:String(overdueLoans.length), sub:overdueLoans.length > 0 ? `S$${overdueLoans.reduce((s,l)=>s+l.monthlyPayment,0).toLocaleString()} past due` : "All payments current", icon:"⚠️", color:overdueLoans.length > 0 ? T.down : T.muted },
+        ].map((c, i) => (
+          <Card key={i} style={{ padding:"18px 20px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div style={{ fontSize:12, color:T.muted, fontWeight:500 }}>{c.label}</div>
+              <span style={{ fontSize:20 }}>{c.icon}</span>
+            </div>
+            <div style={{ fontSize:22, fontWeight:700, marginTop:8, color:T.text }}>{c.value}</div>
+            <div style={{ fontSize:11, color:T.dim, marginTop:4 }}>{c.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* ── Repayment breakdown bar — like insurance coverage bar ── */}
+      <Card style={{ padding:"16px 20px", marginBottom:18 }}>
+        <div style={{ fontSize:13, fontWeight:600, marginBottom:12 }}>Outstanding by Loan Type</div>
+        <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"center" }}>
+          {Object.entries(typeBreakdown).map(([type, val]) => {
+            const pct = totalOutstanding > 0 ? (val / totalOutstanding * 100).toFixed(0) : 0;
+            const typeColors = { "Personal Loan":"#3B82F6", "Car Loan":"#059669", "Education Loan":"#8B5CF6", "Renovation Loan":"#EA580C", "Medical Loan":"#DC2626", "Business Term Loan":"#0891B2" };
+            const tc = typeColors[type] || T.muted;
+            return (
+              <div key={type} style={{ flex:"1 1 140px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
+                  <span style={{ fontSize:12, color:T.muted, fontWeight:500 }}>{LOAN_TYPE_ICONS[type]||"💰"} {type}</span>
+                  <span style={{ fontSize:12, fontWeight:600 }}>{pct}%</span>
+                </div>
+                <div style={{ height:6, background:T.inputBg, borderRadius:3, overflow:"hidden" }}>
+                  <div style={{ width:`${pct}%`, height:"100%", background:tc, borderRadius:3 }}/>
+                </div>
+                <div style={{ fontSize:11, color:T.dim, marginTop:4 }}>{fmtCompact(val)}</div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* ── Payment reminder alerts — like insurance premium alerts ── */}
+      {(() => {
+        const alerts = [
+          ...overdueLoans.map(l => ({ loan: l, type: "overdue" })),
+          ...upcomingLoans.map(l => ({ loan: l, type: "upcoming" })),
+        ];
+        if (alerts.length === 0) return null;
+        return (
+          <div style={{ marginBottom:16, display:"flex", flexDirection:"column", gap:8 }}>
+            {alerts.map(({ loan: al, type }, i) => {
+              const due = new Date(al.nextPaymentDue);
+              const daysUntil = Math.ceil((due - TODAY) / 86400000);
+              const isOverdue = type === "overdue";
+              const bgColor = isOverdue ? T.downBg : T.warnBg;
+              const borderColor = isOverdue ? T.down + "40" : T.warn + "40";
+              const textColor = isOverdue ? T.down : T.warn;
+              const licon = LOAN_TYPE_ICONS[al.loanType] || "💰";
+              return (
+                <div key={i} style={{ background:bgColor, border:`1px solid ${borderColor}`, borderRadius:10, padding:"12px 16px", display:"flex", gap:12, alignItems:"center" }}>
+                  <span style={{ fontSize:18, flexShrink:0 }}>{isOverdue ? "⚠️" : "🔔"}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:T.text }}>
+                      {isOverdue ? "Overdue:" : "Due soon:"}{" "}
+                      <span style={{ color:textColor }}>{licon} {al.loanType}</span>
+                    </div>
+                    <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>
+                      {al.lender} · {al.accountNumber || "—"}
+                      {isOverdue
+                        ? ` · ${Math.abs(daysUntil)}d overdue`
+                        : daysUntil === 0 ? " · Due today"
+                        : ` · ${daysUntil}d until ${al.nextPaymentDue}`}
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"right", flexShrink:0 }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:textColor }}>S${al.monthlyPayment.toLocaleString()}</div>
+                    <div style={{ fontSize:11, color:T.dim }}>Monthly</div>
+                  </div>
+                  <button onClick={() => setSelectedLoan(al)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 12px", fontSize:12, cursor:"pointer", fontFamily:"inherit", color:T.text, flexShrink:0 }}>View</button>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
+      {/* ── Filter toolbar — like insurance ── */}
+      <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:14, flexWrap:"wrap" }}>
+        <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+          {["All","Active","Completed","Overdue"].map(s=>(
+            <button key={s} onClick={()=>setFilterStatus(s)}
+              style={{ background:filterStatus===s?T.selected:T.inputBg, color:filterStatus===s?T.selectedText:T.muted, border:`1px solid ${filterStatus===s?T.selected:T.border}`, borderRadius:7, padding:"6px 14px", fontSize:12, cursor:"pointer", fontFamily:"inherit", fontWeight:filterStatus===s?600:400 }}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+          {["All",...LOAN_TYPES].map(t=>(
+            <button key={t} onClick={()=>setFilterType(t)}
+              style={{ background:filterType===t?T.selected:T.inputBg, color:filterType===t?T.selectedText:T.muted, border:`1px solid ${filterType===t?T.selected:T.border}`, borderRadius:7, padding:"6px 14px", fontSize:12, cursor:"pointer", fontFamily:"inherit", fontWeight:filterType===t?600:400 }}>
+              {t === "All" ? "All Types" : t}
+            </button>
+          ))}
+        </div>
+        <span style={{ fontSize:12, color:T.muted, marginLeft:"auto" }}>{filteredLoans.length} of {loans.length}</span>
+      </div>
+
+      {/* ── Loan table — like insurance policy table ── */}
+      {filteredLoans.length === 0 ? (
+        <Card style={{ padding:"48px 24px", textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:12 }}>🏦</div>
+          <div style={{ fontSize:14, fontWeight:600 }}>No loans found</div>
+          <div style={{ fontSize:12, color:T.muted, marginTop:4 }}>Try adjusting filters or add a new loan</div>
+        </Card>
+      ) : (
+        <Card style={{ padding:0, overflow:"hidden" }}>
+          {/* Table header */}
+          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.2fr 1fr 1fr 1fr 0.8fr", padding:"9px 20px", background:T.sidebar, borderBottom:`1px solid ${T.border}` }}>
+            {[["Loan / Lender","left"],["Type","left"],["Outstanding","right"],["Monthly","right"],["Rate","right"],["Next Due","left"],["Status","left"]].map(([h,a])=>(
+              <div key={h} style={{ fontSize:11, color:T.muted, fontWeight:500, textAlign:a }}>{h}</div>
+            ))}
+          </div>
+          {filteredLoans.map((loan, i) => {
+            const lbc = BANK_COLORS[loan.lender] || { from:"#374151", to:"#1F2937" };
+            const licon = LOAN_TYPE_ICONS[loan.loanType] || "💰";
+            const lsc = LOAN_STATUS_COLORS[loan.status] || LOAN_STATUS_COLORS.Active;
+            const lpct = loan.principalAmount > 0 ? ((loan.principalAmount - loan.outstandingBalance) / loan.principalAmount * 100) : 0;
+            const dUntil = loan.nextPaymentDue ? Math.ceil((new Date(loan.nextPaymentDue) - TODAY) / 86400000) : null;
+            return (
+              <div key={loan.id} onClick={() => setSelectedLoan(loan)}
+                style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.2fr 1fr 1fr 1fr 0.8fr", padding:"13px 20px", borderBottom:i<filteredLoans.length-1?`1px solid ${T.border}`:"none", alignItems:"center", cursor:"pointer",
+                  opacity:loan.status==="Completed"?0.55:1, background:loan.status==="Completed"?T.sidebar:"" }}
+                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                onMouseLeave={e=>e.currentTarget.style.background=(loan.status==="Completed"?T.sidebar:"")}>
+                {/* Loan / Lender */}
+                <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                  <div style={{ width:34, height:34, borderRadius:9, background:`linear-gradient(135deg,${lbc.from},${lbc.to})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0 }}>{licon}</div>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{loan.loanType}</div>
+                    <div style={{ fontSize:11, color:T.muted, marginTop:1 }}>{loan.lender} · {loan.accountNumber || "—"}</div>
+                  </div>
+                </div>
+                {/* Type */}
+                <div style={{ fontSize:12, color:T.muted }}>{loan.rateType} {loan.interestRate}%</div>
+                {/* Outstanding */}
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:loan.outstandingBalance > 0 ? T.text : T.up }}>{fmtCompact(loan.outstandingBalance)}</div>
+                  <div style={{ fontSize:10, color:T.dim, marginTop:1 }}>{lpct.toFixed(0)}% repaid</div>
+                </div>
+                {/* Monthly */}
+                <div style={{ fontSize:13, fontWeight:600, textAlign:"right" }}>{fmtCompact(loan.monthlyPayment)}</div>
+                {/* Rate */}
+                <div style={{ fontSize:12, color:T.muted, textAlign:"right" }}>{loan.interestRate}% p.a.</div>
+                {/* Next Due */}
+                <div>
+                  {loan.nextPaymentDue ? (
+                    <>
+                      <div style={{ fontSize:12, color:T.text }}>{loan.nextPaymentDue}</div>
+                      {dUntil !== null && dUntil < 0 && <div style={{ fontSize:10, color:T.down, fontWeight:600 }}>{Math.abs(dUntil)}d overdue</div>}
+                      {dUntil !== null && dUntil >= 0 && dUntil <= 7 && <div style={{ fontSize:10, color:T.warn, fontWeight:600 }}>{dUntil}d away</div>}
+                    </>
+                  ) : <span style={{ fontSize:12, color:T.dim }}>—</span>}
+                </div>
+                {/* Status */}
+                <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+                  <Badge bg={lsc.bg} color={lsc.color}>{loan.status}</Badge>
+                  {loan.status === "Active" && dUntil !== null && dUntil < 0 && (
+                    <span style={{ width:7, height:7, borderRadius:"50%", background:T.down, display:"inline-block" }} title="Overdue payment"/>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* ══ LOAN DETAIL DRAWER — slide-in overlay like insurance ══ */}
+      {selectedLoan && (() => {
+        const loan = loans.find(l => l.id === selectedLoan.id) || selectedLoan;
+        return (
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:200, display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }}
+            onClick={e => { if (e.target === e.currentTarget) setSelectedLoan(null); }}>
+            <div style={{ width:"min(960px, 95vw)", height:"100vh", background:T.bg, overflow:"hidden", boxShadow:"-4px 0 32px rgba(0,0,0,0.15)", display:"flex", flexDirection:"column" }}>
+              <LoanDrawer loan={loan} setLoans={setLoans} showToast={showToast} onClose={() => setSelectedLoan(null)} />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal */}
+      {showModal && editLoan && (
+        <LoanModal loan={editLoan} onSave={handleSave} onClose={() => { setShowModal(false); setEditLoan(null); }} />
+      )}
+    </div>
+  );
+}
+
 // ── Card visual component ─────────────────────────────────────
 function CreditCardVisual({ card, accounts, size = "lg" }) {
   const bc = BANK_COLORS[card.bank] || { from:"#374151", to:"#1F2937", text:"#fff" };
@@ -6548,15 +7630,14 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
 
 // ── Main Screen ───────────────────────────────────────────────
 function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions, setTransactions, showToast }) {
-  const [selCard, setSelCard] = useState(null);
+  const [selectedCard, setSelectedCard] = useState(null);
   const [showCardModal, setShowCardModal] = useState(false);
   const [editCard, setEditCard] = useState(null);
   const [showAccModal, setShowAccModal] = useState(false);
   const [editAcc, setEditAcc] = useState(null);
   const [filterType, setFilterType] = useState("All");
-  const [leftTab, setLeftTab] = useState("cards");
+  const [viewTab, setViewTab] = useState("cards");
 
-  const selCardData = cards.find(c => c.id === selCard);
   const creditCards = cards.filter(c => (c.cardType === "Credit" || c.cardType === "Commercial") && c.isActive);
   const debitCards  = cards.filter(c => c.cardType === "Debit" && c.isActive);
 
@@ -6565,6 +7646,9 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
   const totalLimit  = creditCards.reduce((s,c) => s+c.creditLimit, 0);
   const totalAvail  = totalLimit - totalDebt;
   const overallUtil = totalLimit > 0 ? (totalDebt/totalLimit*100) : 0;
+  const totalAnnualFees = creditCards.reduce((s,c) => s + (c.annualFee||0), 0);
+  const totalTxns = transactions.length;
+
   const dueThisWeek = creditCards.filter(c => {
     if(!c.dueDayOfMonth || c.currentBalance <= 0) return false;
     const today = new Date();
@@ -6578,13 +7662,16 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
     filterType === "All" || c.cardType === filterType
   );
 
+  // Spend by bank breakdown
+  const bankBreakdown = {};
+  creditCards.forEach(c => { bankBreakdown[c.bank] = (bankBreakdown[c.bank]||0) + c.currentBalance; });
+
   const handleSaveCard = (f) => {
     if(f.id) {
       setCards(prev => prev.map(c => c.id===f.id ? f : c));
       showToast("Card updated","success");
     } else {
-      const nc = {...f, id:"CC"+Date.now()};
-      setCards(prev => [...prev, nc]);
+      setCards(prev => [...prev, {...f, id:"CC"+Date.now()}]);
       showToast("Card added","success");
     }
     setShowCardModal(false);
@@ -6610,230 +7697,282 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
   };
 
   return (
-    <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
 
-      {/* ── Left Panel ── */}
-      <div style={{width:360,flexShrink:0,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-
-        {/* Summary strip */}
-        <div style={{padding:"14px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
-            {[
-              {label:"Total Debt",  value:fmtCompact(totalDebt),  full:`S$${totalDebt.toLocaleString(undefined,{minimumFractionDigits:2})}`,  color:T.down},
-              {label:"Total Limit", value:fmtCompact(totalLimit), full:`S$${totalLimit.toLocaleString(undefined,{minimumFractionDigits:2})}`, color:T.text},
-              {label:"Available",   value:fmtCompact(totalAvail), full:`S$${totalAvail.toLocaleString(undefined,{minimumFractionDigits:2})}`, color:T.up},
-            ].map(s=>(
-              <div key={s.label} title={s.full} style={{background:T.bg,borderRadius:8,padding:"8px 8px",border:`1px solid ${T.border}`,minWidth:0,cursor:"default"}}>
-                <div style={{fontSize:9,color:T.muted,marginBottom:2,whiteSpace:"nowrap"}}>{s.label}</div>
-                <div style={{fontSize:12,fontWeight:800,color:s.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.value}</div>
-              </div>
-            ))}
-          </div>
-          {/* Overall utilisation bar */}
-          {totalLimit > 0 && (
-            <div>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted,marginBottom:4}}>
-                <span>Overall Credit Utilisation</span>
-                <span style={{fontWeight:700,color:overallUtil>70?T.down:T.up}}>{overallUtil.toFixed(1)}%</span>
-              </div>
-              <div style={{height:5,borderRadius:3,background:T.border,overflow:"hidden"}}>
-                <div style={{width:`${overallUtil}%`,height:"100%",borderRadius:3,background:overallUtil>70?T.down:T.up}}/>
-              </div>
-            </div>
-          )}
-          {dueThisWeek.length > 0 && (
-            <div style={{marginTop:8,padding:"7px 10px",background:T.warnBg,borderRadius:8,fontSize:11,color:T.warn,fontWeight:600}}>
-              ⚠️ {dueThisWeek.length} card{dueThisWeek.length>1?"s":""} due this week
-            </div>
-          )}
+      {/* ── Page header ── */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>Cards & Accounts</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>{creditCards.length} credit · {debitCards.length} debit · {accounts.length} accounts</div>
         </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>{setEditCard({...EMPTY_CARD,id:""});setShowCardModal(true);}}
+            style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+            + Add Card
+          </button>
+        </div>
+      </div>
 
-        {/* Left panel tabs */}
-        <div style={{display:"flex",padding:"8px 12px",gap:6,borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+      {/* ── Summary cards — 4 col grid ── */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:18}}>
+        {[
+          {label:"Total Debt",value:fmtCompact(totalDebt),sub:`${creditCards.length} credit cards`,icon:"💳",color:T.down},
+          {label:"Credit Limit",value:fmtCompact(totalLimit),sub:`${overallUtil.toFixed(1)}% utilised`,icon:"🏦",color:T.text},
+          {label:"Available Credit",value:fmtCompact(totalAvail),sub:"Remaining credit across all cards",icon:"📈",color:T.up},
+          {label:"Due This Week",value:String(dueThisWeek.length),sub:dueThisWeek.length>0?`S$${dueThisWeek.reduce((s,c)=>s+c.currentBalance,0).toLocaleString()} outstanding`:"All payments current",icon:"⚠️",color:dueThisWeek.length>0?T.warn:T.muted},
+        ].map((c,i)=>(
+          <Card key={i} style={{padding:"18px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+              <span style={{fontSize:20}}>{c.icon}</span>
+            </div>
+            <div style={{fontSize:22,fontWeight:700,marginTop:8,color:T.text}}>{c.value}</div>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* ── Utilisation by bank — like insurance coverage bar ── */}
+      {Object.keys(bankBreakdown).length > 0 && (
+        <Card style={{padding:"16px 20px",marginBottom:18}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:600}}>Credit Utilisation by Bank</div>
+            <div style={{fontSize:12,color:overallUtil>70?T.down:T.up,fontWeight:700}}>{overallUtil.toFixed(1)}% overall</div>
+          </div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+            {Object.entries(bankBreakdown).map(([bank, bal])=>{
+              const bankLimit = creditCards.filter(c=>c.bank===bank).reduce((s,c)=>s+c.creditLimit,0);
+              const pct = bankLimit > 0 ? (bal/bankLimit*100).toFixed(0) : 0;
+              const bc = BANK_COLORS[bank] || {from:"#374151",to:"#1F2937"};
+              return (
+                <div key={bank} style={{flex:"1 1 140px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:12,color:T.muted,fontWeight:500}}>{bank}</span>
+                    <span style={{fontSize:12,fontWeight:600}}>{pct}%</span>
+                  </div>
+                  <div style={{height:6,background:T.inputBg,borderRadius:3,overflow:"hidden"}}>
+                    <div style={{width:`${pct}%`,height:"100%",background:bc.from,borderRadius:3}}/>
+                  </div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:4}}>{fmtCompact(bal)} / {fmtCompact(bankLimit)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* ── Due alerts — full-width banners like insurance ── */}
+      {dueThisWeek.length > 0 && (
+        <div style={{marginBottom:16,display:"flex",flexDirection:"column",gap:8}}>
+          {dueThisWeek.map((card,i) => {
+            const today = new Date();
+            let due = new Date(today.getFullYear(), today.getMonth(), card.dueDayOfMonth);
+            if(due <= today) due = new Date(today.getFullYear(), today.getMonth()+1, card.dueDayOfMonth);
+            const daysUntil = Math.ceil((due - today)/(1000*60*60*24));
+            const dueStr = due.toLocaleDateString("en-SG",{day:"numeric",month:"short"});
+            return (
+              <div key={i} style={{background:T.warnBg,border:`1px solid ${T.warn}40`,borderRadius:10,padding:"12px 16px",display:"flex",gap:12,alignItems:"center"}}>
+                <span style={{fontSize:18,flexShrink:0}}>🔔</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text}}>
+                    Due soon: <span style={{color:T.warn}}>{card.cardName}</span>
+                  </div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:2}}>
+                    {card.bank} · ••{card.last4} · {daysUntil === 0 ? "Due today" : `${daysUntil}d until ${dueStr}`}
+                  </div>
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div style={{fontSize:14,fontWeight:700,color:T.warn}}>S${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+                  <div style={{fontSize:11,color:T.dim}}>Min S${card.minimumPayment.toLocaleString()}</div>
+                </div>
+                <button onClick={()=>setSelectedCard(card)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text,flexShrink:0}}>View</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── View tabs + Filter toolbar ── */}
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:5}}>
           {[{id:"cards",label:"Cards"},{id:"accounts",label:"Accounts"}].map(t=>(
-            <button key={t.id} onClick={()=>setLeftTab(t.id)}
-              style={{flex:1,padding:"7px",borderRadius:8,border:"none",background:leftTab===t.id?T.selected:"transparent",
-                color:leftTab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:leftTab===t.id?700:400}}>
+            <button key={t.id} onClick={()=>setViewTab(t.id)}
+              style={{background:viewTab===t.id?T.selected:T.inputBg,color:viewTab===t.id?T.selectedText:T.muted,border:`1px solid ${viewTab===t.id?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:viewTab===t.id?600:400}}>
               {t.label}
             </button>
           ))}
         </div>
-
-        {/* Cards tab */}
-        {leftTab === "cards" && (
+        {viewTab === "cards" && (
           <>
-            {/* Filter + add */}
-            <div style={{padding:"8px 12px",display:"flex",gap:6,flexShrink:0}}>
+            <div style={{width:1,height:20,background:T.border}}/>
+            <div style={{display:"flex",gap:5}}>
               {["All","Credit","Commercial","Debit"].map(f=>(
                 <button key={f} onClick={()=>setFilterType(f)}
-                  style={{padding:"4px 10px",borderRadius:20,border:`1px solid ${filterType===f?T.selected:T.border}`,
-                    background:filterType===f?T.selected:"transparent",color:filterType===f?T.selectedText:T.muted,
-                    cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:filterType===f?700:400}}>
+                  style={{background:filterType===f?T.selected:T.inputBg,color:filterType===f?T.selectedText:T.muted,border:`1px solid ${filterType===f?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterType===f?600:400}}>
                   {f}
                 </button>
               ))}
             </div>
-
-            <div style={{flex:1,overflowY:"auto",minHeight:0}}>
-              <div style={{padding:"8px 12px 24px",display:"flex",flexDirection:"column",gap:8}}>
-                {filteredCards.map(card=>{
-                  const bc = BANK_COLORS[card.bank] || {from:"374151",to:"1F2937"};
-                  const isDebit = card.cardType!=="Credit";
-                  const linkedAcc = accounts.find(a=>a.id===card.linkedAccountId);
-                  const cardTxns = transactions.filter(t=>t.cardId===card.id);
-                  const utilPct = !isDebit && card.creditLimit>0 ? Math.min(100,card.currentBalance/card.creditLimit*100) : 0;
-                  const daysUntilDue = (() => {
-                    if(!card.dueDayOfMonth) return null;
-                    const today = new Date();
-                    let due = new Date(today.getFullYear(), today.getMonth(), card.dueDayOfMonth);
-                    if(due <= today) due = new Date(today.getFullYear(), today.getMonth()+1, card.dueDayOfMonth);
-                    return Math.ceil((due - today)/(1000*60*60*24));
-                  })();
-                  const isSelected = selCard === card.id;
-
-                  return (
-                    <div key={card.id} onClick={()=>setSelCard(card.id)}
-                      style={{border:`1.5px solid ${isSelected?T.selected:T.border}`,borderRadius:12,padding:"12px 14px",
-                        cursor:"pointer",background:card.isActive?T.bg:T.sidebar,
-                        opacity:card.isActive?1:0.55,transition:"border-color 0.15s"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          {/* Mini colour bar */}
-                          <div style={{width:4,height:36,borderRadius:2,background:card.isActive?`linear-gradient(180deg,#${bc.from},#${bc.to})`:"#D1D5DB"}}/>
-                          <div>
-                            <div style={{fontSize:13,fontWeight:700,color:card.isActive?T.text:T.muted}}>{card.cardName}</div>
-                            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{card.bank} · {card.network} · ••{card.last4}</div>
-                          </div>
-                        </div>
-                        <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                          {!card.isActive && (
-                            <span style={{fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:4,background:T.downBg,color:T.down}}>Inactive</span>
-                          )}
-                          {card.isActive && (
-                            <span style={{fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:4,
-                              background:isDebit?T.accentBg:card.cardType==="Commercial"?T.warnBg:T.upBg,
-                              color:isDebit?T.accent:card.cardType==="Commercial"?T.warn:T.up}}>
-                              {card.cardType}
-                            </span>
-                          )}
-                          <button onClick={e=>{e.stopPropagation();setEditCard(card);setShowCardModal(true);}}
-                            style={{background:"none",border:"none",cursor:"pointer",color:T.dim,fontSize:13,padding:"2px"}}>✏️</button>
-                          <button
-                            onClick={e=>{e.stopPropagation();handleToggleActive(card.id);}}
-                            title={card.isActive?"Deactivate card":"Reactivate card"}
-                            style={{background:"none",border:"none",cursor:"pointer",fontSize:13,padding:"2px",
-                              color:card.isActive?T.dim:T.up}}>
-                            {card.isActive ? "🚫" : "✅"}
-                          </button>
-                        </div>
-                      </div>
-                      {/* Credit utilisation */}
-                      {!isDebit && card.creditLimit > 0 && (
-                        <div style={{marginBottom:6}}>
-                          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:T.muted,marginBottom:3}}>
-                            <span>S${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})} / S${card.creditLimit.toLocaleString()}</span>
-                            <span style={{color:utilPct>70?T.down:T.up,fontWeight:700}}>{utilPct.toFixed(0)}%</span>
-                          </div>
-                          <div style={{height:3,borderRadius:2,background:T.border,overflow:"hidden"}}>
-                            <div style={{width:`${utilPct}%`,height:"100%",background:utilPct>70?T.down:T.up}}/>
-                          </div>
-                        </div>
-                      )}
-                      {/* Debit: account balance */}
-                      {isDebit && linkedAcc && (
-                        <div style={{fontSize:11,color:T.muted}}>
-                          Linked: {linkedAcc.accountName} · <span style={{color:T.up,fontWeight:700}}>S${linkedAcc.balance.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
-                        </div>
-                      )}
-                      {/* Due date */}
-                      {!isDebit && card.currentBalance > 0 && daysUntilDue !== null && daysUntilDue <= 7 && (
-                        <div style={{fontSize:10,color:T.warn,fontWeight:600,marginTop:4}}>
-                          ⚠️ Due in {daysUntilDue} day{daysUntilDue!==1?"s":""}
-                        </div>
-                      )}
-                      <div style={{fontSize:10,color:T.dim,marginTop:4}}>{cardTxns.length} transactions</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Add card button */}
-            <div style={{padding:"12px 14px",borderTop:`1px solid ${T.border}`,flexShrink:0}}>
-              <button onClick={()=>{setEditCard({...EMPTY_CARD,id:""});setShowCardModal(true);}}
-                style={{width:"100%",padding:"10px",borderRadius:10,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>
-                + Add Card
-              </button>
-            </div>
+            <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filteredCards.length} of {cards.length}</span>
           </>
         )}
-
-        {/* Accounts tab */}
-        {leftTab === "accounts" && (
-          <>
-            <div style={{flex:1,overflowY:"auto",minHeight:0}}>
-              <div style={{padding:"10px 12px 24px",display:"flex",flexDirection:"column",gap:8}}>
-                {accounts.map(acc=>{
-                  const bc = BANK_COLORS[acc.bank] || {from:"374151",to:"1F2937"};
-                  const linkedCards = cards.filter(c=>c.linkedAccountId===acc.id);
-                  return (
-                    <div key={acc.id} style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px",background:T.bg}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          <div style={{width:4,height:36,borderRadius:2,background:`linear-gradient(180deg,#${bc.from},#${bc.to})`}}/>
-                          <div>
-                            <div style={{fontSize:13,fontWeight:700}}>{acc.accountName}</div>
-                            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{acc.bank} · {acc.accountType} · ••{acc.last4}</div>
-                          </div>
-                        </div>
-  
-                      </div>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <div>
-                          <div style={{fontSize:10,color:T.muted}}>Available Balance</div>
-                          <div style={{fontSize:18,fontWeight:800,color:T.up}}>{acc.currency} {acc.balance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
-                        </div>
-                        {linkedCards.length > 0 && (
-                          <div style={{textAlign:"right"}}>
-                            <div style={{fontSize:10,color:T.muted,marginBottom:3}}>Linked Cards</div>
-                            {linkedCards.map(c=>(
-                              <div key={c.id} style={{fontSize:11,fontWeight:600,color:T.accent}}>••{c.last4} {c.cardName}</div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-          </>
+        {viewTab === "accounts" && (
+          <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{accounts.length} accounts</span>
         )}
       </div>
 
-      {/* ── Right Panel ── */}
-      <div style={{flex:1,overflow:"hidden",background:T.bg}}>
-        {selCardData ? (
-          <CCDrawer
-            key={selCardData.id}
-            card={selCardData}
-            accounts={accounts}
-            setAccounts={setAccounts}
-            transactions={transactions}
-            setTransactions={setTransactions}
-            setCards={setCards}
-            showToast={showToast}
-            onClose={()=>setSelCard(null)}
-          />
+      {/* ── Cards table ── */}
+      {viewTab === "cards" && (
+        filteredCards.length === 0 ? (
+          <Card style={{padding:"48px 24px",textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:12}}>💳</div>
+            <div style={{fontSize:14,fontWeight:600}}>No cards found</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting filters or add a new card</div>
+          </Card>
         ) : (
-          <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",flexDirection:"column",gap:12,color:T.muted}}>
-            <div style={{fontSize:48}}>💳</div>
-            <div style={{fontSize:15,fontWeight:600}}>Select a card to view details</div>
-            <div style={{fontSize:13}}>Or add a new card with the button on the left</div>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            <div style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1fr 1fr 0.8fr",padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`}}>
+              {[["Card / Bank","left"],["Network","left"],["Balance / Limit","right"],["Utilisation","right"],["Due Date","left"],["Status","left"]].map(([h,a])=>(
+                <div key={h} style={{fontSize:11,color:T.muted,fontWeight:500,textAlign:a}}>{h}</div>
+              ))}
+            </div>
+            {filteredCards.map((card,i) => {
+              const bc = BANK_COLORS[card.bank] || {from:"#374151",to:"#1F2937"};
+              const isDebit = card.cardType === "Debit";
+              const linkedAcc = accounts.find(a=>a.id===card.linkedAccountId);
+              const utilPct = !isDebit && card.creditLimit>0 ? Math.min(100,card.currentBalance/card.creditLimit*100) : 0;
+              const cardTxns = transactions.filter(t=>t.cardId===card.id);
+              const daysUntilDue = (() => {
+                if(!card.dueDayOfMonth) return null;
+                const today = new Date();
+                let due = new Date(today.getFullYear(), today.getMonth(), card.dueDayOfMonth);
+                if(due <= today) due = new Date(today.getFullYear(), today.getMonth()+1, card.dueDayOfMonth);
+                return Math.ceil((due - today)/(1000*60*60*24));
+              })();
+              return (
+                <div key={card.id} onClick={()=>setSelectedCard(card)}
+                  style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:i<filteredCards.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+                    opacity:card.isActive?1:0.5,background:card.isActive?"":T.sidebar}}
+                  onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                  onMouseLeave={e=>e.currentTarget.style.background=(card.isActive?"":T.sidebar)}>
+                  {/* Card / Bank */}
+                  <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                    <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0,color:"#fff"}}>💳</div>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:600}}>{card.cardName}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{card.bank} · ••{card.last4} · {cardTxns.length} txns</div>
+                    </div>
+                  </div>
+                  {/* Network */}
+                  <div style={{fontSize:12,color:T.muted}}>{card.network}</div>
+                  {/* Balance / Limit */}
+                  <div style={{textAlign:"right"}}>
+                    {isDebit ? (
+                      linkedAcc ? (
+                        <div style={{fontSize:13,fontWeight:700,color:T.up}}>{fmtCompact(linkedAcc.balance)}</div>
+                      ) : <span style={{fontSize:12,color:T.dim}}>—</span>
+                    ) : (
+                      <>
+                        <div style={{fontSize:13,fontWeight:700,color:card.currentBalance>0?T.down:T.up}}>{fmtCompact(card.currentBalance)}</div>
+                        <div style={{fontSize:10,color:T.dim,marginTop:1}}>/ {fmtCompact(card.creditLimit)}</div>
+                      </>
+                    )}
+                  </div>
+                  {/* Utilisation */}
+                  <div style={{textAlign:"right"}}>
+                    {!isDebit && card.creditLimit > 0 ? (
+                      <div style={{display:"flex",alignItems:"center",gap:6,justifyContent:"flex-end"}}>
+                        <div style={{width:40,height:4,borderRadius:2,background:T.border,overflow:"hidden"}}>
+                          <div style={{width:`${utilPct}%`,height:"100%",background:utilPct>70?T.down:T.up}}/>
+                        </div>
+                        <span style={{fontSize:12,fontWeight:600,color:utilPct>70?T.down:T.up}}>{utilPct.toFixed(0)}%</span>
+                      </div>
+                    ) : <span style={{fontSize:12,color:T.dim}}>—</span>}
+                  </div>
+                  {/* Due Date */}
+                  <div>
+                    {!isDebit && card.dueDayOfMonth ? (
+                      <>
+                        <div style={{fontSize:12,color:T.text}}>Day {card.dueDayOfMonth}</div>
+                        {daysUntilDue !== null && daysUntilDue <= 7 && card.currentBalance > 0 && (
+                          <div style={{fontSize:10,color:T.warn,fontWeight:600}}>{daysUntilDue}d away</div>
+                        )}
+                      </>
+                    ) : <span style={{fontSize:12,color:T.dim}}>—</span>}
+                  </div>
+                  {/* Status */}
+                  <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                    <Badge bg={isDebit?T.accentBg:card.cardType==="Commercial"?T.warnBg:T.upBg}
+                      color={isDebit?T.accent:card.cardType==="Commercial"?T.warn:T.up}>
+                      {card.cardType}
+                    </Badge>
+                    {!card.isActive && <span style={{width:7,height:7,borderRadius:"50%",background:T.down,display:"inline-block"}} title="Inactive"/>}
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+        )
+      )}
+
+      {/* ── Accounts table ── */}
+      {viewTab === "accounts" && (
+        <Card style={{padding:0,overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1.5fr",padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`}}>
+            {[["Account / Bank","left"],["Type","left"],["Balance","right"],["Linked Cards","left"]].map(([h,a])=>(
+              <div key={h} style={{fontSize:11,color:T.muted,fontWeight:500,textAlign:a}}>{h}</div>
+            ))}
           </div>
-        )}
-      </div>
+          {accounts.map((acc,i) => {
+            const bc = BANK_COLORS[acc.bank] || {from:"#374151",to:"#1F2937"};
+            const linkedCards = cards.filter(c=>c.linkedAccountId===acc.id);
+            return (
+              <div key={acc.id}
+                style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1.5fr",padding:"13px 20px",borderBottom:i<accounts.length-1?`1px solid ${T.border}`:"none",alignItems:"center"}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                onMouseLeave={e=>e.currentTarget.style.background=""}>
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0,color:"#fff"}}>🏦</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600}}>{acc.accountName}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{acc.bank} · ••{acc.last4}</div>
+                  </div>
+                </div>
+                <div style={{fontSize:12,color:T.muted}}>{acc.accountType}</div>
+                <div style={{textAlign:"right",fontSize:15,fontWeight:700,color:T.up}}>{acc.currency} {acc.balance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+                <div>
+                  {linkedCards.length > 0 ? linkedCards.map(c=>(
+                    <div key={c.id} style={{fontSize:11,fontWeight:600,color:T.accent}}>••{c.last4} {c.cardName}</div>
+                  )) : <span style={{fontSize:12,color:T.dim}}>No linked cards</span>}
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* ══ CARD DETAIL DRAWER — slide-in overlay like insurance/loans ══ */}
+      {selectedCard && (() => {
+        const card = cards.find(c => c.id === selectedCard.id) || selectedCard;
+        return (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+            onClick={e => { if (e.target === e.currentTarget) setSelectedCard(null); }}>
+            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
+              <CCDrawer
+                key={card.id}
+                card={card}
+                accounts={accounts}
+                setAccounts={setAccounts}
+                transactions={transactions}
+                setTransactions={setTransactions}
+                setCards={setCards}
+                showToast={showToast}
+                onClose={()=>setSelectedCard(null)}
+              />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modals */}
       {showCardModal && editCard && (
@@ -6854,6 +7993,7 @@ const NAV = [
   { id: "news", label: "News & Sentiment", icon: "⚡", group: "Stocks & Shares", soon: true },
   { id: "manage", label: "Manage Stocks", icon: "+", group: "Stocks & Shares" },
   { id: "creditcards", label: "Credit Cards", icon: "💳", group: "Banking" },
+  { id: "loans", label: "Loans", icon: "🏦", group: "Banking" },
   { id: "insurance", label: "Insurance", icon: "🛡", group: "Protection" },
   { id: "realestate", label: "Real Estate", icon: "🏠", group: "Protection" },
   { id: "ai", label: "AI Agent", icon: "✦", group: "Tools", soon: true },
@@ -6869,6 +8009,7 @@ const subtitles = {
   ai: "Ask your AI agent anything about your portfolio",
   import: "Connect your broker or upload CSV data",
   creditcards: "Credit & debit cards, limits and transactions",
+  loans: "Personal, car, education and business loans overview",
   insurance: "Policies, premiums, claims and coverage overview",
   realestate: "Properties, valuations, rental income and insurance",
 };
@@ -6913,6 +8054,7 @@ export default function App() {
   const [ccCards, setCCCards] = useState(CC_CARDS_INIT);
   const [ccAccounts, setCCAccounts] = useState(CC_ACCOUNTS_INIT);
   const [ccTransactions, setCCTransactions] = useState(CC_TRANSACTIONS_INIT);
+  const [loans, setLoans] = useState(LOANS_INIT);
   const [transactions, setTransactions] = useState([
     { id: 1,  sym: "AAPL",  txType: "Buy",      date: "2025-01-12", qty: "45",  price: "152.30", fees: "1.50", currency: "SGD", broker: "Tiger Brokers", notes: "" },
     { id: 2,  sym: "MSFT",  txType: "Buy",      date: "2025-02-03", qty: "22",  price: "310.40", fees: "1.20", currency: "SGD", broker: "IBKR",          notes: "" },
@@ -6954,6 +8096,7 @@ export default function App() {
     if (page === "manage") return <ManageScreen holdings={holdings} setHoldings={setHoldings} transactions={transactions} setTransactions={setTransactions} showToast={showToast} />;
     if (page === "import") return <ImportDataScreen />;
     if (page === "creditcards") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} showToast={showToast} />;
+    if (page === "loans") return <LoansScreen loans={loans} setLoans={setLoans} showToast={showToast} />;
     if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} />;
     if (page === "realestate") return <RealEstateScreen properties={properties} setProperties={setProperties} policies={policies} showToast={showToast} />;
     return <div style={{ color: T.muted, fontSize: 13 }}>Coming soon.</div>;
@@ -7036,27 +8179,7 @@ export default function App() {
         </div>
 
         {/* Page content */}
-        {page === "realestate" ? (
-          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minHeight: 0 }}>
-            <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
-              <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
-              <p style={{ fontSize: 13, color: T.muted, margin: "0 0 14px" }}>{subtitles[page]}</p>
-            </div>
-            <div style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
-              {renderScreen()}
-            </div>
-          </div>
-        ) : page === "creditcards" ? (
-          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minHeight: 0 }}>
-            <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
-              <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
-              <p style={{ fontSize: 13, color: T.muted, margin: "0 0 14px" }}>{subtitles[page]}</p>
-            </div>
-            <div style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
-              {renderScreen()}
-            </div>
-          </div>
-        ) : page === "insurance" ? (
+        {page === "realestate" || page === "creditcards" || page === "insurance" || page === "loans" ? (
           <div style={{ flex: 1, overflowY: "auto", minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
               <h1 style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
