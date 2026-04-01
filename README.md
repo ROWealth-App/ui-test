@@ -1,6 +1,6 @@
 # WealthOS UI
 
-A React-based wealth management dashboard for tracking stock holdings, dividends, credit cards, insurance policies, and real estate.
+A React-based wealth management dashboard for tracking stock holdings, dividends, credit cards, loans, insurance policies, real estate, retirement plans, and fixed income (bonds, T-bills, fixed deposits).
 
 ## Getting Started
 
@@ -13,6 +13,95 @@ npm run preview   # Preview production build
 ```
 
 ## Changelog
+
+### Mobile Responsiveness
+
+- Made the entire site **mobile-friendly** following mobile UX best practices
+- **Sidebar**: Hidden on mobile (≤768px), replaced with a hamburger menu (☰) that opens a slide-in overlay with backdrop. Tapping a nav item auto-closes the sidebar
+- **Summary card grids**: 4-col → 2-col on tablet (≤768px) → 1-col on phone (≤480px)
+- **Table → Card list on mobile**: All 6 asset screens (Credit Cards, Loans, Insurance, Real Estate, Retirement, Bonds) replace their grid tables with simplified **touch-friendly card list items** on mobile
+  - Each card shows: icon, title, subtitle, key value, status badge
+  - No horizontal scrolling — all content fits within the viewport
+  - Tapping a card opens the full-width detail drawer
+  - Uses `useIsMobile()` hook with window resize listener for responsive detection
+  - Reusable `MobileListItem` component shared across all screens
+- **Postings tabs → Card entries on mobile**: All 7 postings sections (CC, Loans, Insurance, Real Estate, Retirement, Bonds, Manage Stocks) replace the 5-column ledger table with vertical **card-style journal entries** on mobile
+  - Each entry shows: date header with days-ago, description, DR line (green) with account + amount, CR line (red) with account + amount
+  - Reusable `MobilePostingsList` component shared across all postings tabs
+- **Stocks & Shares mobile cards**: Holdings stock table replaced with simplified card list (ticker, name, shares, value, P&L). Cash accounts currency breakdown also uses mobile cards. Dividends stat cards stack to single column. Manage Stocks history table uses mobile transaction cards.
+- **Drawer overlays**: Full viewport width on mobile (100vw instead of 960px)
+- **Filter toolbars**: Wrap naturally on mobile
+- **Page headers**: Stack vertically (title above button) on mobile
+- **Top bar**: Search bar expands on tablet, non-essential elements (live status, account selector) hidden on mobile
+- **Breakpoints**: 768px (tablet), 480px (phone)
+
+### Bonds & T-Bills — New Protection Tab
+
+- Added a **Bonds & T-Bills** tab under Protection in the sidebar navigation
+- **Full-width scrollable layout** matching all other asset screens:
+  - **Page header** with "Fixed Income Portfolio" title and "+ Add Holding" button
+  - **4-column summary cards**: Total Market Value, Unrealised P&L, Total Income Received, Avg Yield to Maturity
+  - **Holdings by Product Type** breakdown bar with coloured progress indicators
+  - **Search bar** + status pills + product type dropdown filter + sortable columns
+  - **Holdings table**: Full-width grid rows showing Name/Issuer, Type, Value (face + current), Coupon/Yield, Maturity (days remaining), P&L, Status
+- **6 product types** (Singapore-focused):
+  - **Singapore Savings Bonds (SSB)** — 10-year step-up, redeemable with no penalty, max $200K
+  - **SGS Bonds** — Semi-annual coupon, tradeable on SGX, AAA-rated
+  - **T-Bills** — 6M and 1Y zero-coupon, discount pricing, non-competitive/competitive bids
+  - **Corporate Bonds** — SGX-listed (Astrea, CapitaLand, etc.), credit-rated
+  - **Bond ETFs** — ABF SG Bond (A35), Nikko AM SGD IG Corp Bond, with units/NAV tracking
+  - **Fixed Deposits** — Bank FDs with auto-renewal and SDIC insurance flags
+- **Slide-in drawer overlay** (960px) with pill tabs:
+  - **Overview**: Holding Details (product type, issuer, credit rating, coupon, YTM, frequency, tenure, dates, currency, SDIC/auto-renewal), Financial Summary (face/purchase/current value, P&L, units), Notes
+  - **Transactions**: Summary strip (Total Income, Capital Deployed, count), transaction list with type icons (Purchase, Sale, Coupon, Distribution, Interest, Redemption), "+ Record Transaction" button
+  - **Postings**: Double-entry ledger (Purchase → Dr Bond Cr Cash, Coupon → Dr Cash Cr Income, Redemption → Dr Cash Cr Bond)
+- **Record Transaction modal**: Dynamic types per product (T-bills: Purchase/Redemption; Bond ETFs: Purchase/Sale/Distribution; Bonds: Purchase/Sale/Coupon/Redemption; FDs: Purchase/Redemption/Interest)
+- **Mock data**: 7 holdings (SSB, SGS 10Y, 2 T-bills incl. 1 matured, Astrea 8 corporate bond, ABF SG Bond ETF, DBS 12M FD) with transaction histories
+
+### Retirement — New Protection Tab
+
+- Added a **Retirement** tab under Protection in the sidebar navigation
+- **Full-width scrollable layout** matching Insurance/Loans/CC/Real Estate design:
+  - **Page header** with "Retirement Portfolio" title and "+ Add Plan" button
+  - **4-column summary cards**: Total Retirement Assets, Projected Monthly Income, Annual Contributions, Plans In Payout
+  - **Retirement Assets by Plan Type** breakdown bar with coloured progress indicators per type
+  - **Search bar** ("Search plan name, provider, account no…") with status pills and plan type dropdown filter
+  - **Sortable plan table**: Full-width grid rows showing Plan/Provider, Type, Balance, Monthly Payout, Contribution, Payout Age, Status
+- **Slide-in drawer overlay** (960px) for plan detail with 3 tabs:
+  - **Overview**: Quick stats header (Balance, Monthly Payout, Death Benefit/Surrender Value), Plan Details key-value section, Financial Summary section, Notes
+  - **Transactions**: Summary strip (Total Inflows / Total Outflows / Net Flow), "+ Record Transaction" button, transaction list with type icons and inflow/outflow colour coding
+    - **Plans in payout** (CPF LIFE, mature plans): record **Payouts** and **Withdrawals** (money OUT, shown as negative/red, reduces plan balance)
+    - **Plans accumulating** (SRS, insurance, cash reserves): record **Premiums**, **Top-Ups**, **Contributions** (money IN, shown as positive/green, increases plan balance)
+    - **Passive income**: record **Interest** credited and **Coupons** received (increases plan balance)
+    - Transaction types are dynamically determined by plan type and status
+  - **Postings**: Double-entry ledger table (PTA compliant) with Dr/Cr columns
+    - Payout/Withdrawal: Dr Cash (receive money) / Cr Plan (reduce value)
+    - Premium: Dr Expense / Cr Cash or SRS (money out)
+    - Top-Up/Contribution: Dr Plan (increase value) / Cr Cash (money out)
+    - Interest/Coupon: Dr Plan (value grows) / Cr Income (income recognised)
+    - Accounting legend explaining debit/credit flows
+- **Record Transaction modal** with:
+  - Dynamic type selector based on plan type (Payout, Premium, Top-Up, Contribution, Interest, Coupon, Withdrawal)
+  - Pre-fills amounts (e.g., monthly payout amount for CPF LIFE)
+  - Inflow/outflow summary indicator
+  - Method, reference, notes fields
+  - Auto-updates plan balance on save
+  - Edit button to modify plan
+- **Add/Edit Plan modal** with dynamic fields based on plan type:
+  - **CPF LIFE**: Payout plan (Basic/Standard/Escalating), retirement sum tier (BRS/FRS/ERS), payout start age (65-70)
+  - **SRS Account**: Cash vs invested balance split, contribution limits
+  - **Retirement Income Plans**: Monthly payout (guaranteed + projected), premium payment term, payout period, death benefit, surrender value
+  - **Legacy / Endowment Plans**: Annual coupons (guaranteed + projected), accumulated coupons, death benefit
+  - **Cash Reserve**: Balance, interest rate, liquid status
+  - **CPF Balances**: OA/SA/MA balance breakdown, monthly contribution split
+- **Mock data**: 7 sample plans covering all types:
+  - CPF LIFE Standard Plan (FRS $198,800, est. $1,520/mo)
+  - DBS SRS Account ($86,400 balance, $62K invested, $24K cash)
+  - NTUC Gro Retire Flex (guaranteed $620/mo + projected $850/mo)
+  - Manulife Wealth Builder (2% guaranteed coupon, $120K death benefit)
+  - Retirement Buffer OCBC 360 ($42K liquid savings)
+  - CPF OA + SA ($185K combined, OA $98K + SA $87K)
+  - AIA Retirement Saver III (SRS-funded, lifetime payout)
 
 ### All Screens — Sortable Table Columns & Search Bars
 
