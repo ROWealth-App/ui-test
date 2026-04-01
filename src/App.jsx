@@ -83,6 +83,41 @@ const Sel = ({ value, onChange, options, placeholder }) => (
   </select>
 );
 
+/* ─── Sortable table header ────────────────────────────────── */
+const SortHeader = ({ columns, sortKey, sortDir, onSort, gridCols, style }) => (
+  <div style={{display:"grid",gridTemplateColumns:gridCols,padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,...style}}>
+    {columns.map(([label, align, key])=>(
+      <div key={label} onClick={key ? ()=>onSort(key) : undefined}
+        style={{fontSize:11,color:sortKey===key?T.text:T.muted,fontWeight:sortKey===key?700:500,textAlign:align,cursor:key?"pointer":"default",userSelect:"none",display:"flex",alignItems:"center",gap:3,justifyContent:align==="right"?"flex-end":"flex-start"}}>
+        {label}
+        {key && <span style={{fontSize:9,color:sortKey===key?T.text:T.dim}}>{sortKey===key?(sortDir==="asc"?"▲":"▼"):"⇅"}</span>}
+      </div>
+    ))}
+  </div>
+);
+
+const useSortState = (defaultKey="",defaultDir="asc") => {
+  const [sortKey, setSortKey] = useState(defaultKey);
+  const [sortDir, setSortDir] = useState(defaultDir);
+  const onSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+  const sortFn = (arr, getVal) => {
+    if (!sortKey) return arr;
+    const sorted = [...arr].sort((a,b) => {
+      const va = getVal(a, sortKey), vb = getVal(b, sortKey);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === "string") return va.localeCompare(vb);
+      return va - vb;
+    });
+    return sortDir === "desc" ? sorted.reverse() : sorted;
+  };
+  return { sortKey, sortDir, onSort, sortFn };
+};
+
 /* ─── Mock data ─────────────────────────────────────────────── */
 const stockChart = [
   { t: "9:30", c: 186.1 }, { t: "10:00", c: 187.8 }, { t: "10:30", c: 189.1 },
@@ -3526,6 +3561,7 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
   const [filterCtry, setFilterCtry] = useState("All");
   const [filterPurp, setFilterPurp] = useState("All");
   const [searchQ,    setSearchQ]    = useState("");
+  const reSort = useSortState();
   const [addForm,    setAddForm]    = useState({...EMPTY_PROP});
   const setF = (k, v) => setAddForm(f => ({...f, [k]: v}));
 
@@ -3651,12 +3687,17 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
         </Card>
       ) : (
         <Card style={{padding:0,overflow:"hidden"}}>
-          <div style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1fr 1fr 0.8fr",padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`}}>
-            {[["Property","left"],["Type / Tenure","left"],["Valuation","right"],["Loan / Equity","right"],["Rental","right"],["Status","left"]].map(([h,a])=>(
-              <div key={h} style={{fontSize:11,color:T.muted,fontWeight:500,textAlign:a}}>{h}</div>
-            ))}
-          </div>
-          {filtered.map((p,i)=>{
+          <SortHeader gridCols="2.2fr 1fr 1.2fr 1fr 1fr 0.8fr" sortKey={reSort.sortKey} sortDir={reSort.sortDir} onSort={reSort.onSort}
+            columns={[["Property","left","name"],["Type / Tenure","left","type"],["Valuation","right","valuation"],["Loan / Equity","right","loan"],["Rental","right","rental"],["Status","left","purpose"]]}/>
+          {reSort.sortFn(filtered, (p, k) => {
+            if (k==="name") return (p.name||"").toLowerCase();
+            if (k==="type") return (p.type||"").toLowerCase();
+            if (k==="valuation") return p.currentValuation||p.purchasePrice||0;
+            if (k==="loan") return p.loanAmount||0;
+            if (k==="rental") return p.isRented ? (p.monthlyRent||0) : 0;
+            if (k==="purpose") return p.sold ? "zzz" : (p.purpose||"");
+            return 0;
+          }).map((p,i)=>{
             const ctry = RE_COUNTRIES[p.country] || RE_COUNTRIES.Singapore;
             const gain = (p.currentValuation||0) - (p.purchasePrice||0);
             const sc = RE_STATUS_COLORS[p.purpose] || RE_STATUS_COLORS["Vacant"];
@@ -3875,6 +3916,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
   const [selectedPolicy, setSelectedPolicy] = useState(null);
+  const insSort = useSortState();
   const [detailTab, setDetailTab] = useState("overview");
   const [showAddModal, setShowAddModal] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
@@ -4247,13 +4289,18 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         </Card>
       ) : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
-          {/* Table header */}
-          <div style={{ display: "grid", gridTemplateColumns: "2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.9fr", padding: "9px 20px", background: T.sidebar, borderBottom: `1px solid ${T.border}` }}>
-            {[["Policy / Plan","left"],["Type","left"],["Sum Assured","right"],["Premium / yr","right"],["Cash Value","right"],["Renewal","left"],["Status","left"]].map(([h,a]) => (
-              <div key={h} style={{ fontSize: 11, color: T.muted, fontWeight: 500, textAlign: a }}>{h}</div>
-            ))}
-          </div>
-          {filtered.map((pol, i) => {
+          <SortHeader gridCols="2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.9fr" sortKey={insSort.sortKey} sortDir={insSort.sortDir} onSort={insSort.onSort}
+            columns={[["Policy / Plan","left","planName"],["Type","left","type"],["Sum Assured","right","sumAssured"],["Premium / yr","right","premium"],["Cash Value","right","cashValue"],["Renewal","left","renewal"],["Status","left","status"]]}/>
+          {insSort.sortFn(filtered, (p, k) => {
+            if (k==="planName") return (p.planName||"").toLowerCase();
+            if (k==="type") return (p.type||"").toLowerCase();
+            if (k==="sumAssured") return p.sumAssured||0;
+            if (k==="premium") return (parseFloat(p.premium)||0) * ({ Monthly:12, Quarterly:4, "Half-Yearly":2, Yearly:1, "Single Premium":0, "N/A":0 }[p.premFreq]||1);
+            if (k==="cashValue") return (p.cashValue||0) + (p.ilpFundValue||0);
+            if (k==="renewal") return p.nextPremDue ? new Date(p.nextPremDue).getTime() : Infinity;
+            if (k==="status") return p.status;
+            return 0;
+          }).map((pol, i) => {
             const tc = typeConf(pol.type);
             const annualPrem = (parseFloat(pol.premium)||0) * ({ Monthly:12, Quarterly:4, "Half-Yearly":2, Yearly:1, "Single Premium":0, "N/A":0 }[pol.premFreq]||1);
             const cv = (pol.cashValue||0) + (pol.ilpFundValue||0);
@@ -6540,6 +6587,8 @@ function LoansScreen({ loans, setLoans, showToast }) {
   const [editLoan, setEditLoan] = useState(null);
   const [filterType, setFilterType] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
+  const [searchQ, setSearchQ] = useState("");
+  const lnSort = useSortState();
 
   const activeLoans = loans.filter(l => l.status === "Active");
   const totalOutstanding = activeLoans.reduce((s, l) => s + l.outstandingBalance, 0);
@@ -6548,10 +6597,15 @@ function LoansScreen({ loans, setLoans, showToast }) {
   const totalPaid = totalPrincipal - loans.reduce((s, l) => s + l.outstandingBalance, 0);
   const overallPaidPct = totalPrincipal > 0 ? (totalPaid / totalPrincipal * 100) : 0;
 
-  const filteredLoans = loans.filter(l =>
-    (filterType === "All" || l.loanType === filterType) &&
-    (filterStatus === "All" || l.status === filterStatus)
-  );
+  const filteredLoans = loans.filter(l => {
+    if (filterType !== "All" && l.loanType !== filterType) return false;
+    if (filterStatus !== "All" && l.status !== filterStatus) return false;
+    if (searchQ) {
+      const q = searchQ.toLowerCase();
+      if (!(l.loanType||"").toLowerCase().includes(q) && !(l.lender||"").toLowerCase().includes(q) && !(l.accountNumber||"").toLowerCase().includes(q) && !(l.purpose||"").toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
 
   const handleSave = (f) => {
     if (f.id) {
@@ -6684,6 +6738,11 @@ function LoansScreen({ loans, setLoans, showToast }) {
 
       {/* ── Filter toolbar — like insurance ── */}
       <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:14, flexWrap:"wrap" }}>
+        <div style={{ position:"relative", flex:"1 1 200px" }}>
+          <span style={{ position:"absolute", left:11, top:"50%", transform:"translateY(-50%)", fontSize:13, color:T.dim, pointerEvents:"none" }}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search lender, loan type, account no…"
+            style={{ width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"8px 12px 8px 34px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none" }}/>
+        </div>
         <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
           {["All","Active","Completed","Overdue"].map(s=>(
             <button key={s} onClick={()=>setFilterStatus(s)}
@@ -6712,13 +6771,18 @@ function LoansScreen({ loans, setLoans, showToast }) {
         </Card>
       ) : (
         <Card style={{ padding:0, overflow:"hidden" }}>
-          {/* Table header */}
-          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.2fr 1fr 1fr 1fr 0.8fr", padding:"9px 20px", background:T.sidebar, borderBottom:`1px solid ${T.border}` }}>
-            {[["Loan / Lender","left"],["Type","left"],["Outstanding","right"],["Monthly","right"],["Rate","right"],["Next Due","left"],["Status","left"]].map(([h,a])=>(
-              <div key={h} style={{ fontSize:11, color:T.muted, fontWeight:500, textAlign:a }}>{h}</div>
-            ))}
-          </div>
-          {filteredLoans.map((loan, i) => {
+          <SortHeader gridCols="2fr 1fr 1.2fr 1fr 1fr 1fr 0.8fr" sortKey={lnSort.sortKey} sortDir={lnSort.sortDir} onSort={lnSort.onSort}
+            columns={[["Loan / Lender","left","lender"],["Type","left","rateType"],["Outstanding","right","outstanding"],["Monthly","right","monthly"],["Rate","right","rate"],["Next Due","left","nextDue"],["Status","left","status"]]}/>
+          {lnSort.sortFn(filteredLoans, (l, k) => {
+            if (k==="lender") return (l.lender||"").toLowerCase();
+            if (k==="rateType") return (l.rateType||"").toLowerCase();
+            if (k==="outstanding") return l.outstandingBalance;
+            if (k==="monthly") return l.monthlyPayment;
+            if (k==="rate") return l.interestRate;
+            if (k==="nextDue") return l.nextPaymentDue ? new Date(l.nextPaymentDue).getTime() : Infinity;
+            if (k==="status") return l.status;
+            return 0;
+          }).map((loan, i) => {
             const lbc = BANK_COLORS[loan.lender] || { from:"#374151", to:"#1F2937" };
             const licon = LOAN_TYPE_ICONS[loan.loanType] || "💰";
             const lsc = LOAN_STATUS_COLORS[loan.status] || LOAN_STATUS_COLORS.Active;
@@ -7637,6 +7701,8 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
   const [editAcc, setEditAcc] = useState(null);
   const [filterType, setFilterType] = useState("All");
   const [viewTab, setViewTab] = useState("cards");
+  const [searchQ, setSearchQ] = useState("");
+  const ccSort = useSortState();
 
   const creditCards = cards.filter(c => (c.cardType === "Credit" || c.cardType === "Commercial") && c.isActive);
   const debitCards  = cards.filter(c => c.cardType === "Debit" && c.isActive);
@@ -7658,9 +7724,14 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
     return d >= 0 && d <= 7;
   });
 
-  const filteredCards = cards.filter(c =>
-    filterType === "All" || c.cardType === filterType
-  );
+  const filteredCards = cards.filter(c => {
+    if (filterType !== "All" && c.cardType !== filterType) return false;
+    if (searchQ) {
+      const q = searchQ.toLowerCase();
+      if (!(c.cardName||"").toLowerCase().includes(q) && !(c.bank||"").toLowerCase().includes(q) && !(c.last4||"").includes(q) && !(c.network||"").toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
 
   // Spend by bank breakdown
   const bankBreakdown = {};
@@ -7794,6 +7865,11 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
 
       {/* ── View tabs + Filter toolbar ── */}
       <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:"1 1 200px"}}>
+          <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search card name, bank, last 4…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+        </div>
         <div style={{display:"flex",gap:5}}>
           {[{id:"cards",label:"Cards"},{id:"accounts",label:"Accounts"}].map(t=>(
             <button key={t.id} onClick={()=>setViewTab(t.id)}
@@ -7831,12 +7907,17 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
           </Card>
         ) : (
           <Card style={{padding:0,overflow:"hidden"}}>
-            <div style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1fr 1fr 0.8fr",padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`}}>
-              {[["Card / Bank","left"],["Network","left"],["Balance / Limit","right"],["Utilisation","right"],["Due Date","left"],["Status","left"]].map(([h,a])=>(
-                <div key={h} style={{fontSize:11,color:T.muted,fontWeight:500,textAlign:a}}>{h}</div>
-              ))}
-            </div>
-            {filteredCards.map((card,i) => {
+            <SortHeader gridCols="2.2fr 1fr 1.2fr 1fr 1fr 0.8fr" sortKey={ccSort.sortKey} sortDir={ccSort.sortDir} onSort={ccSort.onSort}
+              columns={[["Card / Bank","left","cardName"],["Network","left","network"],["Balance / Limit","right","balance"],["Utilisation","right","util"],["Due Date","left","due"],["Status","left","cardType"]]}/>
+            {ccSort.sortFn(filteredCards, (c, k) => {
+              if (k==="cardName") return (c.cardName||"").toLowerCase();
+              if (k==="network") return (c.network||"").toLowerCase();
+              if (k==="balance") return c.cardType==="Debit"?0:c.currentBalance;
+              if (k==="util") return c.creditLimit>0?c.currentBalance/c.creditLimit:0;
+              if (k==="due") return c.dueDayOfMonth||99;
+              if (k==="cardType") return c.cardType;
+              return 0;
+            }).map((card,i) => {
               const bc = BANK_COLORS[card.bank] || {from:"#374151",to:"#1F2937"};
               const isDebit = card.cardType === "Debit";
               const linkedAcc = accounts.find(a=>a.id===card.linkedAccountId);

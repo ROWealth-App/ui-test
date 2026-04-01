@@ -14,6 +14,19 @@ npm run preview   # Preview production build
 
 ## Changelog
 
+### All Screens — Sortable Table Columns & Search Bars
+
+- Added **sortable column headers** to all 4 asset screen tables (Credit Cards, Loans, Insurance, Real Estate)
+- Clicking a column header sorts by that column; clicking again reverses direction
+- Sort indicators: ⇅ (unsorted), ▲ (ascending), ▼ (descending)
+- Reusable `SortHeader` component and `useSortState` hook shared across all screens
+- Sortable columns per screen:
+  - **Credit Cards**: Card/Bank, Network, Balance/Limit, Utilisation, Due Date, Status
+  - **Loans**: Loan/Lender, Type, Outstanding, Monthly, Rate, Next Due, Status
+  - **Insurance**: Policy/Plan, Type, Sum Assured, Premium/yr, Cash Value, Renewal, Status
+  - **Real Estate**: Property, Type/Tenure, Valuation, Loan/Equity, Rental, Status
+- Added **search bars** to Credit Cards ("Search card name, bank, last 4…") and Loans ("Search lender, loan type, account no…") filter toolbars, matching the existing Insurance search bar pattern
+
 ### Real Estate — Redesigned to Full-Width Layout
 
 - Replaced the old left-right split panel layout with a **full-width scrollable page** matching Insurance, Loans, and Credit Cards
