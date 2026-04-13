@@ -1,6 +1,6 @@
 # WealthOS UI
 
-A React-based wealth management dashboard for tracking stock holdings, dividends, credit cards, loans, insurance policies, real estate, retirement plans, and fixed income (bonds, T-bills, fixed deposits).
+A React-based wealth management dashboard for tracking stock holdings, dividends, credit cards, loans, insurance policies, real estate, retirement plans, fixed income (bonds, T-bills, fixed deposits), cryptocurrencies, VC/PE investments, business partnership ventures, and collectibles.
 
 ## Getting Started
 
@@ -13,6 +13,99 @@ npm run preview   # Preview production build
 ```
 
 ## Changelog
+
+### Collectibles — New Private Assets Tab
+
+- Added a **Collectibles** tab under **Private Assets** in the sidebar navigation
+- **Full-width scrollable layout** matching the Insurance/Bonds/Crypto pattern:
+  - **Page header** with "Collectibles Portfolio" title and "+ Add Item" button
+  - **4-column summary cards**: Total Market Value, Unrealised P&L, Insurance Coverage %, Items Tracked
+  - **Value by Category** breakdown bar (sorted by largest allocation)
+  - **Under-insured alert banner** listing items whose current value exceeds insured amount
+  - **Search bar** (name / brand / reference / category) with status pills and category dropdown filter
+  - **Sortable item table**: Item / Brand (with ⚠ under-insured + ✓ authenticated badges), Category, Condition, Cost / Value, P&L, Storage, Status
+- **12 categories** with distinct icons/colours:
+  - **Watches** ⌚, **Art** 🎨, **Wine & Spirits** 🍷, **Classic Cars** 🏎️, **Jewellery** 💎, **Luxury Bags** 👜, **Sneakers & Streetwear** 👟, **Trading Cards** 🃏, **Coins & Stamps** 🪙, **Memorabilia** 🏆, **Antiques** 🏺, **Other** 📦
+- **Slide-in drawer overlay** (960px) with pill tabs:
+  - **Overview**: under-insured warning banner (when applicable), Item Details (brand, model/ref, serial, year, condition, authentication cert, provenance), Acquisition & Valuation (acquisition date/price/source, current market value with P&L %, last valuation date/source, lifetime holding costs), Storage & Insurance (location, specific storage, insured value, policy ref, coverage ratio), Notes
+  - **Transactions**: Summary strip (Acquisition Cost / Holding Costs / Sale Proceeds), "+ Record Transaction" button, transaction list with type icons and colour-coded amounts
+  - **Postings**: Double-entry ledger — Purchase → Dr Asset / Cr Cash; Sale → Dr Cash / Cr Asset; Expenses → Dr Expense:Collectibles:{Type} / Cr Cash
+- **Record Transaction modal** with 9 transaction types: **Purchase**, **Sale**, **Valuation Update**, **Appraisal Fee**, **Insurance Premium**, **Maintenance**, **Storage Cost**, **Consignment Fee**, **Restoration**
+  - Valuation Update auto-refreshes `currentValue`, `valuationDate`, `valuerSource`
+  - Sale auto-flips status to "Sold" and books the proceeds as the final value
+- **Add/Edit modal** with fields for category, brand/maker/artist, model/reference/medium, serial/edition no, year, condition, quantity, acquisition details, current valuation, storage, insured value, policy ref, authentication flag + cert reference, provenance, currency, status
+- **Mock data**: 8 sample items (Rolex Submariner 126610LN, Hermès Birkin 30 Togo, original artwork "Quiet Harbor #7", Château Margaux 2015 6-bottle OCB, 1971 Porsche 911T, Pokémon Charizard Base Set PSA 10, AP Royal Oak 15500ST in consignment, Tiffany Solitaire 1.5ct)
+- **SortHeader enhancement**: accepts optional 4th tuple item `colStyle` for per-column style overrides — used to add `paddingLeft: 20` on the Storage column to prevent the right-aligned P&L values from touching the left-aligned Storage labels
+
+### Business Ventures — New Private Assets Tab
+
+- Added a **Business Ventures** tab under **Private Assets** in the sidebar navigation
+- **Full-width scrollable layout** matching the established pattern:
+  - **Page header** with "Business Partnership Portfolio" title and "+ Add Venture" button
+  - **4-column summary cards**: Total Market Value, Capital Deployed, Lifetime Income (distributions + drawings), YTD Income
+  - **Value by Industry** breakdown bar (sorted by largest allocation)
+  - **Unrealised gain/loss banner** (market value vs book value — green for gain, red for loss)
+  - **Search bar** (business name / industry / role / UEN) + status pills + partnership type dropdown
+  - **Sortable table**: Business / Role, Type, Stake %, Capital / Book, Market Value, Income, Status
+- **6 partnership types** with distinct icons/colours:
+  - **LLP** 🤝, **General Partnership** 👥, **Limited Partnership** 📋, **Private Limited (Pte Ltd)** 🏢, **Joint Venture** 🔗, **Sole Proprietorship** 👤
+- **Slide-in drawer overlay** (960px) with pill tabs:
+  - **Overview**: 4-stat KPI strip (Market Value, Capital Deployed, Lifetime Income, Total Return with %), Partnership Details (business name, type, industry, role, ownership % of N partners, UEN, country, currency, start / expiry dates), Your Position (capital contributed, partner loan outstanding, total capital deployed, book value, estimated market value, distributions received, salary / drawings, total income, total return with %), Business Performance at 100% (annual revenue, annual profit, profit margin, your share of profit), Notes
+  - **Transactions**: Summary strip (Capital In / Income Received / Capital Out & Exits), transaction list with type icons and colour coding for inflow vs outflow
+  - **Postings**: Double-entry ledger covering all transaction types — Capital Contribution → Dr Partnership Equity / Cr Cash; Partner Loan → Dr Loans Receivable / Cr Cash; Profit Distribution / Dividend → Dr Cash / Cr Income:Partnerships; Salary / Drawings → Dr Cash / Cr Income:Partnerships:PartnerDrawings; Capital Withdrawal / Exit → Dr Cash / Cr Partnership Equity
+- **Record Transaction modal** with dynamic types per partnership type:
+  - **Pte Ltd**: Capital Contribution, Dividend, Salary / Drawings, Partner Loan, Loan Repayment, Valuation Update, Exit / Buyout
+  - **Non-Pte Ltd**: Capital Contribution, Profit Distribution, Salary / Drawings, Partner Loan, Loan Repayment, Capital Withdrawal, Valuation Update, Exit / Buyout
+  - Auto-updates fields on save: Capital Contribution / Withdrawal → `capitalContributed`; Partner Loan / Loan Repayment → `partnerLoans`; Distribution / Dividend → `distributionsReceived`; Drawings → `salaryDrawings`; Valuation Update → `estimatedMarketValue`; Exit / Buyout → flips status to "Exited" and zeroes book/market value
+- **Add/Edit modal** with fields for business name, partnership type, industry, role, ownership %, partner count, capital contributed, partner loans, book value, estimated market value, annual revenue / profit, start / expiry dates, UEN, country, currency, status, notes
+- **Mock data**: 7 sample ventures (Sunset Café LLP managing partner at 40%, GreenTech Solutions Pte Ltd director at 25%, Urban Logistics JV silent partner at 20%, Two-Hearts Wedding Studio LLP exited via buyout, Axis Property Trust LP at 15%, Nova Coffee Roasters Pte Ltd angel at 8%, Harborfront E-comm dormant general partnership)
+
+### VC/PE Investments — New Private Assets Tab
+
+- Added a **VC/PE Investments** tab under a new **Private Assets** sidebar group
+- **Full-width scrollable layout**:
+  - **Page header** with "VC/PE Investment Portfolio" title and "+ Add Investment" button
+  - **4-column summary cards**: Total NAV, Commitment / Called (with Unfunded subtext), Distributions Received (with DPI multiple), TVPI / Avg IRR
+  - **NAV by Investment Type** breakdown bar
+  - **Unfunded commitment warning banner** (⚠️ reminds user to reserve liquidity for capital calls)
+  - **Search bar** (fund / GP / company / sector) + status pills + type dropdown
+  - **Sortable table**: Investment / Manager (with vintage + sector subtext), Type, NAV (with ownership %), Commit / Called (with called %), Dist / TVPI, IRR, Status
+- **5 investment types** with distinct icons/colours:
+  - **VC Fund** 🚀, **PE Fund** 🏢, **Direct Equity** 📈, **SAFE / Convertible Note** 📝, **Secondary** 🔄
+- **Slide-in drawer overlay** (960px) with pill tabs:
+  - **Overview**: 4-stat KPI strip (NAV, TVPI, DPI, IRR), Capital Deployment progress bar with Commitment / Called / Unfunded split, Investment Details (type, GP/manager, vintage year, stage, sector, geography, ownership %, fund size, GP commit %, investment / exit dates, currency), Performance (Commitment, Called, Unfunded, Distributions, NAV, Total Value, TVPI, DPI, RVPI, IRR), Notes
+  - **Transactions**: Summary strip (Total Called / Total Distributed / Management Fees), "+ Record Transaction" button, transaction list
+  - **Postings**: Double-entry ledger — Capital Call → Dr Investment / Cr Cash; Distribution → Dr Cash / Cr Investment (return of capital); Income / Exit → Dr Cash / Cr Income:PrivateEquity; Management Fee → Dr Expense:PrivateEquity:ManagementFees / Cr Cash
+- **Record Transaction modal** with 6 types: **Capital Call**, **Distribution**, **Income / Gain**, **Management Fee**, **Valuation Update**, **Exit / Realisation**
+  - Auto-updates: Capital Call → `calledCapital`; Distribution → `distributionsReceived`; Valuation Update → `nav`; Exit / Realisation → distributes amount, zeroes NAV, flips to "Realised"
+- **Add/Edit modal** with fields for type, fund name / company name, GP / manager, vintage / investment year, sector, geography, stage (Direct only), commitment, called capital, distributions, NAV, IRR, ownership % (Direct) or fund size (Funds), investment / exit dates, status, notes
+- **Mock data**: 7 sample investments (Sequoia Capital SEA VI, KKR Asian Fund V, Carousell Pte Ltd direct secondary, Vertex Ventures SEA & India VI, Atomos AI SAFE, Stripe pre-IPO secondary via Forge Global, Blackstone Real Estate Asia III partially realised)
+
+### Cryptocurrencies — New Crypto Wallet Tab
+
+- Added a **Cryptocurrencies** tab under a new **Crypto Wallet** sidebar group
+- **Full-width scrollable layout**:
+  - **Page header** with "Crypto Portfolio" title and "+ Add Holding" button
+  - **4-column summary cards**: Total Portfolio Value, Unrealised P&L (with return %), Yield Earned (staking + lending + airdrops), Avg Staking/Yield APY
+  - **Allocation by Holding Type** breakdown bar
+  - **Search bar** (symbol / name / wallet / chain) + status pills + holding type dropdown
+  - **Sortable table**: Asset / Wallet, Type, Holdings (value + units), Avg / Current Price, APY (with protocol), P&L, Status
+- **4 holding types** with distinct icons/colours:
+  - **Spot Crypto** 🪙, **Stablecoin** 💵, **Staked** 🔒, **Lending / DeFi** 🌾
+- **Multi-chain support**: Bitcoin, Ethereum, Solana, BNB Chain, Polygon, Arbitrum, Avalanche, Polkadot, Cosmos, Other
+- **Wallet types**: Exchange, Hardware Wallet, Hot Wallet, Custody, DeFi Protocol
+- **Slide-in drawer overlay** (960px) with pill tabs:
+  - **Overview**: 3-stat KPI strip (Current Value, Holdings in units, Unrealised P&L with %), Holding Details (symbol/name, type, chain, wallet, wallet type, wallet address, protocol, yield/APY, first acquired), Financial Summary (quantity, avg cost, current price, cost basis, current value, unrealised P&L), Notes
+  - **Transactions**: Summary strip (Total Income / Capital Deployed / Transaction count), "+ Record Transaction" button, transaction list with type icons
+  - **Postings**: Double-entry ledger — Buy / Stake / Deposit → Dr Assets:Crypto:{Chain}:{Symbol} / Cr Cash; Sell / Unstake / Withdraw → Dr Cash / Cr Assets:Crypto; Staking Reward / Interest / Airdrop → Dr Assets:Crypto / Cr Income:Crypto
+- **Record Transaction modal** with dynamic types per holding type:
+  - **Spot Crypto**: Buy, Sell, Transfer In, Transfer Out, Airdrop, Fee
+  - **Stablecoin**: Buy, Sell, Transfer In, Transfer Out, Interest
+  - **Staked**: Stake, Unstake, Staking Reward, Transfer In, Transfer Out
+  - **Lending / DeFi**: Deposit, Withdraw, Interest
+  - Amount auto-computed from quantity × price; holding quantity auto-updates on save (increments for buys/transfers-in/rewards, decrements for sells/transfers-out/unstakes/fees)
+- **Add/Edit modal** with fields for holding type, chain, symbol, name, wallet, wallet type, wallet address, quantity, avg cost, current price, staking yield / protocol (shown only for Staked and Lending types), acquisition date, currency, status, notes
+- **Mock data**: 7 sample holdings (BTC on Ledger Nano X, ETH on MetaMask, USDC on Binance, USDT on Crypto.com Earn at 6.5% APY, ETH staked via Lido at 3.2% APY, SOL staked via Marinade at 7.1% APY, AVAX on Coinbase)
 
 ### Mobile Responsiveness
 

@@ -212,9 +212,9 @@ const MobilePostingsList = ({ journalRows, entryCount, entryLabel }) => {
 /* ─── Sortable table header ────────────────────────────────── */
 const SortHeader = ({ columns, sortKey, sortDir, onSort, gridCols, style }) => (
   <div style={{display:"grid",gridTemplateColumns:gridCols,padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,minWidth:700,...style}}>
-    {columns.map(([label, align, key])=>(
+    {columns.map(([label, align, key, colStyle])=>(
       <div key={label} onClick={key ? ()=>onSort(key) : undefined}
-        style={{fontSize:11,color:sortKey===key?T.text:T.muted,fontWeight:sortKey===key?700:500,textAlign:align,cursor:key?"pointer":"default",userSelect:"none",display:"flex",alignItems:"center",gap:3,justifyContent:align==="right"?"flex-end":"flex-start"}}>
+        style={{fontSize:11,color:sortKey===key?T.text:T.muted,fontWeight:sortKey===key?700:500,textAlign:align,cursor:key?"pointer":"default",userSelect:"none",display:"flex",alignItems:"center",gap:3,justifyContent:align==="right"?"flex-end":"flex-start",...(colStyle||{})}}>
         {label}
         {key && <span style={{fontSize:9,color:sortKey===key?T.text:T.dim}}>{sortKey===key?(sortDir==="asc"?"▲":"▼"):"⇅"}</span>}
       </div>
@@ -3924,6 +3924,3152 @@ function RetirementScreen({ plans, setPlans, showToast }) {
       {/* Modal */}
       {showModal && editPlan && (
         <RetirementPlanModal plan={editPlan} onSave={handleSave} onClose={()=>{setShowModal(false);setEditPlan(null);}}/>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CRYPTOCURRENCIES MODULE
+═══════════════════════════════════════════════════════════════ */
+
+const CRYPTO_TYPES = ["Spot Crypto","Stablecoin","Staked","Lending / DeFi"];
+
+const CRYPTO_TYPE_CONFIG = {
+  "Spot Crypto":     { icon:"🪙", color:"#F59E0B", bg:"#FFFBEB" },
+  "Stablecoin":      { icon:"💵", color:"#16A34A", bg:"#F0FDF4" },
+  "Staked":          { icon:"🔒", color:"#9333EA", bg:"#FDF4FF" },
+  "Lending / DeFi":  { icon:"🌾", color:"#0891B2", bg:"#ECFEFF" },
+};
+
+const CRYPTO_STATUS_OPTS = ["Active","Sold","Transferred Out","Lost"];
+
+const CRYPTO_CHAINS = ["Bitcoin","Ethereum","Solana","BNB Chain","Polygon","Arbitrum","Avalanche","Polkadot","Cosmos","Other"];
+
+const CRYPTO_WALLET_TYPES = ["Exchange","Hardware Wallet","Hot Wallet","Custody","DeFi Protocol"];
+
+const EMPTY_CRYPTO = {
+  id:"", holdingType:"Spot Crypto", symbol:"", name:"", chain:"Bitcoin",
+  wallet:"", walletType:"Exchange", walletAddress:"",
+  quantity:0, avgCostPrice:0, currentPrice:0,
+  stakingYield:0, lendingProtocol:"",
+  acquisitionDate:"", currency:"SGD", status:"Active", notes:"",
+  transactions:[],
+};
+
+const CRYPTO_INIT = [
+  {
+    id:"CR001", holdingType:"Spot Crypto", symbol:"BTC", name:"Bitcoin", chain:"Bitcoin",
+    wallet:"Ledger Nano X", walletType:"Hardware Wallet", walletAddress:"bc1q...4m7x",
+    quantity:0.5842, avgCostPrice:48200, currentPrice:88750,
+    stakingYield:0, lendingProtocol:"",
+    acquisitionDate:"2024-03-12", currency:"SGD", status:"Active",
+    notes:"Long-term hold. Self-custody on hardware wallet. DCA over 6 months.",
+    transactions:[
+      {id:"CTX001",date:"2024-03-12",type:"Buy",qty:0.25,price:42800,amount:10700,method:"Coinhako",ref:"CH-BTC-MAR24",status:"Complete",notes:"Initial DCA buy"},
+      {id:"CTX002",date:"2024-06-20",type:"Buy",qty:0.15,price:51200,amount:7680,method:"Coinhako",ref:"CH-BTC-JUN24",status:"Complete",notes:"DCA continuation"},
+      {id:"CTX003",date:"2024-09-05",type:"Buy",qty:0.18,price:54800,amount:9864,method:"Coinhako",ref:"CH-BTC-SEP24",status:"Complete",notes:"DCA final tranche"},
+      {id:"CTX004",date:"2024-10-15",type:"Transfer Out",qty:0.5842,price:0,amount:0,method:"Self-custody",ref:"TX-TO-LEDGER",status:"Complete",notes:"Moved to Ledger Nano X for cold storage"},
+    ],
+  },
+  {
+    id:"CR002", holdingType:"Spot Crypto", symbol:"ETH", name:"Ethereum", chain:"Ethereum",
+    wallet:"MetaMask", walletType:"Hot Wallet", walletAddress:"0x742d...38a1",
+    quantity:4.25, avgCostPrice:3240, currentPrice:4820,
+    stakingYield:0, lendingProtocol:"",
+    acquisitionDate:"2024-05-08", currency:"SGD", status:"Active",
+    notes:"Used for DeFi interactions and NFT minting. Kept in MetaMask for convenience.",
+    transactions:[
+      {id:"CTX005",date:"2024-05-08",type:"Buy",qty:2.5,price:3100,amount:7750,method:"Binance",ref:"BN-ETH-MAY24",status:"Complete",notes:"Initial purchase"},
+      {id:"CTX006",date:"2024-07-22",type:"Buy",qty:1.75,price:3440,amount:6020,method:"Binance",ref:"BN-ETH-JUL24",status:"Complete",notes:"Added on dip"},
+    ],
+  },
+  {
+    id:"CR003", holdingType:"Stablecoin", symbol:"USDC", name:"USD Coin", chain:"Ethereum",
+    wallet:"Binance", walletType:"Exchange", walletAddress:"",
+    quantity:12500, avgCostPrice:1.35, currentPrice:1.34,
+    stakingYield:0, lendingProtocol:"",
+    acquisitionDate:"2025-01-10", currency:"SGD", status:"Active",
+    notes:"Dry powder for buying dips. Kept on exchange for quick deployment.",
+    transactions:[
+      {id:"CTX007",date:"2025-01-10",type:"Buy",qty:12500,price:1.35,amount:16875,method:"Bank Transfer",ref:"BN-USDC-JAN25",status:"Complete",notes:"Converted SGD to USDC for crypto allocation"},
+    ],
+  },
+  {
+    id:"CR004", holdingType:"Lending / DeFi", symbol:"USDT", name:"Tether USD", chain:"BNB Chain",
+    wallet:"Crypto.com Earn", walletType:"DeFi Protocol", walletAddress:"",
+    quantity:8000, avgCostPrice:1.34, currentPrice:1.34,
+    stakingYield:6.5, lendingProtocol:"Crypto.com Earn",
+    acquisitionDate:"2024-11-20", currency:"SGD", status:"Active",
+    notes:"Fixed 3-month term. 6.5% APY on stablecoin. Auto-renewing.",
+    transactions:[
+      {id:"CTX008",date:"2024-11-20",type:"Deposit",qty:8000,price:1.34,amount:10720,method:"Crypto.com Earn",ref:"CR-USDT-NOV24",status:"Complete",notes:"3-month term deposit"},
+      {id:"CTX009",date:"2025-02-20",type:"Interest",qty:130,price:1.34,amount:174,method:"Auto-credit",ref:"CR-INT-FEB25",status:"Complete",notes:"Quarterly interest payout"},
+      {id:"CTX010",date:"2025-05-20",type:"Interest",qty:132,price:1.34,amount:177,method:"Auto-credit",ref:"CR-INT-MAY25",status:"Complete",notes:"Quarterly interest payout"},
+      {id:"CTX011",date:"2025-08-20",type:"Interest",qty:134,price:1.34,amount:180,method:"Auto-credit",ref:"CR-INT-AUG25",status:"Complete",notes:"Quarterly interest payout"},
+      {id:"CTX012",date:"2025-11-20",type:"Interest",qty:136,price:1.34,amount:182,method:"Auto-credit",ref:"CR-INT-NOV25",status:"Complete",notes:"Quarterly interest payout"},
+    ],
+  },
+  {
+    id:"CR005", holdingType:"Staked", symbol:"ETH", name:"Ethereum (Staked via Lido)", chain:"Ethereum",
+    wallet:"Lido — stETH", walletType:"DeFi Protocol", walletAddress:"0x742d...38a1",
+    quantity:2.0, avgCostPrice:3350, currentPrice:4820,
+    stakingYield:3.2, lendingProtocol:"Lido",
+    acquisitionDate:"2024-08-15", currency:"SGD", status:"Active",
+    notes:"Liquid staking via Lido. Receives stETH. ~3.2% APY on ETH. Can unstake anytime.",
+    transactions:[
+      {id:"CTX013",date:"2024-08-15",type:"Stake",qty:2.0,price:3350,amount:6700,method:"Lido",ref:"LIDO-STAKE-AUG24",status:"Complete",notes:"Staked 2 ETH via Lido for stETH"},
+      {id:"CTX014",date:"2025-02-15",type:"Staking Reward",qty:0.032,price:4100,amount:131.20,method:"Auto-rebase",ref:"LIDO-RWD-FEB25",status:"Complete",notes:"H1 staking reward (accrued via rebase)"},
+      {id:"CTX015",date:"2025-08-15",type:"Staking Reward",qty:0.033,price:4620,amount:152.46,method:"Auto-rebase",ref:"LIDO-RWD-AUG25",status:"Complete",notes:"H2 staking reward"},
+    ],
+  },
+  {
+    id:"CR006", holdingType:"Staked", symbol:"SOL", name:"Solana", chain:"Solana",
+    wallet:"Phantom", walletType:"Hot Wallet", walletAddress:"7xKw...9mP2",
+    quantity:62.5, avgCostPrice:180, currentPrice:310,
+    stakingYield:7.1, lendingProtocol:"Marinade Finance",
+    acquisitionDate:"2024-09-03", currency:"SGD", status:"Active",
+    notes:"Native SOL staking via Marinade. ~7.1% APY. Liquid staking with mSOL.",
+    transactions:[
+      {id:"CTX016",date:"2024-09-03",type:"Buy",qty:62.5,price:180,amount:11250,method:"Binance",ref:"BN-SOL-SEP24",status:"Complete",notes:"Purchased SOL for staking"},
+      {id:"CTX017",date:"2024-09-10",type:"Stake",qty:62.5,price:0,amount:0,method:"Marinade",ref:"MNDE-STAKE-SEP24",status:"Complete",notes:"Delegated to Marinade validator"},
+      {id:"CTX018",date:"2025-03-10",type:"Staking Reward",qty:2.2,price:265,amount:583,method:"Auto-restake",ref:"MNDE-RWD-MAR25",status:"Complete",notes:"H1 rewards"},
+      {id:"CTX019",date:"2025-09-10",type:"Staking Reward",qty:2.1,price:290,amount:609,method:"Auto-restake",ref:"MNDE-RWD-SEP25",status:"Complete",notes:"H2 rewards"},
+    ],
+  },
+  {
+    id:"CR007", holdingType:"Spot Crypto", symbol:"AVAX", name:"Avalanche", chain:"Avalanche",
+    wallet:"Coinbase", walletType:"Exchange", walletAddress:"",
+    quantity:85, avgCostPrice:42, currentPrice:38.50,
+    stakingYield:0, lendingProtocol:"",
+    acquisitionDate:"2025-02-28", currency:"SGD", status:"Active",
+    notes:"Speculative position. Waiting for ecosystem growth.",
+    transactions:[
+      {id:"CTX020",date:"2025-02-28",type:"Buy",qty:85,price:42,amount:3570,method:"Coinbase",ref:"CB-AVAX-FEB25",status:"Complete",notes:"Alt allocation"},
+    ],
+  },
+];
+
+// ── Crypto Transaction Modal ──────────────────────────────────
+function CryptoTxModalInner({ crypto, onSave, onClose }) {
+  const txTypes = crypto.holdingType === "Staked" ? ["Stake","Unstake","Staking Reward","Transfer In","Transfer Out"]
+    : crypto.holdingType === "Lending / DeFi" ? ["Deposit","Withdraw","Interest"]
+    : crypto.holdingType === "Stablecoin" ? ["Buy","Sell","Transfer In","Transfer Out","Interest"]
+    : ["Buy","Sell","Transfer In","Transfer Out","Airdrop","Fee"];
+  const txTypeIcon = {Buy:"📥",Sell:"📤","Transfer In":"⬇",  "Transfer Out":"⬆",Stake:"🔒",Unstake:"🔓","Staking Reward":"🎁",Deposit:"📥",Withdraw:"📤",Interest:"💰",Airdrop:"🎉",Fee:"⚠️"};
+
+  const [f, setF] = useState({
+    type: txTypes[0],
+    date: new Date().toISOString().slice(0,10),
+    qty: 0, price: crypto.currentPrice || 0, amount: 0,
+    method: crypto.wallet || "", ref: "", notes: "",
+  });
+  const set = (k, v) => {
+    setF(p => {
+      const next = { ...p, [k]: v };
+      if (k === "qty" || k === "price") {
+        next.amount = +((+next.qty || 0) * (+next.price || 0)).toFixed(2);
+      }
+      return next;
+    });
+  };
+  const isOut = ["Sell","Transfer Out","Unstake","Withdraw","Fee"].includes(f.type);
+  const isIn = ["Staking Reward","Interest","Airdrop"].includes(f.type);
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{crypto.symbol} · {crypto.name} · {crypto.wallet}</div>
+        <div style={{marginBottom:14}}>
+          <Label required>Transaction Type</Label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {txTypes.map(t=>(
+              <button key={t} onClick={()=>set("type",t)}
+                style={{flex:"1 1 auto",padding:"10px 14px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:f.type===t?700:400,
+                  border:`1px solid ${f.type===t?T.selected:T.border}`,background:f.type===t?T.selected:T.bg,color:f.type===t?T.selectedText:T.muted}}>
+                {txTypeIcon[t]||"💰"} {t}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
+          <div><Label>Quantity ({crypto.symbol})</Label><Input type="number" value={f.qty} onChange={e=>set("qty",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Price per Unit</Label><Input type="number" prefix="S$" value={f.price} onChange={e=>set("price",+e.target.value)}/></div>
+          <div><Label required>Amount (SGD)</Label><Input type="number" prefix="S$" value={f.amount} onChange={e=>set("amount",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Method / Venue</Label><Input value={f.method} onChange={e=>set("method",e.target.value)} placeholder="e.g. Binance, Ledger, Lido"/></div>
+          <div><Label>Reference / Tx Hash</Label><Input value={f.ref} onChange={e=>set("ref",e.target.value)} placeholder="0x... or exchange ref"/></div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. DCA buy, staking reward, moved to cold storage…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{background:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{color:isOut?T.down:T.up,fontWeight:600}}>
+            {f.type==="Buy"||f.type==="Deposit"||f.type==="Stake"?"📥 Capital deployed":isOut?"📤 Capital returned":isIn?"🎁 Income received":"🔄 Transfer"}
+          </span>
+          <span style={{fontWeight:700,color:isOut?T.down:T.up}}>{isOut?"-":"+"} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.date}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date)?0.4:1}}>
+            Record {f.type}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Crypto Add/Edit Modal ─────────────────────────────────────
+function CryptoModal({ crypto, onSave, onClose }) {
+  const [f, setF] = useState({ ...crypto });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:560,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Holding" : "Add Crypto Holding"}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Holding Type</Label><Sel value={f.holdingType} onChange={e=>set("holdingType",e.target.value)} options={CRYPTO_TYPES}/></div>
+          <div><Label required>Chain / Network</Label><Sel value={f.chain} onChange={e=>set("chain",e.target.value)} options={CRYPTO_CHAINS}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:14,marginBottom:14}}>
+          <div><Label required>Symbol</Label><Input value={f.symbol} onChange={e=>set("symbol",e.target.value.toUpperCase())} placeholder="BTC, ETH, SOL"/></div>
+          <div><Label required>Name</Label><Input value={f.name} onChange={e=>set("name",e.target.value)} placeholder="Bitcoin, Ethereum"/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Wallet / Venue</Label><Input value={f.wallet} onChange={e=>set("wallet",e.target.value)} placeholder="Binance, Ledger, MetaMask"/></div>
+          <div><Label>Wallet Type</Label><Sel value={f.walletType} onChange={e=>set("walletType",e.target.value)} options={CRYPTO_WALLET_TYPES}/></div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <Label>Wallet Address (optional)</Label>
+          <Input value={f.walletAddress} onChange={e=>set("walletAddress",e.target.value)} placeholder="0x... or bc1q..."/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Quantity</Label><Input type="number" value={f.quantity} onChange={e=>set("quantity",+e.target.value)}/></div>
+          <div><Label>Avg Cost (SGD)</Label><Input type="number" prefix="S$" value={f.avgCostPrice} onChange={e=>set("avgCostPrice",+e.target.value)}/></div>
+          <div><Label>Current Price (SGD)</Label><Input type="number" prefix="S$" value={f.currentPrice} onChange={e=>set("currentPrice",+e.target.value)}/></div>
+        </div>
+        {(f.holdingType === "Staked" || f.holdingType === "Lending / DeFi") && (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+            <div><Label>Yield / APY (%)</Label><Input type="number" value={f.stakingYield} onChange={e=>set("stakingYield",+e.target.value)}/></div>
+            <div><Label>Protocol</Label><Input value={f.lendingProtocol} onChange={e=>set("lendingProtocol",e.target.value)} placeholder="Lido, Aave, Marinade"/></div>
+          </div>
+        )}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Acquisition Date</Label><Input type="date" value={f.acquisitionDate} onChange={e=>set("acquisitionDate",e.target.value)}/></div>
+          <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD"]}/></div>
+          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={CRYPTO_STATUS_OPTS}/></div>
+        </div>
+        <div style={{marginBottom:20}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Strategy, storage notes…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.symbol||!f.name||!f.wallet}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.symbol||!f.name||!f.wallet)?0.4:1}}>
+            {f.id ? "Save Changes" : "Add Holding"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Cryptocurrencies Screen ───────────────────────────────────
+function CryptoScreen({ cryptos, setCryptos, showToast }) {
+  const isMobile = useIsMobile();
+  const [selectedCrypto, setSelectedCrypto] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [editCrypto, setEditCrypto] = useState(null);
+  const [filterType, setFilterType] = useState("All");
+  const [filterStatus, setFilterStatus] = useState("All");
+  const [searchQ, setSearchQ] = useState("");
+  const [drawerTab, setDrawerTab] = useState("overview");
+  const [showTxModal, setShowTxModal] = useState(false);
+  const crSort = useSortState();
+
+  const activeHoldings = cryptos.filter(c => c.status === "Active");
+  const totalCurrentValue = activeHoldings.reduce((s,c) => s + ((c.quantity||0)*(c.currentPrice||0)), 0);
+  const totalCost = activeHoldings.reduce((s,c) => s + ((c.quantity||0)*(c.avgCostPrice||0)), 0);
+  const totalUnrealizedPnL = totalCurrentValue - totalCost;
+  const totalIncome = cryptos.flatMap(c=>(c.transactions||[])).filter(t=>["Staking Reward","Interest","Airdrop"].includes(t.type)&&t.status==="Complete").reduce((s,t)=>s+(t.amount||0),0);
+  const yieldingHoldings = activeHoldings.filter(c => (c.stakingYield||0) > 0);
+  const avgYield = yieldingHoldings.length > 0 ? yieldingHoldings.reduce((s,c)=>s+(c.stakingYield||0),0)/yieldingHoldings.length : 0;
+
+  // Type breakdown
+  const typeBreakdown = {};
+  activeHoldings.forEach(c => {
+    const val = (c.quantity||0)*(c.currentPrice||0);
+    typeBreakdown[c.holdingType] = (typeBreakdown[c.holdingType]||0) + val;
+  });
+
+  const filtered = cryptos.filter(c => {
+    if (filterType !== "All" && c.holdingType !== filterType) return false;
+    if (filterStatus !== "All" && c.status !== filterStatus) return false;
+    if (searchQ) {
+      const q = searchQ.toLowerCase();
+      if (!(c.symbol||"").toLowerCase().includes(q) && !(c.name||"").toLowerCase().includes(q) && !(c.wallet||"").toLowerCase().includes(q) && !(c.chain||"").toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const handleSave = (f) => {
+    if (f.id) {
+      setCryptos(prev => prev.map(c => c.id === f.id ? { ...c, ...f } : c));
+      showToast("Holding updated", "success");
+    } else {
+      setCryptos(prev => [...prev, { ...f, id:"CR"+Date.now(), transactions:[] }]);
+      showToast("Holding added", "success");
+    }
+    setShowModal(false);
+    setEditCrypto(null);
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {/* Page header */}
+      <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>Crypto Portfolio</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>{activeHoldings.length} active holding{activeHoldings.length!==1?"s":""} · {cryptos.length} total</div>
+        </div>
+        <button onClick={()=>{setEditCrypto({...EMPTY_CRYPTO,id:""});setShowModal(true);}}
+          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+          + Add Holding
+        </button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:18}}>
+        {[
+          {label:"Total Portfolio Value",value:fmtCompact(totalCurrentValue),sub:`Cost basis: ${fmtCompact(totalCost)}`,icon:"💎",color:T.text},
+          {label:"Unrealised P&L",value:(totalUnrealizedPnL>=0?"+":"")+fmtCompact(totalUnrealizedPnL),sub:`${totalCost>0?((totalUnrealizedPnL/totalCost)*100).toFixed(1):0}% return`,icon:"📈",color:totalUnrealizedPnL>=0?T.up:T.down},
+          {label:"Yield Earned",value:fmtCompact(totalIncome),sub:"Staking + lending + airdrops",icon:"🎁",color:T.up},
+          {label:"Avg Staking/Yield APY",value:`${avgYield.toFixed(2)}%`,sub:`${yieldingHoldings.length} yielding position${yieldingHoldings.length!==1?"s":""}`,icon:"🔒",color:T.accent},
+        ].map((c,i)=>(
+          <Card key={i} style={{padding:"18px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+              <span style={{fontSize:20}}>{c.icon}</span>
+            </div>
+            <div style={{fontSize:22,fontWeight:700,marginTop:8,color:c.color}}>{c.value}</div>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Breakdown bar */}
+      {Object.keys(typeBreakdown).length > 0 && (
+        <Card style={{padding:"16px 20px",marginBottom:18}}>
+          <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Allocation by Holding Type</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+            {Object.entries(typeBreakdown).map(([type, val])=>{
+              const pct = totalCurrentValue > 0 ? (val/totalCurrentValue*100).toFixed(0) : 0;
+              const tc = CRYPTO_TYPE_CONFIG[type] || {icon:"🪙",color:T.muted,bg:T.inputBg};
+              return (
+                <div key={type} style={{flex:"1 1 140px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:12,color:T.muted,fontWeight:500}}>{tc.icon} {type}</span>
+                    <span style={{fontSize:12,fontWeight:600}}>{pct}%</span>
+                  </div>
+                  <div style={{height:6,background:T.inputBg,borderRadius:3,overflow:"hidden"}}>
+                    <div style={{width:`${pct}%`,height:"100%",background:tc.color,borderRadius:3}}/>
+                  </div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:4}}>{fmtCompact(val)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Filter toolbar */}
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:"1 1 200px"}}>
+          <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search symbol, name, wallet, chain…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+        </div>
+        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+          {["All",...CRYPTO_STATUS_OPTS].map(s=>(
+            <button key={s} onClick={()=>setFilterStatus(s)}
+              style={{background:filterStatus===s?T.selected:T.inputBg,color:filterStatus===s?T.selectedText:T.muted,border:`1px solid ${filterStatus===s?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterStatus===s?600:400}}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <select value={filterType} onChange={e=>setFilterType(e.target.value)}
+          style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 12px",fontSize:12,fontFamily:"inherit",color:T.text,cursor:"pointer",outline:"none"}}>
+          {["All",...CRYPTO_TYPES].map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filtered.length} of {cryptos.length}</span>
+      </div>
+
+      {/* Table / Mobile cards */}
+      {filtered.length === 0 ? (
+        <Card style={{padding:"48px 24px",textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>🪙</div>
+          <div style={{fontSize:14,fontWeight:600}}>No holdings found</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting filters or add a new holding</div>
+        </Card>
+      ) : isMobile ? (
+        <Card style={{padding:0,overflow:"hidden"}}>
+          {filtered.map(c => {
+            const tc = CRYPTO_TYPE_CONFIG[c.holdingType] || {icon:"🪙",color:T.muted,bg:T.inputBg};
+            const value = (c.quantity||0)*(c.currentPrice||0);
+            const cost = (c.quantity||0)*(c.avgCostPrice||0);
+            const pnl = value - cost;
+            return <MobileListItem key={c.id} onClick={()=>{setSelectedCrypto(c);setDrawerTab("overview");}}
+              icon={tc.icon} iconBg={tc.bg} title={`${c.symbol} · ${c.name}`} subtitle={`${c.wallet} · ${c.chain}`}
+              value={fmtCompact(value)} valueColor={T.text} valueSub={`${(+c.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} ${c.symbol}`}
+              badge={c.status} badgeBg={c.status==="Active"?T.upBg:T.inputBg} badgeColor={c.status==="Active"?T.up:T.muted}
+              extra={pnl !== 0 ? <span style={{fontSize:11,fontWeight:600,color:pnl>=0?T.up:T.down}}>{pnl>=0?"+":""}{fmtCompact(pnl)}</span> : null}
+            />;
+          })}
+        </Card>
+      ) : (
+        <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
+          <SortHeader gridCols="2.2fr 1fr 1.2fr 1.1fr 1fr 1fr 0.8fr" sortKey={crSort.sortKey} sortDir={crSort.sortDir} onSort={crSort.onSort}
+            columns={[["Asset / Wallet","left","name"],["Type","left","type"],["Holdings","right","value"],["Avg / Current","right","price"],["APY","right","yield"],["P&L","right","pnl"],["Status","left","status"]]}/>
+          {crSort.sortFn(filtered, (c, k) => {
+            const value = (c.quantity||0)*(c.currentPrice||0);
+            const cost = (c.quantity||0)*(c.avgCostPrice||0);
+            if (k==="name") return (c.symbol||"").toLowerCase();
+            if (k==="type") return (c.holdingType||"").toLowerCase();
+            if (k==="value") return value;
+            if (k==="price") return c.currentPrice||0;
+            if (k==="yield") return c.stakingYield||0;
+            if (k==="pnl") return value - cost;
+            if (k==="status") return c.status;
+            return 0;
+          }).map((c, i) => {
+            const tc = CRYPTO_TYPE_CONFIG[c.holdingType] || {icon:"🪙",color:T.muted,bg:T.inputBg};
+            const value = (c.quantity||0)*(c.currentPrice||0);
+            const cost = (c.quantity||0)*(c.avgCostPrice||0);
+            const pnl = value - cost;
+            const pnlPct = cost > 0 ? (pnl/cost*100) : 0;
+            return (
+              <div key={c.id} onClick={()=>{setSelectedCrypto(c);setDrawerTab("overview");}}
+                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1.1fr 1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:i<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+                  opacity:c.status!=="Active"?0.55:1,background:c.status!=="Active"?T.sidebar:""}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                onMouseLeave={e=>e.currentTarget.style.background=(c.status!=="Active"?T.sidebar:"")}>
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{width:34,height:34,borderRadius:9,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{tc.icon}</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600}}>{c.symbol} · {c.name}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{c.wallet} · {c.chain}</div>
+                  </div>
+                </div>
+                <div style={{fontSize:12,color:T.muted}}>{c.holdingType}</div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:13,fontWeight:700}}>{fmtCompact(value)}</div>
+                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>{(+c.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} {c.symbol}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12,color:T.text}}>S${(+c.currentPrice).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
+                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>Avg S${(+c.avgCostPrice).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  {c.stakingYield > 0 ? <div style={{fontSize:12,fontWeight:600,color:T.accent}}>{c.stakingYield}%</div> : <div style={{fontSize:12,color:T.dim}}>—</div>}
+                  {c.lendingProtocol && <div style={{fontSize:10,color:T.dim,marginTop:1}}>{c.lendingProtocol}</div>}
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12,fontWeight:600,color:pnl>=0?T.up:T.down}}>{pnl>=0?"+":""}{fmtCompact(pnl)}</div>
+                  <div style={{fontSize:10,color:pnl>=0?T.up:T.down,marginTop:1}}>{pnl>=0?"+":""}{pnlPct.toFixed(1)}%</div>
+                </div>
+                <div>
+                  <Badge bg={c.status==="Active"?T.upBg:T.inputBg}
+                    color={c.status==="Active"?T.up:T.muted}>
+                    {c.status}
+                  </Badge>
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* ══ CRYPTO DETAIL DRAWER ══ */}
+      {selectedCrypto && (() => {
+        const crypto = cryptos.find(c => c.id === selectedCrypto.id) || selectedCrypto;
+        const tc = CRYPTO_TYPE_CONFIG[crypto.holdingType] || {icon:"🪙",color:T.muted,bg:T.inputBg};
+        const txs = (crypto.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
+        const value = (crypto.quantity||0)*(crypto.currentPrice||0);
+        const cost = (crypto.quantity||0)*(crypto.avgCostPrice||0);
+        const pnl = value - cost;
+        const pnlPct = cost > 0 ? (pnl/cost*100) : 0;
+        const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+        const mono  = "'Courier New',Courier,monospace";
+        const fmtA  = (v) => "S$" + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+        const cashAcct = "Assets:Bank:Cash";
+        const cryptoAcct = `Assets:Crypto:${(crypto.chain||"Other").replace(/ /g,"")}:${crypto.symbol}`;
+        const incomeAcct = `Income:Crypto:${crypto.holdingType==="Staked"?"Staking":crypto.holdingType==="Lending / DeFi"?"Lending":"Other"}`;
+        const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
+
+        return (
+          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+            onClick={e=>{if(e.target===e.currentTarget) setSelectedCrypto(null);}}>
+            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
+              {/* Header */}
+              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
+                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:16,fontWeight:700}}>{crypto.symbol} · {crypto.name}</div>
+                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{crypto.wallet} · {crypto.chain}{crypto.walletAddress?` · ${crypto.walletAddress}`:""}</div>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <Badge bg={crypto.status==="Active"?T.upBg:T.inputBg} color={crypto.status==="Active"?T.up:T.muted}>{crypto.status}</Badge>
+                    <button onClick={()=>{setEditCrypto(crypto);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
+                    <button onClick={()=>setSelectedCrypto(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:10,marginBottom:14}}>
+                  {[
+                    {l:"Current Value",v:fmtCompact(value)},
+                    {l:"Holdings",v:`${(+crypto.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} ${crypto.symbol}`},
+                    {l:"Unrealised P&L",v:`${pnl>=0?"+":""}${fmtCompact(pnl)} (${pnl>=0?"+":""}${pnlPct.toFixed(1)}%)`},
+                  ].map(s=>(
+                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
+                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
+                      <div style={{fontSize:15,fontWeight:700,marginTop:4}}>{s.v}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:4}}>
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
+                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
+                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
+                      {dt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Body */}
+              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+                {drawerTab === "overview" && (
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📋 Holding Details</div>
+                      {[
+                        ["Symbol / Name",`${crypto.symbol} · ${crypto.name}`],
+                        ["Holding Type",crypto.holdingType],
+                        ["Chain / Network",crypto.chain],
+                        ["Wallet / Venue",crypto.wallet],
+                        ["Wallet Type",crypto.walletType],
+                        crypto.walletAddress?["Wallet Address",crypto.walletAddress]:null,
+                        crypto.lendingProtocol?["Protocol",crypto.lendingProtocol]:null,
+                        crypto.stakingYield>0?["Yield / APY",`${crypto.stakingYield}%`]:null,
+                        crypto.acquisitionDate?["First Acquired",crypto.acquisitionDate]:null,
+                        ["Currency",crypto.currency],
+                      ].filter(Boolean).map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`,gap:12}}>
+                          <span style={{fontSize:12,color:T.muted,flexShrink:0}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",fontFamily:k==="Wallet Address"?mono:inter,wordBreak:"break-all"}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>💰 Financial Summary</div>
+                      {[
+                        ["Quantity Held",`${(+crypto.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} ${crypto.symbol}`],
+                        ["Avg Cost / Unit",`S$${(+crypto.avgCostPrice).toLocaleString(undefined,{maximumFractionDigits:2})}`],
+                        ["Current Price / Unit",`S$${(+crypto.currentPrice).toLocaleString(undefined,{maximumFractionDigits:2})}`],
+                        ["Cost Basis",`S$${cost.toLocaleString(undefined,{maximumFractionDigits:2})}`],
+                        ["Current Value",`S$${value.toLocaleString(undefined,{maximumFractionDigits:2})}`],
+                        ["Unrealised P&L",`${pnl>=0?"+":""}S$${pnl.toLocaleString(undefined,{maximumFractionDigits:2})} (${pnl>=0?"+":""}${pnlPct.toFixed(2)}%)`],
+                      ].map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                          <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",color:k==="Unrealised P&L"?(pnl>=0?T.up:T.down):T.text}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {crypto.notes && (
+                      <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📝 Notes</div>
+                        <div style={{padding:"12px 16px",fontSize:13,color:T.muted,lineHeight:1.6}}>{crypto.notes}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {drawerTab === "transactions" && (
+                  <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                      {(()=>{
+                        const income = txs.filter(t=>["Staking Reward","Interest","Airdrop"].includes(t.type));
+                        const purchases = txs.filter(t=>["Buy","Deposit","Stake"].includes(t.type));
+                        return [
+                          {label:"Total Income",value:`S$${income.reduce((s,t)=>s+(t.amount||0),0).toLocaleString(undefined,{maximumFractionDigits:2})}`,sub:`${income.length} payment${income.length!==1?"s":""}`,color:T.up},
+                          {label:"Capital Deployed",value:`S$${purchases.reduce((s,t)=>s+(t.amount||0),0).toLocaleString(undefined,{maximumFractionDigits:2})}`,sub:`${purchases.length} buy${purchases.length!==1?"s":""}`,color:T.text},
+                          {label:"Transactions",value:String(txs.length),sub:"Total recorded",color:T.accent},
+                        ];
+                      })().map(s=>(
+                        <div key={s.label} style={{background:T.inputBg,borderRadius:9,padding:"10px 12px"}}>
+                          <div style={{fontSize:11,color:T.muted}}>{s.label}</div>
+                          <div style={{fontSize:14,fontWeight:700,color:s.color,marginTop:4}}>{s.value}</div>
+                          <div style={{fontSize:11,color:T.dim,marginTop:2}}>{s.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {crypto.status === "Active" && (
+                      <div style={{display:"flex",justifyContent:"flex-end"}}>
+                        <button onClick={()=>setShowTxModal(true)} style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>+ Record Transaction</button>
+                      </div>
+                    )}
+                    {txs.length===0?(
+                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No transactions yet</div></div>
+                    ):(
+                      <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        {txs.map((tx,i)=>{
+                          const isOut = ["Sell","Transfer Out","Unstake","Withdraw","Fee"].includes(tx.type);
+                          const isIncome = ["Staking Reward","Interest","Airdrop"].includes(tx.type);
+                          const icon = {Buy:"📥",Sell:"📤","Transfer In":"⬇","Transfer Out":"⬆",Stake:"🔒",Unstake:"🔓","Staking Reward":"🎁",Deposit:"📥",Withdraw:"📤",Interest:"💰",Airdrop:"🎉",Fee:"⚠️"}[tx.type]||"💰";
+                          return (
+                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                              <div style={{width:34,height:34,borderRadius:8,background:isIncome?T.upBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:13,fontWeight:600}}>{tx.type}{tx.qty>0?` · ${(+tx.qty).toLocaleString(undefined,{maximumFractionDigits:6})} ${crypto.symbol}`:""}{tx.notes?` — ${tx.notes}`:""}</div>
+                                <div style={{fontSize:11,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                                  <span>{tx.date}</span>
+                                  {tx.method&&<span style={{fontSize:10,background:T.inputBg,borderRadius:4,padding:"1px 6px"}}>{tx.method}</span>}
+                                  {tx.ref&&<span style={{fontSize:10,color:T.dim,fontFamily:"monospace"}}>{tx.ref}</span>}
+                                </div>
+                              </div>
+                              <div style={{textAlign:"right",flexShrink:0}}>
+                                <div style={{fontSize:13,fontWeight:700,color:isIncome?T.up:isOut?T.down:T.text}}>
+                                  {tx.amount>0?(isIncome?"+":isOut?"-":"")+"S$"+tx.amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
+                                </div>
+                                <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {drawerTab === "postings" && (() => {
+                  const sortedTxs = (crypto.transactions||[]).filter(t=>t.status==="Complete"&&t.amount>0).slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  const journalRows = [];
+                  sortedTxs.forEach(tx => {
+                    if (["Buy","Deposit","Stake"].includes(tx.type)) {
+                      journalRows.push(
+                        {date:tx.date,desc:`${tx.type} — ${tx.notes||crypto.symbol}`,account:cryptoAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:cashAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (["Sell","Withdraw","Unstake"].includes(tx.type)) {
+                      journalRows.push(
+                        {date:tx.date,desc:`${tx.type} — ${tx.notes||crypto.symbol}`,account:cashAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:cryptoAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (["Staking Reward","Interest","Airdrop"].includes(tx.type)) {
+                      journalRows.push(
+                        {date:tx.date,desc:`${tx.type} — ${tx.notes||crypto.symbol}`,account:cryptoAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:incomeAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    }
+                  });
+                  if (isMobile && journalRows.length > 0) return <MobilePostingsList journalRows={journalRows} entryCount={sortedTxs.length} entryLabel="transactions"/>;
+                  if (journalRows.length===0) return (
+                    <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}><div style={{fontSize:32,marginBottom:10}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No entries to post yet</div></div>
+                  );
+                  return (
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
+                      <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`}}>
+                        <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
+                        <div style={{fontSize:12,color:T.accent,marginTop:3,fontFamily:inter}}>Double-entry bookkeeping · PTA compliant · {sortedTxs.length} transaction{sortedTxs.length!==1?"s":""}</div>
+                      </div>
+                      <div style={{overflowX:"auto",overflowY:"auto",maxHeight:460}}>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead><tr style={{borderBottom:`1px solid ${T.border}`}}>
+                            {["Date","Account","Description","Debit","Credit"].map((h,hi)=>(
+                              <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",width:hi===0||hi>=3?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
+                            ))}
+                          </tr></thead>
+                          <tbody>
+                            {journalRows.map((row,ri)=>(
+                              <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
+                                  {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
+                                </td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top"}}><span style={{fontFamily:mono,fontSize:12,color:T.text}}>{row.account}</span></td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",fontSize:12,color:T.muted,fontFamily:inter}}>{row.desc}</td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                  {row.debit?<span style={{fontSize:13,fontWeight:700,color:T.up,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                </td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                  {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
+                        <div style={{fontSize:12,fontWeight:700,marginBottom:6,fontFamily:inter}}>Double-Entry Accounting</div>
+                        <div style={{fontSize:11,color:T.muted,lineHeight:1.8,fontFamily:inter}}>
+                          <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Buy / Stake / Deposit → increases crypto holdings; Sell / Withdraw → increases cash; Rewards → increase holdings</div>
+                          <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Buy → reduces cash; Sell / Unstake → reduces holdings; Staking Reward / Interest / Airdrop → income recognised</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Transaction modal */}
+      {showTxModal && selectedCrypto && (() => {
+        const crypto = cryptos.find(c => c.id === selectedCrypto.id) || selectedCrypto;
+        return <CryptoTxModalInner crypto={crypto} onSave={(tx) => {
+          const newTx = {...tx, id:"CTX"+Date.now(), status:"Complete"};
+          setCryptos(prev => prev.map(c => {
+            if (c.id !== crypto.id) return c;
+            const nextTxs = [...(c.transactions||[]), newTx];
+            let nextQty = c.quantity;
+            if (["Buy","Transfer In","Staking Reward","Airdrop","Deposit"].includes(tx.type)) nextQty = (+c.quantity||0) + (+tx.qty||0);
+            else if (["Sell","Transfer Out","Withdraw","Unstake","Fee"].includes(tx.type)) nextQty = Math.max(0, (+c.quantity||0) - (+tx.qty||0));
+            return { ...c, transactions: nextTxs, quantity: nextQty };
+          }));
+          setShowTxModal(false);
+          showToast(`${tx.type} recorded`, "success");
+        }} onClose={()=>setShowTxModal(false)}/>;
+      })()}
+
+      {/* Add/Edit modal */}
+      {showModal && editCrypto && (
+        <CryptoModal crypto={editCrypto} onSave={handleSave} onClose={()=>{setShowModal(false);setEditCrypto(null);}}/>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   VC/PE INVESTMENTS MODULE
+═══════════════════════════════════════════════════════════════ */
+
+const PE_TYPES = ["VC Fund","PE Fund","Direct Equity","SAFE / Convertible Note","Secondary"];
+
+const PE_TYPE_CONFIG = {
+  "VC Fund":                  { icon:"🚀", color:"#2563EB", bg:"#EFF6FF" },
+  "PE Fund":                  { icon:"🏢", color:"#7C3AED", bg:"#F5F3FF" },
+  "Direct Equity":            { icon:"📈", color:"#059669", bg:"#F0FDF4" },
+  "SAFE / Convertible Note":  { icon:"📝", color:"#D97706", bg:"#FFFBEB" },
+  "Secondary":                { icon:"🔄", color:"#0891B2", bg:"#ECFEFF" },
+};
+
+const PE_STATUS_OPTS = ["Active","Realised","Partially Realised","Written Off","Pending Commitment"];
+
+const PE_STAGES = ["Pre-Seed","Seed","Series A","Series B","Series C","Series D+","Growth","Pre-IPO","Buyout","N/A"];
+
+const PE_SECTORS = ["Technology","Fintech","Healthcare","Consumer","SaaS","Biotech","Real Estate","Infrastructure","Energy","Diversified","Other"];
+
+const EMPTY_PE = {
+  id:"", investmentType:"VC Fund", name:"", manager:"", vintageYear:new Date().getFullYear(),
+  stage:"N/A", sector:"Technology", geography:"Southeast Asia",
+  commitment:0, calledCapital:0, distributionsReceived:0, nav:0,
+  ownershipPct:0, irr:0,
+  investmentDate:"", exitDate:"",
+  currency:"SGD", fundSize:0, gpCommit:0,
+  status:"Active", notes:"",
+  transactions:[],
+};
+
+const PE_INIT = [
+  {
+    id:"PE001", investmentType:"VC Fund", name:"Sequoia Capital Southeast Asia VI",
+    manager:"Sequoia Capital", vintageYear:2022, stage:"N/A", sector:"Technology", geography:"Southeast Asia",
+    commitment:250000, calledCapital:175000, distributionsReceived:22000, nav:218000,
+    ownershipPct:0, irr:14.2,
+    investmentDate:"2022-06-01", exitDate:"",
+    currency:"SGD", fundSize:850000000, gpCommit:2.0,
+    status:"Active",
+    notes:"Early-stage SEA tech fund. 10-year term. 2% mgmt fee / 20% carry above 8% hurdle. J-curve still in effect.",
+    transactions:[
+      {id:"PTX001",date:"2022-06-15",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"SEQ-CC-01",status:"Complete",notes:"Initial capital call — 20% of commitment"},
+      {id:"PTX002",date:"2023-01-20",type:"Capital Call",amount:45000,method:"Wire Transfer",ref:"SEQ-CC-02",status:"Complete",notes:"Second call — follow-on into portfolio co"},
+      {id:"PTX003",date:"2023-09-10",type:"Capital Call",amount:40000,method:"Wire Transfer",ref:"SEQ-CC-03",status:"Complete",notes:"Third call — new investments + reserves"},
+      {id:"PTX004",date:"2024-05-08",type:"Capital Call",amount:40000,method:"Wire Transfer",ref:"SEQ-CC-04",status:"Complete",notes:"Fourth call"},
+      {id:"PTX005",date:"2024-11-22",type:"Distribution",amount:22000,method:"Wire Transfer",ref:"SEQ-DIST-01",status:"Complete",notes:"Partial exit — portfolio co acquired"},
+      {id:"PTX006",date:"2025-03-31",type:"Management Fee",amount:3500,method:"Netting",ref:"SEQ-MF-Q1",status:"Complete",notes:"Q1 management fee (2% annualised on committed)"},
+    ],
+  },
+  {
+    id:"PE002", investmentType:"PE Fund", name:"KKR Asian Fund V",
+    manager:"KKR & Co.", vintageYear:2023, stage:"N/A", sector:"Diversified", geography:"Asia Pacific",
+    commitment:500000, calledCapital:225000, distributionsReceived:0, nav:238000,
+    ownershipPct:0, irr:8.5,
+    investmentDate:"2023-03-15", exitDate:"",
+    currency:"SGD", fundSize:15000000000, gpCommit:3.0,
+    status:"Active",
+    notes:"Asia Pacific buyout fund. 10+2 year term. Target 20%+ IRR. Focus on corporate carve-outs and growth buyouts.",
+    transactions:[
+      {id:"PTX007",date:"2023-04-01",type:"Capital Call",amount:100000,method:"Wire Transfer",ref:"KKR-CC-01",status:"Complete",notes:"Initial capital call — 20% of commitment"},
+      {id:"PTX008",date:"2024-02-15",type:"Capital Call",amount:75000,method:"Wire Transfer",ref:"KKR-CC-02",status:"Complete",notes:"Second call — large buyout deal"},
+      {id:"PTX009",date:"2024-10-08",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"KKR-CC-03",status:"Complete",notes:"Third call"},
+    ],
+  },
+  {
+    id:"PE003", investmentType:"Direct Equity", name:"Carousell Group Pte Ltd",
+    manager:"Self-directed", vintageYear:2023, stage:"Series D+", sector:"Consumer", geography:"Singapore",
+    commitment:50000, calledCapital:50000, distributionsReceived:0, nav:58000,
+    ownershipPct:0.04, irr:11.8,
+    investmentDate:"2023-08-20", exitDate:"",
+    currency:"SGD", fundSize:0, gpCommit:0,
+    status:"Active",
+    notes:"Direct secondary purchase of Carousell shares. 4bps ownership. Pre-IPO anticipated 2027.",
+    transactions:[
+      {id:"PTX010",date:"2023-08-20",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"CAR-BUY-01",status:"Complete",notes:"Secondary purchase from departing employee"},
+    ],
+  },
+  {
+    id:"PE004", investmentType:"VC Fund", name:"Vertex Ventures SEA & India VI",
+    manager:"Vertex Holdings (Temasek)", vintageYear:2023, stage:"N/A", sector:"Technology", geography:"Southeast Asia & India",
+    commitment:200000, calledCapital:80000, distributionsReceived:0, nav:82000,
+    ownershipPct:0, irr:3.2,
+    investmentDate:"2023-10-01", exitDate:"",
+    currency:"SGD", fundSize:540000000, gpCommit:2.0,
+    status:"Active",
+    notes:"Temasek-backed early-stage fund. Focus on AI, B2B SaaS, climate tech. Still deploying.",
+    transactions:[
+      {id:"PTX011",date:"2023-10-15",type:"Capital Call",amount:40000,method:"Wire Transfer",ref:"VTX-CC-01",status:"Complete",notes:"Initial call"},
+      {id:"PTX012",date:"2024-08-05",type:"Capital Call",amount:40000,method:"Wire Transfer",ref:"VTX-CC-02",status:"Complete",notes:"Second call"},
+    ],
+  },
+  {
+    id:"PE005", investmentType:"SAFE / Convertible Note", name:"Atomos AI (Seed SAFE)",
+    manager:"Self-directed", vintageYear:2024, stage:"Seed", sector:"SaaS", geography:"Singapore",
+    commitment:25000, calledCapital:25000, distributionsReceived:0, nav:35000,
+    ownershipPct:1.2, irr:0,
+    investmentDate:"2024-04-15", exitDate:"",
+    currency:"SGD", fundSize:0, gpCommit:0,
+    status:"Active",
+    notes:"SAFE note with $8M post-money cap, 20% discount. Founders ex-Meta. AI workflow automation for SMBs.",
+    transactions:[
+      {id:"PTX013",date:"2024-04-15",type:"Capital Call",amount:25000,method:"Wire Transfer",ref:"ATOMOS-SAFE",status:"Complete",notes:"SAFE subscription — $8M cap, 20% discount"},
+    ],
+  },
+  {
+    id:"PE006", investmentType:"Secondary", name:"Stripe Inc. (Secondary)",
+    manager:"Self-directed via Forge Global", vintageYear:2024, stage:"Pre-IPO", sector:"Fintech", geography:"US",
+    commitment:75000, calledCapital:75000, distributionsReceived:0, nav:92000,
+    ownershipPct:0, irr:18.5,
+    investmentDate:"2024-01-30", exitDate:"",
+    currency:"SGD", fundSize:0, gpCommit:0,
+    status:"Active",
+    notes:"Secondary purchase via Forge Global at $60B valuation. Waiting for IPO.",
+    transactions:[
+      {id:"PTX014",date:"2024-01-30",type:"Capital Call",amount:75000,method:"Wire Transfer",ref:"STR-SEC-01",status:"Complete",notes:"Secondary purchase — 1.3 shares at $60B val"},
+      {id:"PTX015",date:"2024-12-15",type:"Management Fee",amount:1125,method:"Netting",ref:"FRG-FEE",status:"Complete",notes:"Forge platform / custody fee 1.5%"},
+    ],
+  },
+  {
+    id:"PE007", investmentType:"PE Fund", name:"Blackstone Real Estate Asia III",
+    manager:"Blackstone", vintageYear:2020, stage:"N/A", sector:"Real Estate", geography:"Asia Pacific",
+    commitment:150000, calledCapital:150000, distributionsReceived:168000, nav:45000,
+    ownershipPct:0, irr:22.4,
+    investmentDate:"2020-09-01", exitDate:"",
+    currency:"SGD", fundSize:7300000000, gpCommit:3.0,
+    status:"Partially Realised",
+    notes:"Asian real estate fund. Fully called. In harvest phase — returned 112% of capital. Residual NAV $45K.",
+    transactions:[
+      {id:"PTX016",date:"2020-10-01",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"BX-CC-01",status:"Complete",notes:"Initial capital call"},
+      {id:"PTX017",date:"2021-06-15",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"BX-CC-02",status:"Complete",notes:"Second call"},
+      {id:"PTX018",date:"2022-04-20",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"BX-CC-03",status:"Complete",notes:"Final call — fully drawn"},
+      {id:"PTX019",date:"2023-12-10",type:"Distribution",amount:48000,method:"Wire Transfer",ref:"BX-DIST-01",status:"Complete",notes:"First realisation — office complex sale"},
+      {id:"PTX020",date:"2024-08-15",type:"Distribution",amount:72000,method:"Wire Transfer",ref:"BX-DIST-02",status:"Complete",notes:"Second realisation — logistics portfolio exit"},
+      {id:"PTX021",date:"2025-07-10",type:"Distribution",amount:48000,method:"Wire Transfer",ref:"BX-DIST-03",status:"Complete",notes:"Third distribution — data centre exit"},
+    ],
+  },
+];
+
+// ── VC/PE Transaction Modal ───────────────────────────────────
+function PETxModalInner({ inv, onSave, onClose }) {
+  const txTypes = ["Capital Call","Distribution","Income / Gain","Management Fee","Valuation Update","Exit / Realisation"];
+  const txTypeIcon = {"Capital Call":"📤","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Valuation Update":"📊","Exit / Realisation":"🏁"};
+
+  const [f, setF] = useState({
+    type: "Capital Call",
+    date: new Date().toISOString().slice(0,10),
+    amount: 0, method: "Wire Transfer", ref: "", notes: "",
+  });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const isOut = ["Capital Call","Management Fee"].includes(f.type);
+  const isValOnly = f.type === "Valuation Update";
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{inv.name} · {inv.manager}</div>
+        <div style={{marginBottom:14}}>
+          <Label required>Transaction Type</Label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {txTypes.map(t=>(
+              <button key={t} onClick={()=>set("type",t)}
+                style={{flex:"1 1 140px",padding:"10px 14px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:f.type===t?700:400,
+                  border:`1px solid ${f.type===t?T.selected:T.border}`,background:f.type===t?T.selected:T.bg,color:f.type===t?T.selectedText:T.muted}}>
+                {txTypeIcon[t]||"💰"} {t}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
+          <div><Label required>{isValOnly?"New NAV (SGD)":"Amount (SGD)"}</Label><Input type="number" prefix="S$" value={f.amount} onChange={e=>set("amount",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Method</Label><Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Wire Transfer","Netting","Bank Transfer","In-Kind","Check"]}/></div>
+          <div><Label>Reference</Label><Input value={f.ref} onChange={e=>set("ref",e.target.value)} placeholder="e.g. SEQ-CC-01"/></div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Capital call 20% of commitment, portfolio co exit…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{background:isValOnly?T.accentBg:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{color:isValOnly?T.accent:isOut?T.down:T.up,fontWeight:600}}>
+            {isValOnly?"📊 NAV marked":isOut?"📤 Capital called / fee paid":"📥 Distribution / income received"}
+          </span>
+          <span style={{fontWeight:700,color:isValOnly?T.accent:isOut?T.down:T.up}}>{isValOnly?"":(isOut?"-":"+")} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0)?0.4:1}}>
+            Record {f.type}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── VC/PE Add/Edit Modal ──────────────────────────────────────
+function PEModal({ inv, onSave, onClose }) {
+  const [f, setF] = useState({ ...inv });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const isFund = f.investmentType === "VC Fund" || f.investmentType === "PE Fund";
+  const isDirect = f.investmentType === "Direct Equity" || f.investmentType === "SAFE / Convertible Note" || f.investmentType === "Secondary";
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:580,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Investment" : "Add VC/PE Investment"}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Investment Type</Label><Sel value={f.investmentType} onChange={e=>set("investmentType",e.target.value)} options={PE_TYPES}/></div>
+          <div><Label required>{isFund?"Fund Name":"Company Name"}</Label><Input value={f.name} onChange={e=>set("name",e.target.value)} placeholder={isFund?"e.g. Sequoia Capital SEA VI":"e.g. Carousell Pte Ltd"}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>{isFund?"GP / Manager":"Investment Channel"}</Label><Input value={f.manager} onChange={e=>set("manager",e.target.value)} placeholder={isFund?"e.g. Sequoia Capital, KKR":"e.g. Forge Global, Self-directed"}/></div>
+          <div><Label>{isFund?"Vintage Year":"Investment Year"}</Label><Input type="number" value={f.vintageYear} onChange={e=>set("vintageYear",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Sector</Label><Sel value={f.sector} onChange={e=>set("sector",e.target.value)} options={PE_SECTORS}/></div>
+          <div><Label>Geography</Label><Input value={f.geography} onChange={e=>set("geography",e.target.value)} placeholder="e.g. SEA, US, Global"/></div>
+          {isDirect && <div><Label>Stage</Label><Sel value={f.stage} onChange={e=>set("stage",e.target.value)} options={PE_STAGES}/></div>}
+          {!isDirect && <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD","EUR"]}/></div>}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Commitment</Label><Input type="number" prefix="S$" value={f.commitment} onChange={e=>set("commitment",+e.target.value)}/></div>
+          <div><Label>Called Capital</Label><Input type="number" prefix="S$" value={f.calledCapital} onChange={e=>set("calledCapital",+e.target.value)}/></div>
+          <div><Label>Distributions Received</Label><Input type="number" prefix="S$" value={f.distributionsReceived} onChange={e=>set("distributionsReceived",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Current NAV</Label><Input type="number" prefix="S$" value={f.nav} onChange={e=>set("nav",+e.target.value)}/></div>
+          <div><Label>IRR (%)</Label><Input type="number" value={f.irr} onChange={e=>set("irr",+e.target.value)}/></div>
+          {isDirect?<div><Label>Ownership (%)</Label><Input type="number" value={f.ownershipPct} onChange={e=>set("ownershipPct",+e.target.value)}/></div>:<div><Label>Fund Size</Label><Input type="number" prefix="S$" value={f.fundSize} onChange={e=>set("fundSize",+e.target.value)}/></div>}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Investment Date</Label><Input type="date" value={f.investmentDate} onChange={e=>set("investmentDate",e.target.value)}/></div>
+          <div><Label>Exit Date (if any)</Label><Input type="date" value={f.exitDate} onChange={e=>set("exitDate",e.target.value)}/></div>
+          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={PE_STATUS_OPTS}/></div>
+        </div>
+        <div style={{marginBottom:20}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Fund terms, thesis, valuation cap, discount…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.name||!f.manager||!f.commitment}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.name||!f.manager||!f.commitment)?0.4:1}}>
+            {f.id ? "Save Changes" : "Add Investment"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── VC/PE Investments Screen ──────────────────────────────────
+function PEScreen({ investments, setInvestments, showToast }) {
+  const isMobile = useIsMobile();
+  const [selectedInv, setSelectedInv] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [editInv, setEditInv] = useState(null);
+  const [filterType, setFilterType] = useState("All");
+  const [filterStatus, setFilterStatus] = useState("All");
+  const [searchQ, setSearchQ] = useState("");
+  const [drawerTab, setDrawerTab] = useState("overview");
+  const [showTxModal, setShowTxModal] = useState(false);
+  const peSort = useSortState();
+
+  const activeInvs = investments.filter(i => i.status !== "Written Off");
+  const totalCommitment = activeInvs.reduce((s,i) => s + (i.commitment||0), 0);
+  const totalCalled = activeInvs.reduce((s,i) => s + (i.calledCapital||0), 0);
+  const totalUnfunded = totalCommitment - totalCalled;
+  const totalDistributions = activeInvs.reduce((s,i) => s + (i.distributionsReceived||0), 0);
+  const totalNAV = activeInvs.reduce((s,i) => s + (i.nav||0), 0);
+  const totalValue = totalNAV + totalDistributions;
+  const overallTVPI = totalCalled > 0 ? totalValue / totalCalled : 0;
+  const overallDPI = totalCalled > 0 ? totalDistributions / totalCalled : 0;
+  const avgIRR = activeInvs.length > 0 ? activeInvs.reduce((s,i)=>s+(i.irr||0),0)/activeInvs.length : 0;
+
+  // Type breakdown
+  const typeBreakdown = {};
+  activeInvs.forEach(i => { typeBreakdown[i.investmentType] = (typeBreakdown[i.investmentType]||0) + (i.nav||0); });
+
+  const filtered = investments.filter(i => {
+    if (filterType !== "All" && i.investmentType !== filterType) return false;
+    if (filterStatus !== "All" && i.status !== filterStatus) return false;
+    if (searchQ) {
+      const q = searchQ.toLowerCase();
+      if (!(i.name||"").toLowerCase().includes(q) && !(i.manager||"").toLowerCase().includes(q) && !(i.sector||"").toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const handleSave = (f) => {
+    if (f.id) {
+      setInvestments(prev => prev.map(i => i.id === f.id ? { ...i, ...f } : i));
+      showToast("Investment updated", "success");
+    } else {
+      setInvestments(prev => [...prev, { ...f, id:"PE"+Date.now(), transactions:[] }]);
+      showToast("Investment added", "success");
+    }
+    setShowModal(false);
+    setEditInv(null);
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {/* Page header */}
+      <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>VC/PE Investment Portfolio</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>{activeInvs.length} active investment{activeInvs.length!==1?"s":""} · {investments.length} total</div>
+        </div>
+        <button onClick={()=>{setEditInv({...EMPTY_PE,id:""});setShowModal(true);}}
+          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+          + Add Investment
+        </button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:18}}>
+        {[
+          {label:"Total NAV",value:fmtCompact(totalNAV),sub:`${activeInvs.length} positions`,icon:"💼",color:T.text},
+          {label:"Commitment / Called",value:`${fmtCompact(totalCalled)} / ${fmtCompact(totalCommitment)}`,sub:`Unfunded: ${fmtCompact(totalUnfunded)}`,icon:"📥",color:T.accent},
+          {label:"Distributions Received",value:fmtCompact(totalDistributions),sub:`DPI: ${overallDPI.toFixed(2)}x`,icon:"📤",color:T.up},
+          {label:"TVPI / Avg IRR",value:`${overallTVPI.toFixed(2)}x`,sub:`IRR: ${avgIRR.toFixed(1)}%`,icon:"📈",color:overallTVPI>=1?T.up:T.down},
+        ].map((c,i)=>(
+          <Card key={i} style={{padding:"18px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+              <span style={{fontSize:20}}>{c.icon}</span>
+            </div>
+            <div style={{fontSize:22,fontWeight:700,marginTop:8,color:c.color}}>{c.value}</div>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Breakdown bar */}
+      {Object.keys(typeBreakdown).length > 0 && (
+        <Card style={{padding:"16px 20px",marginBottom:18}}>
+          <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>NAV by Investment Type</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+            {Object.entries(typeBreakdown).map(([type, val])=>{
+              const pct = totalNAV > 0 ? (val/totalNAV*100).toFixed(0) : 0;
+              const tc = PE_TYPE_CONFIG[type] || {icon:"📋",color:T.muted,bg:T.inputBg};
+              return (
+                <div key={type} style={{flex:"1 1 140px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:12,color:T.muted,fontWeight:500}}>{tc.icon} {type}</span>
+                    <span style={{fontSize:12,fontWeight:600}}>{pct}%</span>
+                  </div>
+                  <div style={{height:6,background:T.inputBg,borderRadius:3,overflow:"hidden"}}>
+                    <div style={{width:`${pct}%`,height:"100%",background:tc.color,borderRadius:3}}/>
+                  </div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:4}}>{fmtCompact(val)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Unfunded commitments alert */}
+      {totalUnfunded > 0 && (
+        <Card style={{padding:"12px 16px",marginBottom:14,background:T.warnBg,border:`1px solid ${T.warn}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:18}}>⚠️</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:600,color:T.warn}}>{fmtCompact(totalUnfunded)} unfunded commitment</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:1}}>Keep liquidity available — GPs may call capital on short notice</div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Filter toolbar */}
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:"1 1 200px"}}>
+          <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search fund, GP, company, sector…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+        </div>
+        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+          {["All",...PE_STATUS_OPTS].map(s=>(
+            <button key={s} onClick={()=>setFilterStatus(s)}
+              style={{background:filterStatus===s?T.selected:T.inputBg,color:filterStatus===s?T.selectedText:T.muted,border:`1px solid ${filterStatus===s?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterStatus===s?600:400}}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <select value={filterType} onChange={e=>setFilterType(e.target.value)}
+          style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 12px",fontSize:12,fontFamily:"inherit",color:T.text,cursor:"pointer",outline:"none"}}>
+          {["All",...PE_TYPES].map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filtered.length} of {investments.length}</span>
+      </div>
+
+      {/* Table / Mobile cards */}
+      {filtered.length === 0 ? (
+        <Card style={{padding:"48px 24px",textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>💼</div>
+          <div style={{fontSize:14,fontWeight:600}}>No investments found</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting filters or add a new investment</div>
+        </Card>
+      ) : isMobile ? (
+        <Card style={{padding:0,overflow:"hidden"}}>
+          {filtered.map(inv => {
+            const tc = PE_TYPE_CONFIG[inv.investmentType] || {icon:"📋",color:T.muted,bg:T.inputBg};
+            const tvpi = inv.calledCapital > 0 ? (inv.nav + inv.distributionsReceived) / inv.calledCapital : 0;
+            return <MobileListItem key={inv.id} onClick={()=>{setSelectedInv(inv);setDrawerTab("overview");}}
+              icon={tc.icon} iconBg={tc.bg} title={inv.name} subtitle={`${inv.manager} · ${inv.investmentType}`}
+              value={fmtCompact(inv.nav)} valueColor={T.text} valueSub={`TVPI ${tvpi.toFixed(2)}x · IRR ${inv.irr}%`}
+              badge={inv.status} badgeBg={inv.status==="Active"?T.upBg:inv.status==="Realised"?T.inputBg:T.warnBg} badgeColor={inv.status==="Active"?T.up:inv.status==="Realised"?T.muted:T.warn}
+              extra={<span style={{fontSize:11,color:T.dim}}>Called {fmtCompact(inv.calledCapital)} / {fmtCompact(inv.commitment)}</span>}
+            />;
+          })}
+        </Card>
+      ) : (
+        <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
+          <SortHeader gridCols="2.2fr 1fr 1.1fr 1.2fr 1fr 0.9fr 0.8fr" sortKey={peSort.sortKey} sortDir={peSort.sortDir} onSort={peSort.onSort}
+            columns={[["Investment / Manager","left","name"],["Type","left","type"],["NAV","right","nav"],["Commit / Called","right","committed"],["Dist / TVPI","right","tvpi"],["IRR","right","irr"],["Status","left","status"]]}/>
+          {peSort.sortFn(filtered, (i, k) => {
+            const tvpi = i.calledCapital > 0 ? (i.nav + i.distributionsReceived) / i.calledCapital : 0;
+            if (k==="name") return (i.name||"").toLowerCase();
+            if (k==="type") return (i.investmentType||"").toLowerCase();
+            if (k==="nav") return i.nav||0;
+            if (k==="committed") return i.commitment||0;
+            if (k==="tvpi") return tvpi;
+            if (k==="irr") return i.irr||0;
+            if (k==="status") return i.status;
+            return 0;
+          }).map((inv, idx) => {
+            const tc = PE_TYPE_CONFIG[inv.investmentType] || {icon:"📋",color:T.muted,bg:T.inputBg};
+            const tvpi = inv.calledCapital > 0 ? (inv.nav + inv.distributionsReceived) / inv.calledCapital : 0;
+            const isDim = inv.status === "Written Off" || inv.status === "Realised";
+            return (
+              <div key={inv.id} onClick={()=>{setSelectedInv(inv);setDrawerTab("overview");}}
+                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.1fr 1.2fr 1fr 0.9fr 0.8fr",padding:"13px 20px",borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+                  opacity:isDim?0.55:1,background:isDim?T.sidebar:""}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                onMouseLeave={e=>e.currentTarget.style.background=(isDim?T.sidebar:"")}>
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{width:34,height:34,borderRadius:9,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{tc.icon}</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600}}>{inv.name}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{inv.manager} · {inv.vintageYear}{inv.sector?` · ${inv.sector}`:""}</div>
+                  </div>
+                </div>
+                <div style={{fontSize:12,color:T.muted}}>{inv.investmentType}</div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:13,fontWeight:700}}>{fmtCompact(inv.nav)}</div>
+                  {inv.ownershipPct > 0 && <div style={{fontSize:10,color:T.dim,marginTop:1}}>{inv.ownershipPct}% owned</div>}
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12}}>{fmtCompact(inv.calledCapital)} / {fmtCompact(inv.commitment)}</div>
+                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>{inv.commitment > 0 ? ((inv.calledCapital/inv.commitment)*100).toFixed(0) : 0}% called</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12,color:T.up}}>{fmtCompact(inv.distributionsReceived)}</div>
+                  <div style={{fontSize:10,color:tvpi>=1?T.up:T.down,marginTop:1,fontWeight:600}}>{tvpi.toFixed(2)}x TVPI</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12,fontWeight:600,color:inv.irr>=0?T.up:T.down}}>{inv.irr>=0?"+":""}{inv.irr}%</div>
+                </div>
+                <div>
+                  <Badge bg={inv.status==="Active"?T.upBg:inv.status==="Realised"?T.inputBg:inv.status==="Written Off"?T.downBg:T.warnBg}
+                    color={inv.status==="Active"?T.up:inv.status==="Realised"?T.muted:inv.status==="Written Off"?T.down:T.warn}>
+                    {inv.status}
+                  </Badge>
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* ══ INVESTMENT DETAIL DRAWER ══ */}
+      {selectedInv && (() => {
+        const inv = investments.find(i => i.id === selectedInv.id) || selectedInv;
+        const tc = PE_TYPE_CONFIG[inv.investmentType] || {icon:"📋",color:T.muted,bg:T.inputBg};
+        const txs = (inv.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
+        const tvpi = inv.calledCapital > 0 ? (inv.nav + inv.distributionsReceived) / inv.calledCapital : 0;
+        const dpi = inv.calledCapital > 0 ? inv.distributionsReceived / inv.calledCapital : 0;
+        const rvpi = inv.calledCapital > 0 ? inv.nav / inv.calledCapital : 0;
+        const unfunded = (inv.commitment||0) - (inv.calledCapital||0);
+        const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+        const mono  = "'Courier New',Courier,monospace";
+        const fmtA  = (v) => "S$" + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+        const cashAcct = "Assets:Bank:Cash";
+        const invAcct = `Assets:PrivateEquity:${inv.investmentType.replace(/[ /]/g,"")}:${(inv.name||"").replace(/[ /]/g,"").slice(0,24)}`;
+        const incAcct = `Income:PrivateEquity:${inv.investmentType.replace(/[ /]/g,"")}`;
+        const feeAcct = "Expense:PrivateEquity:ManagementFees";
+        const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
+
+        return (
+          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+            onClick={e=>{if(e.target===e.currentTarget) setSelectedInv(null);}}>
+            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
+              {/* Header */}
+              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
+                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:16,fontWeight:700}}>{inv.name}</div>
+                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{inv.manager} · {inv.investmentType} · Vintage {inv.vintageYear}</div>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <Badge bg={inv.status==="Active"?T.upBg:inv.status==="Realised"?T.inputBg:T.warnBg} color={inv.status==="Active"?T.up:inv.status==="Realised"?T.muted:T.warn}>{inv.status}</Badge>
+                    <button onClick={()=>{setEditInv(inv);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
+                    <button onClick={()=>setSelectedInv(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:10,marginBottom:14}}>
+                  {[
+                    {l:"Current NAV",v:fmtCompact(inv.nav)},
+                    {l:"TVPI",v:`${tvpi.toFixed(2)}x`},
+                    {l:"DPI",v:`${dpi.toFixed(2)}x`},
+                    {l:"IRR",v:`${inv.irr>=0?"+":""}${inv.irr}%`},
+                  ].map(s=>(
+                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
+                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
+                      <div style={{fontSize:15,fontWeight:700,marginTop:4}}>{s.v}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:4}}>
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
+                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
+                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
+                      {dt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Body */}
+              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+                {drawerTab === "overview" && (
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    {/* Capital Deployment Progress */}
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 18px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                        <div style={{fontSize:13,fontWeight:700}}>💸 Capital Deployment</div>
+                        <div style={{fontSize:12,color:T.muted}}>{inv.commitment > 0 ? ((inv.calledCapital/inv.commitment)*100).toFixed(0) : 0}% called</div>
+                      </div>
+                      <div style={{height:8,background:T.inputBg,borderRadius:4,overflow:"hidden",marginBottom:10}}>
+                        <div style={{width:`${inv.commitment > 0 ? (inv.calledCapital/inv.commitment)*100 : 0}%`,height:"100%",background:tc.color,borderRadius:4}}/>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+                        <div><div style={{fontSize:11,color:T.muted}}>Commitment</div><div style={{fontSize:13,fontWeight:600,marginTop:2}}>{fmtCompact(inv.commitment)}</div></div>
+                        <div><div style={{fontSize:11,color:T.muted}}>Called</div><div style={{fontSize:13,fontWeight:600,marginTop:2,color:tc.color}}>{fmtCompact(inv.calledCapital)}</div></div>
+                        <div><div style={{fontSize:11,color:T.muted}}>Unfunded</div><div style={{fontSize:13,fontWeight:600,marginTop:2,color:unfunded>0?T.warn:T.dim}}>{fmtCompact(unfunded)}</div></div>
+                      </div>
+                    </div>
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📋 Investment Details</div>
+                      {[
+                        ["Investment Type",inv.investmentType],
+                        [inv.investmentType.includes("Fund")?"GP / Manager":"Investment Channel",inv.manager],
+                        [inv.investmentType.includes("Fund")?"Vintage Year":"Investment Year",String(inv.vintageYear)],
+                        inv.stage&&inv.stage!=="N/A"?["Stage",inv.stage]:null,
+                        ["Sector",inv.sector],
+                        ["Geography",inv.geography],
+                        inv.ownershipPct>0?["Ownership",`${inv.ownershipPct}%`]:null,
+                        inv.fundSize>0?["Fund Size",fmtCompact(inv.fundSize)]:null,
+                        inv.gpCommit>0?["GP Commitment",`${inv.gpCommit}%`]:null,
+                        inv.investmentDate?["Investment Date",inv.investmentDate]:null,
+                        inv.exitDate?["Exit Date",inv.exitDate]:null,
+                        ["Currency",inv.currency],
+                      ].filter(Boolean).map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                          <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",maxWidth:"60%"}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📊 Performance</div>
+                      {[
+                        ["Commitment",fmtCompact(inv.commitment)],
+                        ["Called Capital",fmtCompact(inv.calledCapital)],
+                        ["Unfunded Commitment",fmtCompact(unfunded)],
+                        ["Distributions Received",fmtCompact(inv.distributionsReceived)],
+                        ["Current NAV",fmtCompact(inv.nav)],
+                        ["Total Value (NAV + Distributions)",fmtCompact((inv.nav||0)+(inv.distributionsReceived||0))],
+                        ["TVPI (Total Value / Paid-In)",`${tvpi.toFixed(2)}x`],
+                        ["DPI (Distributions / Paid-In)",`${dpi.toFixed(2)}x`],
+                        ["RVPI (Residual / Paid-In)",`${rvpi.toFixed(2)}x`],
+                        ["IRR",`${inv.irr>=0?"+":""}${inv.irr}%`],
+                      ].map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                          <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right"}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {inv.notes && (
+                      <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📝 Notes</div>
+                        <div style={{padding:"12px 16px",fontSize:13,color:T.muted,lineHeight:1.6}}>{inv.notes}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {drawerTab === "transactions" && (
+                  <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                      {(()=>{
+                        const calls=txs.filter(t=>t.type==="Capital Call");
+                        const dists=txs.filter(t=>t.type==="Distribution");
+                        const fees=txs.filter(t=>t.type==="Management Fee");
+                        return [
+                          {label:"Total Called",value:`S$${calls.reduce((s,t)=>s+(t.amount||0),0).toLocaleString()}`,sub:`${calls.length} calls`,color:T.text},
+                          {label:"Total Distributed",value:`S$${dists.reduce((s,t)=>s+(t.amount||0),0).toLocaleString()}`,sub:`${dists.length} distributions`,color:T.up},
+                          {label:"Management Fees",value:`S$${fees.reduce((s,t)=>s+(t.amount||0),0).toLocaleString()}`,sub:`${fees.length} fee payments`,color:T.down},
+                        ];
+                      })().map(s=>(
+                        <div key={s.label} style={{background:T.inputBg,borderRadius:9,padding:"10px 12px"}}>
+                          <div style={{fontSize:11,color:T.muted}}>{s.label}</div>
+                          <div style={{fontSize:14,fontWeight:700,color:s.color,marginTop:4}}>{s.value}</div>
+                          <div style={{fontSize:11,color:T.dim,marginTop:2}}>{s.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {inv.status !== "Written Off" && inv.status !== "Realised" && (
+                      <div style={{display:"flex",justifyContent:"flex-end"}}>
+                        <button onClick={()=>setShowTxModal(true)} style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>+ Record Transaction</button>
+                      </div>
+                    )}
+                    {txs.length===0?(
+                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No transactions yet</div></div>
+                    ):(
+                      <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        {txs.map((tx,i)=>{
+                          const isOut = ["Capital Call","Management Fee"].includes(tx.type);
+                          const isIncome = ["Distribution","Income / Gain","Exit / Realisation"].includes(tx.type);
+                          const icon = {"Capital Call":"📤","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Valuation Update":"📊","Exit / Realisation":"🏁"}[tx.type]||"💰";
+                          return (
+                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                              <div style={{width:34,height:34,borderRadius:8,background:isIncome?T.upBg:isOut?T.downBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:13,fontWeight:600}}>{tx.type}{tx.notes?` — ${tx.notes}`:""}</div>
+                                <div style={{fontSize:11,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                                  <span>{tx.date}</span>
+                                  {tx.method&&<span style={{fontSize:10,background:T.inputBg,borderRadius:4,padding:"1px 6px"}}>{tx.method}</span>}
+                                  {tx.ref&&<span style={{fontSize:10,color:T.dim,fontFamily:"monospace"}}>{tx.ref}</span>}
+                                </div>
+                              </div>
+                              <div style={{textAlign:"right",flexShrink:0}}>
+                                <div style={{fontSize:13,fontWeight:700,color:isIncome?T.up:isOut?T.down:T.text}}>
+                                  {isIncome?"+":isOut?"-":""} S${tx.amount.toLocaleString(undefined,{minimumFractionDigits:2})}
+                                </div>
+                                <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {drawerTab === "postings" && (() => {
+                  const sortedTxs = (inv.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update").slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  const journalRows = [];
+                  sortedTxs.forEach(tx => {
+                    if (tx.type==="Capital Call") {
+                      journalRows.push(
+                        {date:tx.date,desc:`Capital Call — ${tx.notes||inv.name}`,account:invAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:cashAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type==="Distribution") {
+                      journalRows.push(
+                        {date:tx.date,desc:`Distribution — ${tx.notes||inv.name}`,account:cashAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:invAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type==="Income / Gain"||tx.type==="Exit / Realisation") {
+                      journalRows.push(
+                        {date:tx.date,desc:`${tx.type} — ${tx.notes||inv.name}`,account:cashAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:incAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type==="Management Fee") {
+                      journalRows.push(
+                        {date:tx.date,desc:`Management Fee — ${tx.notes||inv.name}`,account:feeAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:cashAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    }
+                  });
+                  if (isMobile && journalRows.length > 0) return <MobilePostingsList journalRows={journalRows} entryCount={sortedTxs.length} entryLabel="transactions"/>;
+                  if (journalRows.length===0) return (
+                    <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}><div style={{fontSize:32,marginBottom:10}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No entries to post yet</div></div>
+                  );
+                  return (
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
+                      <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`}}>
+                        <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
+                        <div style={{fontSize:12,color:T.accent,marginTop:3,fontFamily:inter}}>Double-entry bookkeeping · PTA compliant · {sortedTxs.length} transaction{sortedTxs.length!==1?"s":""}</div>
+                      </div>
+                      <div style={{overflowX:"auto",overflowY:"auto",maxHeight:460}}>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead><tr style={{borderBottom:`1px solid ${T.border}`}}>
+                            {["Date","Account","Description","Debit","Credit"].map((h,hi)=>(
+                              <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",width:hi===0||hi>=3?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
+                            ))}
+                          </tr></thead>
+                          <tbody>
+                            {journalRows.map((row,ri)=>(
+                              <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
+                                  {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
+                                </td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top"}}><span style={{fontFamily:mono,fontSize:12,color:T.text}}>{row.account}</span></td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",fontSize:12,color:T.muted,fontFamily:inter}}>{row.desc}</td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                  {row.debit?<span style={{fontSize:13,fontWeight:700,color:T.up,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                </td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                  {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
+                        <div style={{fontSize:12,fontWeight:700,marginBottom:6,fontFamily:inter}}>Double-Entry Accounting</div>
+                        <div style={{fontSize:11,color:T.muted,lineHeight:1.8,fontFamily:inter}}>
+                          <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Capital Call → increases investment; Distribution / Exit → increases cash; Mgmt Fee → expense recognised</div>
+                          <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Capital Call → reduces cash; Distribution → reduces investment (return of capital); Exit → realised gain income</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Transaction modal */}
+      {showTxModal && selectedInv && (() => {
+        const inv = investments.find(i => i.id === selectedInv.id) || selectedInv;
+        return <PETxModalInner inv={inv} onSave={(tx) => {
+          const newTx = {...tx, id:"PTX"+Date.now(), status:"Complete"};
+          setInvestments(prev => prev.map(i => {
+            if (i.id !== inv.id) return i;
+            const nextTxs = [...(i.transactions||[]), newTx];
+            let patch = { transactions: nextTxs };
+            if (tx.type === "Capital Call") patch.calledCapital = (+i.calledCapital||0) + (+tx.amount||0);
+            else if (tx.type === "Distribution") patch.distributionsReceived = (+i.distributionsReceived||0) + (+tx.amount||0);
+            else if (tx.type === "Valuation Update") patch.nav = +tx.amount;
+            else if (tx.type === "Exit / Realisation") { patch.distributionsReceived = (+i.distributionsReceived||0) + (+tx.amount||0); patch.nav = 0; patch.status = "Realised"; patch.exitDate = tx.date; }
+            return { ...i, ...patch };
+          }));
+          setShowTxModal(false);
+          showToast(`${tx.type} recorded`, "success");
+        }} onClose={()=>setShowTxModal(false)}/>;
+      })()}
+
+      {/* Add/Edit modal */}
+      {showModal && editInv && (
+        <PEModal inv={editInv} onSave={handleSave} onClose={()=>{setShowModal(false);setEditInv(null);}}/>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BUSINESS PARTNERSHIP VENTURES MODULE
+═══════════════════════════════════════════════════════════════ */
+
+const BP_TYPES = ["LLP","General Partnership","Limited Partnership","Private Limited (Pte Ltd)","Joint Venture","Sole Proprietorship"];
+
+const BP_TYPE_CONFIG = {
+  "LLP":                        { icon:"🤝", color:"#2563EB", bg:"#EFF6FF" },
+  "General Partnership":        { icon:"👥", color:"#7C3AED", bg:"#F5F3FF" },
+  "Limited Partnership":        { icon:"📋", color:"#0891B2", bg:"#ECFEFF" },
+  "Private Limited (Pte Ltd)":  { icon:"🏢", color:"#059669", bg:"#F0FDF4" },
+  "Joint Venture":              { icon:"🔗", color:"#D97706", bg:"#FFFBEB" },
+  "Sole Proprietorship":        { icon:"👤", color:"#DC2626", bg:"#FEF2F2" },
+};
+
+const BP_STATUS_OPTS = ["Active","Dormant","In Dispute","Exited","Closed","Pending Formation"];
+
+const BP_ROLES = ["Managing Partner","Active Partner","Silent Partner","Limited Partner","Director / Shareholder","Board Observer","Consultant"];
+
+const BP_INDUSTRIES = ["F&B","Retail","Technology","SaaS","Professional Services","Real Estate","Manufacturing","E-commerce","Logistics","Healthcare","Education","Media","Consulting","Other"];
+
+const EMPTY_BP = {
+  id:"", businessName:"", partnershipType:"LLP", industry:"F&B", role:"Active Partner",
+  ownershipPct:0, totalPartners:2,
+  capitalContributed:0, partnerLoans:0, distributionsReceived:0, salaryDrawings:0,
+  bookValue:0, estimatedMarketValue:0,
+  annualRevenue:0, annualProfit:0,
+  startDate:"", expiryDate:"",
+  registrationNo:"", country:"Singapore", currency:"SGD",
+  status:"Active", notes:"",
+  transactions:[],
+};
+
+const BP_INIT = [
+  {
+    id:"BP001", businessName:"Sunset Café LLP", partnershipType:"LLP", industry:"F&B", role:"Managing Partner",
+    ownershipPct:40, totalPartners:3,
+    capitalContributed:80000, partnerLoans:20000, distributionsReceived:32000, salaryDrawings:48000,
+    bookValue:96000, estimatedMarketValue:140000,
+    annualRevenue:680000, annualProfit:95000,
+    startDate:"2022-05-01", expiryDate:"",
+    registrationNo:"T22LL1234A", country:"Singapore", currency:"SGD",
+    status:"Active",
+    notes:"3-partner café near Joo Chiat. Operating for 4 years. Considering second outlet. Partner loan at 4% p.a.",
+    transactions:[
+      {id:"BTX001",date:"2022-05-15",type:"Capital Contribution",amount:60000,method:"Bank Transfer",ref:"SUN-CAP-INIT",status:"Complete",notes:"Initial capital injection — fit-out and working capital"},
+      {id:"BTX002",date:"2023-02-10",type:"Capital Contribution",amount:20000,method:"Bank Transfer",ref:"SUN-CAP-Y2",status:"Complete",notes:"Top-up for espresso machine upgrade"},
+      {id:"BTX003",date:"2023-08-20",type:"Partner Loan",amount:20000,method:"Bank Transfer",ref:"SUN-LOAN-01",status:"Complete",notes:"Partner loan at 4% p.a. — renovation"},
+      {id:"BTX004",date:"2023-12-20",type:"Profit Distribution",amount:10000,method:"Bank Transfer",ref:"SUN-PD-2023",status:"Complete",notes:"FY2023 year-end profit share (40% of $25K)"},
+      {id:"BTX005",date:"2024-12-20",type:"Profit Distribution",amount:14000,method:"Bank Transfer",ref:"SUN-PD-2024",status:"Complete",notes:"FY2024 profit share"},
+      {id:"BTX006",date:"2025-06-30",type:"Salary / Drawings",amount:24000,method:"GIRO",ref:"SUN-DRAW-H1-25",status:"Complete",notes:"H1 2025 managing partner drawings"},
+      {id:"BTX007",date:"2025-12-20",type:"Profit Distribution",amount:8000,method:"Bank Transfer",ref:"SUN-PD-2025",status:"Complete",notes:"FY2025 interim profit share"},
+      {id:"BTX008",date:"2025-12-31",type:"Salary / Drawings",amount:24000,method:"GIRO",ref:"SUN-DRAW-H2-25",status:"Complete",notes:"H2 2025 managing partner drawings"},
+    ],
+  },
+  {
+    id:"BP002", businessName:"GreenTech Solutions Pte Ltd", partnershipType:"Private Limited (Pte Ltd)", industry:"Technology", role:"Director / Shareholder",
+    ownershipPct:25, totalPartners:4,
+    capitalContributed:120000, partnerLoans:0, distributionsReceived:18000, salaryDrawings:0,
+    bookValue:180000, estimatedMarketValue:320000,
+    annualRevenue:1200000, annualProfit:220000,
+    startDate:"2021-09-01", expiryDate:"",
+    registrationNo:"202112345K", country:"Singapore", currency:"SGD",
+    status:"Active",
+    notes:"IoT and building automation company. Co-founded with 3 partners. Director role, not drawing salary (receive dividends instead).",
+    transactions:[
+      {id:"BTX009",date:"2021-09-15",type:"Capital Contribution",amount:100000,method:"Bank Transfer",ref:"GT-FNDR-CAP",status:"Complete",notes:"Founder capital — 100,000 ordinary shares at S$1"},
+      {id:"BTX010",date:"2023-03-20",type:"Capital Contribution",amount:20000,method:"Bank Transfer",ref:"GT-RND-A",status:"Complete",notes:"Pro-rata in Series A bridge — anti-dilution"},
+      {id:"BTX011",date:"2024-06-30",type:"Dividend",amount:10000,method:"Bank Transfer",ref:"GT-DIV-2024",status:"Complete",notes:"FY2024 dividend declared"},
+      {id:"BTX012",date:"2025-06-30",type:"Dividend",amount:8000,method:"Bank Transfer",ref:"GT-DIV-2025",status:"Complete",notes:"FY2025 dividend declared"},
+    ],
+  },
+  {
+    id:"BP003", businessName:"Urban Logistics JV", partnershipType:"Joint Venture", industry:"Logistics", role:"Silent Partner",
+    ownershipPct:20, totalPartners:3,
+    capitalContributed:50000, partnerLoans:0, distributionsReceived:15000, salaryDrawings:0,
+    bookValue:65000, estimatedMarketValue:85000,
+    annualRevenue:420000, annualProfit:72000,
+    startDate:"2023-02-15", expiryDate:"2028-02-14",
+    registrationNo:"—", country:"Singapore", currency:"SGD",
+    status:"Active",
+    notes:"Last-mile delivery JV with an operational partner. 5-year JV agreement with renewal option. Silent partner role.",
+    transactions:[
+      {id:"BTX013",date:"2023-02-20",type:"Capital Contribution",amount:50000,method:"Bank Transfer",ref:"ULJV-CAP-01",status:"Complete",notes:"Initial JV capital — 20% stake"},
+      {id:"BTX014",date:"2024-03-15",type:"Profit Distribution",amount:6000,method:"Bank Transfer",ref:"ULJV-PD-2023",status:"Complete",notes:"FY2023 profit share"},
+      {id:"BTX015",date:"2025-03-15",type:"Profit Distribution",amount:9000,method:"Bank Transfer",ref:"ULJV-PD-2024",status:"Complete",notes:"FY2024 profit share"},
+    ],
+  },
+  {
+    id:"BP004", businessName:"Two-Hearts Wedding Studio", partnershipType:"LLP", industry:"Professional Services", role:"Managing Partner",
+    ownershipPct:50, totalPartners:2,
+    capitalContributed:30000, partnerLoans:0, distributionsReceived:85000, salaryDrawings:0,
+    bookValue:0, estimatedMarketValue:0,
+    annualRevenue:0, annualProfit:0,
+    startDate:"2019-01-15", expiryDate:"2024-08-31",
+    registrationNo:"T19LL5678B", country:"Singapore", currency:"SGD",
+    status:"Exited",
+    notes:"Co-owned wedding photography & planning studio. Exited in Aug 2024 — partner bought out my stake for $120K total (incl. $85K distributions).",
+    transactions:[
+      {id:"BTX016",date:"2019-01-20",type:"Capital Contribution",amount:30000,method:"Bank Transfer",ref:"2H-CAP-INIT",status:"Complete",notes:"Initial capital"},
+      {id:"BTX017",date:"2022-12-31",type:"Profit Distribution",amount:25000,method:"Bank Transfer",ref:"2H-PD-2022",status:"Complete",notes:"FY2022 profit share (50%)"},
+      {id:"BTX018",date:"2023-12-31",type:"Profit Distribution",amount:30000,method:"Bank Transfer",ref:"2H-PD-2023",status:"Complete",notes:"FY2023 profit share"},
+      {id:"BTX019",date:"2024-07-15",type:"Profit Distribution",amount:30000,method:"Bank Transfer",ref:"2H-PD-2024-H1",status:"Complete",notes:"H1 2024 profit share"},
+      {id:"BTX020",date:"2024-08-31",type:"Exit / Buyout",amount:85000,method:"Bank Transfer",ref:"2H-BUYOUT",status:"Complete",notes:"Partner buyout — 50% stake for $85K (goodwill + equity)"},
+    ],
+  },
+  {
+    id:"BP005", businessName:"Axis Property Trust", partnershipType:"Limited Partnership", industry:"Real Estate", role:"Limited Partner",
+    ownershipPct:15, totalPartners:8,
+    capitalContributed:75000, partnerLoans:0, distributionsReceived:9000, salaryDrawings:0,
+    bookValue:82000, estimatedMarketValue:95000,
+    annualRevenue:180000, annualProfit:45000,
+    startDate:"2023-11-01", expiryDate:"",
+    registrationNo:"T23LP9012C", country:"Singapore", currency:"SGD",
+    status:"Active",
+    notes:"Limited partnership holding a small commercial unit at Paya Lebar. 8 LPs + 1 GP. LPs receive rental income pro-rata.",
+    transactions:[
+      {id:"BTX021",date:"2023-11-10",type:"Capital Contribution",amount:75000,method:"Bank Transfer",ref:"AXIS-LP-01",status:"Complete",notes:"LP capital — 15% of $500K raise"},
+      {id:"BTX022",date:"2024-12-31",type:"Profit Distribution",amount:4500,method:"Bank Transfer",ref:"AXIS-PD-2024",status:"Complete",notes:"FY2024 net rental income distribution"},
+      {id:"BTX023",date:"2025-12-31",type:"Profit Distribution",amount:4500,method:"Bank Transfer",ref:"AXIS-PD-2025",status:"Complete",notes:"FY2025 net rental income distribution"},
+    ],
+  },
+  {
+    id:"BP006", businessName:"Nova Coffee Roasters Pte Ltd", partnershipType:"Private Limited (Pte Ltd)", industry:"F&B", role:"Board Observer",
+    ownershipPct:8, totalPartners:5,
+    capitalContributed:40000, partnerLoans:0, distributionsReceived:0, salaryDrawings:0,
+    bookValue:40000, estimatedMarketValue:55000,
+    annualRevenue:850000, annualProfit:15000,
+    startDate:"2024-03-20", expiryDate:"",
+    registrationNo:"202412345D", country:"Singapore", currency:"SGD",
+    status:"Active",
+    notes:"Angel investment in coffee roaster/distributor. Board observer rights. No dividends yet — reinvesting for growth.",
+    transactions:[
+      {id:"BTX024",date:"2024-03-25",type:"Capital Contribution",amount:40000,method:"Bank Transfer",ref:"NOVA-ANG-01",status:"Complete",notes:"Angel round — 8% stake at $500K post-money"},
+    ],
+  },
+  {
+    id:"BP007", businessName:"Harborfront E-comm", partnershipType:"General Partnership", industry:"E-commerce", role:"Silent Partner",
+    ownershipPct:30, totalPartners:2,
+    capitalContributed:25000, partnerLoans:0, distributionsReceived:8500, salaryDrawings:0,
+    bookValue:25000, estimatedMarketValue:20000,
+    annualRevenue:0, annualProfit:0,
+    startDate:"2022-08-01", expiryDate:"",
+    registrationNo:"53401234E", country:"Singapore", currency:"SGD",
+    status:"Dormant",
+    notes:"Dropshipping partnership that went dormant in mid-2024. Active partner moved overseas. Considering winding up.",
+    transactions:[
+      {id:"BTX025",date:"2022-08-10",type:"Capital Contribution",amount:25000,method:"Bank Transfer",ref:"HBF-CAP-01",status:"Complete",notes:"Initial 30% stake"},
+      {id:"BTX026",date:"2023-06-30",type:"Profit Distribution",amount:5000,method:"Bank Transfer",ref:"HBF-PD-2023",status:"Complete",notes:"H1 2023 profit share"},
+      {id:"BTX027",date:"2024-03-31",type:"Profit Distribution",amount:3500,method:"Bank Transfer",ref:"HBF-PD-2024",status:"Complete",notes:"Final distribution before dormancy"},
+    ],
+  },
+];
+
+// ── Business Partnership Transaction Modal ────────────────────
+function BPTxModalInner({ venture, onSave, onClose }) {
+  const isPteLtd = venture.partnershipType === "Private Limited (Pte Ltd)";
+  const txTypes = isPteLtd
+    ? ["Capital Contribution","Dividend","Salary / Drawings","Partner Loan","Loan Repayment","Valuation Update","Exit / Buyout"]
+    : ["Capital Contribution","Profit Distribution","Salary / Drawings","Partner Loan","Loan Repayment","Capital Withdrawal","Valuation Update","Exit / Buyout"];
+  const txTypeIcon = {"Capital Contribution":"📤","Profit Distribution":"💰","Dividend":"💰","Salary / Drawings":"💵","Partner Loan":"📤","Loan Repayment":"📥","Capital Withdrawal":"📥","Valuation Update":"📊","Exit / Buyout":"🏁"};
+
+  const [f, setF] = useState({
+    type: "Capital Contribution",
+    date: new Date().toISOString().slice(0,10),
+    amount: 0, method: "Bank Transfer", ref: "", notes: "",
+  });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const isOut = ["Capital Contribution","Partner Loan"].includes(f.type);
+  const isValOnly = f.type === "Valuation Update";
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{venture.businessName} · {venture.partnershipType}</div>
+        <div style={{marginBottom:14}}>
+          <Label required>Transaction Type</Label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {txTypes.map(t=>(
+              <button key={t} onClick={()=>set("type",t)}
+                style={{flex:"1 1 140px",padding:"10px 14px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:f.type===t?700:400,
+                  border:`1px solid ${f.type===t?T.selected:T.border}`,background:f.type===t?T.selected:T.bg,color:f.type===t?T.selectedText:T.muted}}>
+                {txTypeIcon[t]||"💰"} {t}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
+          <div><Label required>{isValOnly?"New Market Value":"Amount"}</Label><Input type="number" prefix="S$" value={f.amount} onChange={e=>set("amount",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Method</Label><Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Bank Transfer","GIRO","Cheque","Cash","Netting","In-Kind"]}/></div>
+          <div><Label>Reference</Label><Input value={f.ref} onChange={e=>set("ref",e.target.value)} placeholder="e.g. SUN-CAP-01"/></div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Year-end profit share, renovation loan…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{background:isValOnly?T.accentBg:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{color:isValOnly?T.accent:isOut?T.down:T.up,fontWeight:600}}>
+            {isValOnly?"📊 Market value updated":isOut?"📤 Capital deployed to business":"📥 Income received from business"}
+          </span>
+          <span style={{fontWeight:700,color:isValOnly?T.accent:isOut?T.down:T.up}}>{isValOnly?"":(isOut?"-":"+")} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0)?0.4:1}}>
+            Record {f.type}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Business Partnership Add/Edit Modal ───────────────────────
+function BPModal({ venture, onSave, onClose }) {
+  const [f, setF] = useState({ ...venture });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:580,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Venture" : "Add Business Partnership"}</div>
+        <div style={{marginBottom:14}}>
+          <Label required>Business Name</Label>
+          <Input value={f.businessName} onChange={e=>set("businessName",e.target.value)} placeholder="e.g. Sunset Café LLP"/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Partnership Type</Label><Sel value={f.partnershipType} onChange={e=>set("partnershipType",e.target.value)} options={BP_TYPES}/></div>
+          <div><Label required>Industry</Label><Sel value={f.industry} onChange={e=>set("industry",e.target.value)} options={BP_INDUSTRIES}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Your Role</Label><Sel value={f.role} onChange={e=>set("role",e.target.value)} options={BP_ROLES}/></div>
+          <div><Label>Ownership (%)</Label><Input type="number" value={f.ownershipPct} onChange={e=>set("ownershipPct",+e.target.value)}/></div>
+          <div><Label>Total Partners</Label><Input type="number" value={f.totalPartners} onChange={e=>set("totalPartners",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Capital Contributed</Label><Input type="number" prefix="S$" value={f.capitalContributed} onChange={e=>set("capitalContributed",+e.target.value)}/></div>
+          <div><Label>Partner Loans Outstanding</Label><Input type="number" prefix="S$" value={f.partnerLoans} onChange={e=>set("partnerLoans",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Book Value (your stake)</Label><Input type="number" prefix="S$" value={f.bookValue} onChange={e=>set("bookValue",+e.target.value)}/></div>
+          <div><Label>Estimated Market Value</Label><Input type="number" prefix="S$" value={f.estimatedMarketValue} onChange={e=>set("estimatedMarketValue",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Annual Revenue (business)</Label><Input type="number" prefix="S$" value={f.annualRevenue} onChange={e=>set("annualRevenue",+e.target.value)}/></div>
+          <div><Label>Annual Profit (business)</Label><Input type="number" prefix="S$" value={f.annualProfit} onChange={e=>set("annualProfit",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Start Date</Label><Input type="date" value={f.startDate} onChange={e=>set("startDate",e.target.value)}/></div>
+          <div><Label>Expiry Date</Label><Input type="date" value={f.expiryDate} onChange={e=>set("expiryDate",e.target.value)}/></div>
+          <div><Label>Registration No.</Label><Input value={f.registrationNo} onChange={e=>set("registrationNo",e.target.value)} placeholder="UEN"/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Country</Label><Input value={f.country} onChange={e=>set("country",e.target.value)}/></div>
+          <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD","EUR","MYR","HKD"]}/></div>
+          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={BP_STATUS_OPTS}/></div>
+        </div>
+        <div style={{marginBottom:20}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Partnership terms, agreements, thesis…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.businessName||!f.partnershipType}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.businessName||!f.partnershipType)?0.4:1}}>
+            {f.id ? "Save Changes" : "Add Venture"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Business Partnership Ventures Screen ──────────────────────
+function BPScreen({ ventures, setVentures, showToast }) {
+  const isMobile = useIsMobile();
+  const [selectedVenture, setSelectedVenture] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [editVenture, setEditVenture] = useState(null);
+  const [filterType, setFilterType] = useState("All");
+  const [filterStatus, setFilterStatus] = useState("All");
+  const [searchQ, setSearchQ] = useState("");
+  const [drawerTab, setDrawerTab] = useState("overview");
+  const [showTxModal, setShowTxModal] = useState(false);
+  const bpSort = useSortState();
+
+  const activeVentures = ventures.filter(v => v.status === "Active" || v.status === "Dormant" || v.status === "In Dispute");
+  const totalCapital = activeVentures.reduce((s,v) => s + (v.capitalContributed||0) + (v.partnerLoans||0), 0);
+  const totalBookValue = activeVentures.reduce((s,v) => s + (v.bookValue||0), 0);
+  const totalMarketValue = activeVentures.reduce((s,v) => s + (v.estimatedMarketValue||0), 0);
+  const totalDistributions = ventures.reduce((s,v) => s + (v.distributionsReceived||0) + (v.salaryDrawings||0), 0);
+  const currentYearTxs = ventures.flatMap(v=>(v.transactions||[])).filter(t=>t.date && t.date.startsWith("2025") && ["Profit Distribution","Dividend","Salary / Drawings"].includes(t.type));
+  const ytdIncome = currentYearTxs.reduce((s,t)=>s+(t.amount||0),0);
+  const unrealizedGain = totalMarketValue - totalBookValue;
+
+  // Industry breakdown
+  const industryBreakdown = {};
+  activeVentures.forEach(v => { industryBreakdown[v.industry] = (industryBreakdown[v.industry]||0) + (v.estimatedMarketValue||v.bookValue||0); });
+
+  const filtered = ventures.filter(v => {
+    if (filterType !== "All" && v.partnershipType !== filterType) return false;
+    if (filterStatus !== "All" && v.status !== filterStatus) return false;
+    if (searchQ) {
+      const q = searchQ.toLowerCase();
+      if (!(v.businessName||"").toLowerCase().includes(q) && !(v.industry||"").toLowerCase().includes(q) && !(v.role||"").toLowerCase().includes(q) && !(v.registrationNo||"").toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const handleSave = (f) => {
+    if (f.id) {
+      setVentures(prev => prev.map(v => v.id === f.id ? { ...v, ...f } : v));
+      showToast("Venture updated", "success");
+    } else {
+      setVentures(prev => [...prev, { ...f, id:"BP"+Date.now(), transactions:[] }]);
+      showToast("Venture added", "success");
+    }
+    setShowModal(false);
+    setEditVenture(null);
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {/* Page header */}
+      <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>Business Partnership Portfolio</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>{activeVentures.length} active venture{activeVentures.length!==1?"s":""} · {ventures.length} total</div>
+        </div>
+        <button onClick={()=>{setEditVenture({...EMPTY_BP,id:""});setShowModal(true);}}
+          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+          + Add Venture
+        </button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:18}}>
+        {[
+          {label:"Total Market Value",value:fmtCompact(totalMarketValue),sub:`Book: ${fmtCompact(totalBookValue)}`,icon:"🏢",color:T.text},
+          {label:"Capital Deployed",value:fmtCompact(totalCapital),sub:`${activeVentures.length} active ventures`,icon:"📤",color:T.accent},
+          {label:"Lifetime Income",value:fmtCompact(totalDistributions),sub:`Distributions + drawings`,icon:"📥",color:T.up},
+          {label:"YTD 2025 Income",value:fmtCompact(ytdIncome),sub:`${currentYearTxs.length} distribution${currentYearTxs.length!==1?"s":""}`,icon:"📈",color:ytdIncome>0?T.up:T.dim},
+        ].map((c,i)=>(
+          <Card key={i} style={{padding:"18px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+              <span style={{fontSize:20}}>{c.icon}</span>
+            </div>
+            <div style={{fontSize:22,fontWeight:700,marginTop:8,color:c.color}}>{c.value}</div>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Breakdown bar */}
+      {Object.keys(industryBreakdown).length > 0 && (
+        <Card style={{padding:"16px 20px",marginBottom:18}}>
+          <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Value by Industry</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+            {Object.entries(industryBreakdown).sort(([,a],[,b])=>b-a).map(([industry, val], idx)=>{
+              const totalInd = Object.values(industryBreakdown).reduce((a,b)=>a+b,0);
+              const pct = totalInd > 0 ? (val/totalInd*100).toFixed(0) : 0;
+              const colors = ["#2563EB","#7C3AED","#059669","#D97706","#DC2626","#0891B2","#9333EA"];
+              const color = colors[idx % colors.length];
+              return (
+                <div key={industry} style={{flex:"1 1 140px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:12,color:T.muted,fontWeight:500}}>{industry}</span>
+                    <span style={{fontSize:12,fontWeight:600}}>{pct}%</span>
+                  </div>
+                  <div style={{height:6,background:T.inputBg,borderRadius:3,overflow:"hidden"}}>
+                    <div style={{width:`${pct}%`,height:"100%",background:color,borderRadius:3}}/>
+                  </div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:4}}>{fmtCompact(val)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Unrealized gain banner */}
+      {unrealizedGain !== 0 && (
+        <Card style={{padding:"12px 16px",marginBottom:14,background:unrealizedGain>=0?T.upBg:T.downBg,border:`1px solid ${unrealizedGain>=0?T.up:T.down}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:18}}>{unrealizedGain>=0?"📈":"📉"}</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:600,color:unrealizedGain>=0?T.up:T.down}}>
+                {unrealizedGain>=0?"+":""}{fmtCompact(unrealizedGain)} unrealised {unrealizedGain>=0?"gain":"loss"} on market value vs book
+              </div>
+              <div style={{fontSize:11,color:T.muted,marginTop:1}}>Market valuations are estimates — refresh during audit / revaluation cycles</div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Filter toolbar */}
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:"1 1 200px"}}>
+          <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search business, industry, role, UEN…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+        </div>
+        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+          {["All",...BP_STATUS_OPTS].map(s=>(
+            <button key={s} onClick={()=>setFilterStatus(s)}
+              style={{background:filterStatus===s?T.selected:T.inputBg,color:filterStatus===s?T.selectedText:T.muted,border:`1px solid ${filterStatus===s?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterStatus===s?600:400}}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <select value={filterType} onChange={e=>setFilterType(e.target.value)}
+          style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 12px",fontSize:12,fontFamily:"inherit",color:T.text,cursor:"pointer",outline:"none"}}>
+          {["All",...BP_TYPES].map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filtered.length} of {ventures.length}</span>
+      </div>
+
+      {/* Table / Mobile cards */}
+      {filtered.length === 0 ? (
+        <Card style={{padding:"48px 24px",textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>🤝</div>
+          <div style={{fontSize:14,fontWeight:600}}>No ventures found</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting filters or add a new venture</div>
+        </Card>
+      ) : isMobile ? (
+        <Card style={{padding:0,overflow:"hidden"}}>
+          {filtered.map(v => {
+            const tc = BP_TYPE_CONFIG[v.partnershipType] || {icon:"🤝",color:T.muted,bg:T.inputBg};
+            const value = v.estimatedMarketValue || v.bookValue || 0;
+            const capital = (v.capitalContributed||0) + (v.partnerLoans||0);
+            const gain = value - capital;
+            return <MobileListItem key={v.id} onClick={()=>{setSelectedVenture(v);setDrawerTab("overview");}}
+              icon={tc.icon} iconBg={tc.bg} title={v.businessName} subtitle={`${v.role} · ${v.ownershipPct}% · ${v.industry}`}
+              value={fmtCompact(value)} valueColor={T.text} valueSub={`Capital: ${fmtCompact(capital)}`}
+              badge={v.status} badgeBg={v.status==="Active"?T.upBg:v.status==="Dormant"?T.warnBg:T.inputBg} badgeColor={v.status==="Active"?T.up:v.status==="Dormant"?T.warn:T.muted}
+              extra={gain !== 0 ? <span style={{fontSize:11,fontWeight:600,color:gain>=0?T.up:T.down}}>{gain>=0?"+":""}{fmtCompact(gain)}</span> : null}
+            />;
+          })}
+        </Card>
+      ) : (
+        <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
+          <SortHeader gridCols="2.2fr 1fr 0.8fr 1.1fr 1.1fr 1fr 0.8fr" sortKey={bpSort.sortKey} sortDir={bpSort.sortDir} onSort={bpSort.onSort}
+            columns={[["Business / Role","left","name"],["Type","left","type"],["Stake","right","stake"],["Capital / Book","right","capital"],["Market Value","right","value"],["Income","right","income"],["Status","left","status"]]}/>
+          {bpSort.sortFn(filtered, (v, k) => {
+            if (k==="name") return (v.businessName||"").toLowerCase();
+            if (k==="type") return (v.partnershipType||"").toLowerCase();
+            if (k==="stake") return v.ownershipPct||0;
+            if (k==="capital") return (v.capitalContributed||0) + (v.partnerLoans||0);
+            if (k==="value") return v.estimatedMarketValue||v.bookValue||0;
+            if (k==="income") return (v.distributionsReceived||0) + (v.salaryDrawings||0);
+            if (k==="status") return v.status;
+            return 0;
+          }).map((v, idx) => {
+            const tc = BP_TYPE_CONFIG[v.partnershipType] || {icon:"🤝",color:T.muted,bg:T.inputBg};
+            const capital = (v.capitalContributed||0) + (v.partnerLoans||0);
+            const value = v.estimatedMarketValue || v.bookValue || 0;
+            const income = (v.distributionsReceived||0) + (v.salaryDrawings||0);
+            const gain = value - capital;
+            const isDim = v.status === "Exited" || v.status === "Closed";
+            return (
+              <div key={v.id} onClick={()=>{setSelectedVenture(v);setDrawerTab("overview");}}
+                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 0.8fr 1.1fr 1.1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+                  opacity:isDim?0.55:1,background:isDim?T.sidebar:""}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                onMouseLeave={e=>e.currentTarget.style.background=(isDim?T.sidebar:"")}>
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{width:34,height:34,borderRadius:9,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{tc.icon}</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600}}>{v.businessName}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{v.role} · {v.industry}{v.registrationNo&&v.registrationNo!=="—"?` · ${v.registrationNo}`:""}</div>
+                  </div>
+                </div>
+                <div style={{fontSize:12,color:T.muted}}>{v.partnershipType}</div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:T.accent}}>{v.ownershipPct}%</div>
+                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>of {v.totalPartners} partners</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12}}>{fmtCompact(capital)}</div>
+                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>Book: {fmtCompact(v.bookValue)}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:13,fontWeight:700}}>{fmtCompact(value)}</div>
+                  {gain !== 0 && <div style={{fontSize:10,color:gain>=0?T.up:T.down,marginTop:1,fontWeight:600}}>{gain>=0?"+":""}{fmtCompact(gain)}</div>}
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12,color:T.up,fontWeight:600}}>{fmtCompact(income)}</div>
+                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>lifetime</div>
+                </div>
+                <div>
+                  <Badge bg={v.status==="Active"?T.upBg:v.status==="Dormant"?T.warnBg:v.status==="Exited"||v.status==="Closed"?T.inputBg:T.downBg}
+                    color={v.status==="Active"?T.up:v.status==="Dormant"?T.warn:v.status==="Exited"||v.status==="Closed"?T.muted:T.down}>
+                    {v.status}
+                  </Badge>
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* ══ VENTURE DETAIL DRAWER ══ */}
+      {selectedVenture && (() => {
+        const venture = ventures.find(v => v.id === selectedVenture.id) || selectedVenture;
+        const tc = BP_TYPE_CONFIG[venture.partnershipType] || {icon:"🤝",color:T.muted,bg:T.inputBg};
+        const txs = (venture.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
+        const capital = (venture.capitalContributed||0) + (venture.partnerLoans||0);
+        const value = venture.estimatedMarketValue || venture.bookValue || 0;
+        const income = (venture.distributionsReceived||0) + (venture.salaryDrawings||0);
+        const totalReturn = income + value - capital;
+        const returnPct = capital > 0 ? (totalReturn/capital*100) : 0;
+        const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+        const mono  = "'Courier New',Courier,monospace";
+        const fmtA  = (v) => "S$" + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+        const cashAcct = "Assets:Bank:Cash";
+        const equityAcct = `Assets:Partnerships:${venture.partnershipType.replace(/[ /()]/g,"")}:${(venture.businessName||"").replace(/[ /]/g,"").slice(0,24)}`;
+        const loanAcct = `Assets:Partnerships:LoansReceivable:${(venture.businessName||"").replace(/[ /]/g,"").slice(0,24)}`;
+        const incAcct = `Income:Partnerships:${venture.partnershipType==="Private Limited (Pte Ltd)"?"Dividends":"ProfitShare"}`;
+        const salaryAcct = "Income:Partnerships:PartnerDrawings";
+        const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
+
+        return (
+          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+            onClick={e=>{if(e.target===e.currentTarget) setSelectedVenture(null);}}>
+            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
+              {/* Header */}
+              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
+                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:16,fontWeight:700}}>{venture.businessName}</div>
+                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{venture.partnershipType} · {venture.role} · {venture.ownershipPct}% stake</div>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <Badge bg={venture.status==="Active"?T.upBg:venture.status==="Dormant"?T.warnBg:T.inputBg} color={venture.status==="Active"?T.up:venture.status==="Dormant"?T.warn:T.muted}>{venture.status}</Badge>
+                    <button onClick={()=>{setEditVenture(venture);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
+                    <button onClick={()=>setSelectedVenture(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:10,marginBottom:14}}>
+                  {[
+                    {l:"Market Value",v:fmtCompact(value)},
+                    {l:"Capital Deployed",v:fmtCompact(capital)},
+                    {l:"Lifetime Income",v:fmtCompact(income)},
+                    {l:"Total Return",v:`${totalReturn>=0?"+":""}${fmtCompact(totalReturn)} (${returnPct>=0?"+":""}${returnPct.toFixed(0)}%)`},
+                  ].map(s=>(
+                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
+                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
+                      <div style={{fontSize:14,fontWeight:700,marginTop:4}}>{s.v}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:4}}>
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
+                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
+                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
+                      {dt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Body */}
+              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+                {drawerTab === "overview" && (
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📋 Partnership Details</div>
+                      {[
+                        ["Business Name",venture.businessName],
+                        ["Partnership Type",venture.partnershipType],
+                        ["Industry",venture.industry],
+                        ["Your Role",venture.role],
+                        ["Ownership",`${venture.ownershipPct}% of ${venture.totalPartners} partner${venture.totalPartners!==1?"s":""}`],
+                        venture.registrationNo&&venture.registrationNo!=="—"?["Registration No. (UEN)",venture.registrationNo]:null,
+                        ["Country",venture.country],
+                        ["Currency",venture.currency],
+                        venture.startDate?["Start Date",venture.startDate]:null,
+                        venture.expiryDate?["Expiry / Exit Date",venture.expiryDate]:null,
+                      ].filter(Boolean).map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                          <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",maxWidth:"60%"}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>💰 Your Position</div>
+                      {[
+                        ["Capital Contributed",fmtCompact(venture.capitalContributed)],
+                        venture.partnerLoans>0?["Partner Loan Outstanding",fmtCompact(venture.partnerLoans)]:null,
+                        ["Total Capital Deployed",fmtCompact(capital)],
+                        ["Book Value of Stake",fmtCompact(venture.bookValue)],
+                        ["Estimated Market Value",fmtCompact(venture.estimatedMarketValue)],
+                        ["Distributions Received (lifetime)",fmtCompact(venture.distributionsReceived)],
+                        venture.salaryDrawings>0?["Salary / Drawings (lifetime)",fmtCompact(venture.salaryDrawings)]:null,
+                        ["Total Income Received",fmtCompact(income)],
+                        ["Total Return",`${totalReturn>=0?"+":""}${fmtCompact(totalReturn)} (${returnPct>=0?"+":""}${returnPct.toFixed(1)}%)`],
+                      ].filter(Boolean).map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                          <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",color:k==="Total Return"?(totalReturn>=0?T.up:T.down):T.text}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {(venture.annualRevenue > 0 || venture.annualProfit > 0) && (
+                      <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>🏢 Business Performance (100%)</div>
+                        {[
+                          ["Annual Revenue",fmtCompact(venture.annualRevenue)],
+                          ["Annual Profit",fmtCompact(venture.annualProfit)],
+                          venture.annualRevenue>0?["Profit Margin",`${(venture.annualProfit/venture.annualRevenue*100).toFixed(1)}%`]:null,
+                          ["Your Share of Profit",fmtCompact(venture.annualProfit * venture.ownershipPct / 100)],
+                        ].filter(Boolean).map(([k,v])=>(
+                          <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                            <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                            <span style={{fontSize:12,fontWeight:600,textAlign:"right"}}>{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {venture.notes && (
+                      <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📝 Notes</div>
+                        <div style={{padding:"12px 16px",fontSize:13,color:T.muted,lineHeight:1.6}}>{venture.notes}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {drawerTab === "transactions" && (
+                  <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                      {(()=>{
+                        const caps=txs.filter(t=>t.type==="Capital Contribution"||t.type==="Partner Loan");
+                        const ins=txs.filter(t=>["Profit Distribution","Dividend","Salary / Drawings","Loan Repayment"].includes(t.type));
+                        const exits=txs.filter(t=>t.type==="Exit / Buyout"||t.type==="Capital Withdrawal");
+                        return [
+                          {label:"Capital In",value:`S$${caps.reduce((s,t)=>s+(t.amount||0),0).toLocaleString()}`,sub:`${caps.length} contribution${caps.length!==1?"s":""}`,color:T.text},
+                          {label:"Income Received",value:`S$${ins.reduce((s,t)=>s+(t.amount||0),0).toLocaleString()}`,sub:`${ins.length} payment${ins.length!==1?"s":""}`,color:T.up},
+                          {label:"Capital Out / Exits",value:`S$${exits.reduce((s,t)=>s+(t.amount||0),0).toLocaleString()}`,sub:`${exits.length} exit${exits.length!==1?"s":""}`,color:T.accent},
+                        ];
+                      })().map(s=>(
+                        <div key={s.label} style={{background:T.inputBg,borderRadius:9,padding:"10px 12px"}}>
+                          <div style={{fontSize:11,color:T.muted}}>{s.label}</div>
+                          <div style={{fontSize:14,fontWeight:700,color:s.color,marginTop:4}}>{s.value}</div>
+                          <div style={{fontSize:11,color:T.dim,marginTop:2}}>{s.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {venture.status !== "Exited" && venture.status !== "Closed" && (
+                      <div style={{display:"flex",justifyContent:"flex-end"}}>
+                        <button onClick={()=>setShowTxModal(true)} style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>+ Record Transaction</button>
+                      </div>
+                    )}
+                    {txs.length===0?(
+                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No transactions yet</div></div>
+                    ):(
+                      <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        {txs.map((tx,i)=>{
+                          const isOut = ["Capital Contribution","Partner Loan"].includes(tx.type);
+                          const isIncome = ["Profit Distribution","Dividend","Salary / Drawings","Loan Repayment"].includes(tx.type);
+                          const icon = {"Capital Contribution":"📤","Profit Distribution":"💰","Dividend":"💰","Salary / Drawings":"💵","Partner Loan":"📤","Loan Repayment":"📥","Capital Withdrawal":"📥","Valuation Update":"📊","Exit / Buyout":"🏁"}[tx.type]||"💰";
+                          return (
+                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                              <div style={{width:34,height:34,borderRadius:8,background:isIncome?T.upBg:isOut?T.downBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:13,fontWeight:600}}>{tx.type}{tx.notes?` — ${tx.notes}`:""}</div>
+                                <div style={{fontSize:11,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                                  <span>{tx.date}</span>
+                                  {tx.method&&<span style={{fontSize:10,background:T.inputBg,borderRadius:4,padding:"1px 6px"}}>{tx.method}</span>}
+                                  {tx.ref&&<span style={{fontSize:10,color:T.dim,fontFamily:"monospace"}}>{tx.ref}</span>}
+                                </div>
+                              </div>
+                              <div style={{textAlign:"right",flexShrink:0}}>
+                                <div style={{fontSize:13,fontWeight:700,color:isIncome?T.up:isOut?T.down:T.text}}>
+                                  {isIncome?"+":isOut?"-":""} S${tx.amount.toLocaleString(undefined,{minimumFractionDigits:2})}
+                                </div>
+                                <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {drawerTab === "postings" && (() => {
+                  const sortedTxs = (venture.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update").slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  const journalRows = [];
+                  sortedTxs.forEach(tx => {
+                    if (tx.type==="Capital Contribution") {
+                      journalRows.push(
+                        {date:tx.date,desc:`Capital Contribution — ${tx.notes||venture.businessName}`,account:equityAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:cashAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type==="Partner Loan") {
+                      journalRows.push(
+                        {date:tx.date,desc:`Partner Loan — ${tx.notes||venture.businessName}`,account:loanAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:cashAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type==="Loan Repayment") {
+                      journalRows.push(
+                        {date:tx.date,desc:`Loan Repayment — ${tx.notes||venture.businessName}`,account:cashAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:loanAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type==="Profit Distribution"||tx.type==="Dividend") {
+                      journalRows.push(
+                        {date:tx.date,desc:`${tx.type} — ${tx.notes||venture.businessName}`,account:cashAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:incAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type==="Salary / Drawings") {
+                      journalRows.push(
+                        {date:tx.date,desc:`Salary / Drawings — ${tx.notes||venture.businessName}`,account:cashAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:salaryAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type==="Capital Withdrawal"||tx.type==="Exit / Buyout") {
+                      journalRows.push(
+                        {date:tx.date,desc:`${tx.type} — ${tx.notes||venture.businessName}`,account:cashAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:equityAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    }
+                  });
+                  if (isMobile && journalRows.length > 0) return <MobilePostingsList journalRows={journalRows} entryCount={sortedTxs.length} entryLabel="transactions"/>;
+                  if (journalRows.length===0) return (
+                    <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}><div style={{fontSize:32,marginBottom:10}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No entries to post yet</div></div>
+                  );
+                  return (
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
+                      <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`}}>
+                        <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
+                        <div style={{fontSize:12,color:T.accent,marginTop:3,fontFamily:inter}}>Double-entry bookkeeping · PTA compliant · {sortedTxs.length} transaction{sortedTxs.length!==1?"s":""}</div>
+                      </div>
+                      <div style={{overflowX:"auto",overflowY:"auto",maxHeight:460}}>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead><tr style={{borderBottom:`1px solid ${T.border}`}}>
+                            {["Date","Account","Description","Debit","Credit"].map((h,hi)=>(
+                              <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",width:hi===0||hi>=3?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
+                            ))}
+                          </tr></thead>
+                          <tbody>
+                            {journalRows.map((row,ri)=>(
+                              <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
+                                  {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
+                                </td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top"}}><span style={{fontFamily:mono,fontSize:12,color:T.text}}>{row.account}</span></td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",fontSize:12,color:T.muted,fontFamily:inter}}>{row.desc}</td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                  {row.debit?<span style={{fontSize:13,fontWeight:700,color:T.up,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                </td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                  {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
+                        <div style={{fontSize:12,fontWeight:700,marginBottom:6,fontFamily:inter}}>Double-Entry Accounting</div>
+                        <div style={{fontSize:11,color:T.muted,lineHeight:1.8,fontFamily:inter}}>
+                          <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Capital Contribution → partnership equity; Partner Loan → loans receivable; Distribution / Salary / Buyout → cash</div>
+                          <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Capital / Loan → reduces cash; Distribution / Dividend → income; Drawings → partner drawings income; Exit → reduces partnership equity</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Transaction modal */}
+      {showTxModal && selectedVenture && (() => {
+        const venture = ventures.find(v => v.id === selectedVenture.id) || selectedVenture;
+        return <BPTxModalInner venture={venture} onSave={(tx) => {
+          const newTx = {...tx, id:"BTX"+Date.now(), status:"Complete"};
+          setVentures(prev => prev.map(v => {
+            if (v.id !== venture.id) return v;
+            const nextTxs = [...(v.transactions||[]), newTx];
+            let patch = { transactions: nextTxs };
+            if (tx.type === "Capital Contribution") patch.capitalContributed = (+v.capitalContributed||0) + (+tx.amount||0);
+            else if (tx.type === "Partner Loan") patch.partnerLoans = (+v.partnerLoans||0) + (+tx.amount||0);
+            else if (tx.type === "Loan Repayment") patch.partnerLoans = Math.max(0, (+v.partnerLoans||0) - (+tx.amount||0));
+            else if (tx.type === "Profit Distribution" || tx.type === "Dividend") patch.distributionsReceived = (+v.distributionsReceived||0) + (+tx.amount||0);
+            else if (tx.type === "Salary / Drawings") patch.salaryDrawings = (+v.salaryDrawings||0) + (+tx.amount||0);
+            else if (tx.type === "Valuation Update") patch.estimatedMarketValue = +tx.amount;
+            else if (tx.type === "Capital Withdrawal") patch.capitalContributed = Math.max(0, (+v.capitalContributed||0) - (+tx.amount||0));
+            else if (tx.type === "Exit / Buyout") { patch.status = "Exited"; patch.expiryDate = tx.date; patch.bookValue = 0; patch.estimatedMarketValue = 0; }
+            return { ...v, ...patch };
+          }));
+          setShowTxModal(false);
+          showToast(`${tx.type} recorded`, "success");
+        }} onClose={()=>setShowTxModal(false)}/>;
+      })()}
+
+      {/* Add/Edit modal */}
+      {showModal && editVenture && (
+        <BPModal venture={editVenture} onSave={handleSave} onClose={()=>{setShowModal(false);setEditVenture(null);}}/>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   COLLECTIBLES MODULE
+═══════════════════════════════════════════════════════════════ */
+
+const COL_CATEGORIES = ["Watches","Art","Wine & Spirits","Classic Cars","Jewellery","Luxury Bags","Sneakers & Streetwear","Trading Cards","Coins & Stamps","Memorabilia","Antiques","Other"];
+
+const COL_CATEGORY_CONFIG = {
+  "Watches":               { icon:"⌚", color:"#1D4ED8", bg:"#EFF6FF" },
+  "Art":                   { icon:"🎨", color:"#9333EA", bg:"#FDF4FF" },
+  "Wine & Spirits":        { icon:"🍷", color:"#991B1B", bg:"#FEF2F2" },
+  "Classic Cars":          { icon:"🏎️", color:"#D97706", bg:"#FFFBEB" },
+  "Jewellery":             { icon:"💎", color:"#EC4899", bg:"#FDF2F8" },
+  "Luxury Bags":           { icon:"👜", color:"#7C3AED", bg:"#F5F3FF" },
+  "Sneakers & Streetwear": { icon:"👟", color:"#059669", bg:"#F0FDF4" },
+  "Trading Cards":         { icon:"🃏", color:"#0891B2", bg:"#ECFEFF" },
+  "Coins & Stamps":        { icon:"🪙", color:"#B45309", bg:"#FEF3C7" },
+  "Memorabilia":           { icon:"🏆", color:"#CA8A04", bg:"#FEFCE8" },
+  "Antiques":              { icon:"🏺", color:"#78716C", bg:"#F5F5F4" },
+  "Other":                 { icon:"📦", color:"#6B7280", bg:"#F3F4F6" },
+};
+
+const COL_STATUS_OPTS = ["Active","In Consignment","Sold","Lost / Stolen","Damaged"];
+
+const COL_CONDITION_OPTS = ["Mint","Excellent","Very Good","Good","Fair","Poor","N/A"];
+
+const COL_STORAGE_OPTS = ["Home Safe","Home Display","Bank Safe Deposit","Storage Facility","With Dealer","With Consignee","In Transit","Wine Cellar","Other"];
+
+const EMPTY_COL = {
+  id:"", category:"Watches", name:"", brand:"", modelRef:"", serialNo:"",
+  year:new Date().getFullYear(), condition:"Excellent",
+  quantity:1,
+  acquisitionDate:"", acquisitionPrice:0, acquisitionSource:"",
+  currentValue:0, valuationDate:"", valuerSource:"",
+  storageLocation:"Home Safe", specificStorage:"",
+  insuredValue:0, insurancePolicyRef:"",
+  authenticated:false, certificateRef:"",
+  provenance:"",
+  currency:"SGD", status:"Active", notes:"",
+  transactions:[],
+};
+
+const COL_INIT = [
+  {
+    id:"CL001", category:"Watches", name:"Rolex Submariner Date", brand:"Rolex", modelRef:"126610LN", serialNo:"N2******",
+    year:2022, condition:"Excellent", quantity:1,
+    acquisitionDate:"2022-08-15", acquisitionPrice:12800, acquisitionSource:"Official AD — The Hour Glass",
+    currentValue:16500, valuationDate:"2026-02-01", valuerSource:"Chrono24 market aggregate",
+    storageLocation:"Home Safe", specificStorage:"Study room — Burton safe",
+    insuredValue:17000, insurancePolicyRef:"INS-VAL-2026",
+    authenticated:true, certificateRef:"Rolex warranty card + box",
+    provenance:"Single owner, purchased new at AD",
+    currency:"SGD", status:"Active",
+    notes:"Black dial, stainless steel. Full set (box, papers, tags). Serviced 2025.",
+    transactions:[
+      {id:"CTX001",date:"2022-08-15",type:"Purchase",amount:12800,method:"Credit Card",ref:"RLX-SUB-AD",status:"Complete",notes:"Official AD purchase — waited 14 months"},
+      {id:"CTX002",date:"2024-03-20",type:"Insurance Premium",amount:320,method:"GIRO",ref:"INS-Y24",status:"Complete",notes:"Annual valuables insurance"},
+      {id:"CTX003",date:"2025-06-15",type:"Maintenance",amount:780,method:"Credit Card",ref:"RLX-SERVICE-25",status:"Complete",notes:"Full service — Rolex Singapore Service Centre"},
+      {id:"CTX004",date:"2026-02-01",type:"Valuation Update",amount:16500,method:"Market Data",ref:"CH24-FEB26",status:"Complete",notes:"Chrono24 + Hour Glass pre-owned quote"},
+    ],
+  },
+  {
+    id:"CL002", category:"Luxury Bags", name:"Birkin 30 Togo Noir PHW", brand:"Hermès", modelRef:"Birkin 30", serialNo:"Y-stamp 2023",
+    year:2023, condition:"Mint", quantity:1,
+    acquisitionDate:"2023-04-10", acquisitionPrice:15200, acquisitionSource:"Hermès Liat Towers boutique",
+    currentValue:22000, valuationDate:"2025-12-10", valuerSource:"Collector Square reseller quote",
+    storageLocation:"Home Safe", specificStorage:"Walk-in closet — cedar box",
+    insuredValue:22000, insurancePolicyRef:"INS-VAL-2026",
+    authenticated:true, certificateRef:"Hermès receipt + dust bag + box",
+    provenance:"Offered after 3 years of relationship shopping",
+    currency:"SGD", status:"Active",
+    notes:"Togo leather, palladium hardware. Rarely carried, kept in dust bag.",
+    transactions:[
+      {id:"CTX005",date:"2023-04-10",type:"Purchase",amount:15200,method:"Credit Card",ref:"HRM-BIR-30",status:"Complete",notes:"Hermès Liat Towers — Birkin 30 offer"},
+      {id:"CTX006",date:"2025-12-10",type:"Valuation Update",amount:22000,method:"Market Data",ref:"CS-DEC25",status:"Complete",notes:"Collector Square reseller market"},
+    ],
+  },
+  {
+    id:"CL003", category:"Art", name:"\"Quiet Harbor #7\" by Lim Wei Cheng", brand:"Lim Wei Cheng", modelRef:"Oil on canvas, 80x120cm", serialNo:"",
+    year:2020, condition:"Excellent", quantity:1,
+    acquisitionDate:"2021-05-20", acquisitionPrice:8500, acquisitionSource:"Chan Hampe Galleries",
+    currentValue:14000, valuationDate:"2025-09-15", valuerSource:"Gallery estimate",
+    storageLocation:"Home Display", specificStorage:"Living room feature wall",
+    insuredValue:15000, insurancePolicyRef:"INS-VAL-2026",
+    authenticated:true, certificateRef:"Certificate of Authenticity from gallery",
+    provenance:"Primary market purchase — artist's solo show 2021",
+    currency:"SGD", status:"Active",
+    notes:"Artist's prices have risen ~3x since purchase. Featured in 2024 Straits Times article.",
+    transactions:[
+      {id:"CTX007",date:"2021-05-20",type:"Purchase",amount:8500,method:"Bank Transfer",ref:"CHG-LWC-07",status:"Complete",notes:"Solo show acquisition — 10% gallery discount"},
+      {id:"CTX008",date:"2025-09-15",type:"Valuation Update",amount:14000,method:"Gallery Assessment",ref:"CHG-VAL-25",status:"Complete",notes:"Gallery's current primary market range for artist"},
+    ],
+  },
+  {
+    id:"CL004", category:"Wine & Spirits", name:"Château Margaux 2015", brand:"Château Margaux", modelRef:"Grand Cru Classé, Margaux", serialNo:"6 bottles (OCB)",
+    year:2015, condition:"Mint", quantity:6,
+    acquisitionDate:"2020-11-08", acquisitionPrice:4800, acquisitionSource:"Crystal Wines en primeur",
+    currentValue:7200, valuationDate:"2025-10-20", valuerSource:"Liv-ex market",
+    storageLocation:"Wine Cellar", specificStorage:"Temperature-controlled cellar — The Wine Company storage",
+    insuredValue:8000, insurancePolicyRef:"INS-VAL-2026",
+    authenticated:true, certificateRef:"OCB provenance from Crystal Wines",
+    provenance:"En primeur via Crystal Wines, stored continuously",
+    currency:"SGD", status:"Active",
+    notes:"6 bottles, OCB (original case). 95+ pts Parker. Hold until 2030+ for drinking window.",
+    transactions:[
+      {id:"CTX009",date:"2020-11-08",type:"Purchase",amount:4800,method:"Bank Transfer",ref:"CW-MAR15-6",status:"Complete",notes:"En primeur 6-bottle case"},
+      {id:"CTX010",date:"2022-01-15",type:"Storage Cost",amount:180,method:"GIRO",ref:"TWC-STOR-22",status:"Complete",notes:"Annual cellar storage fee"},
+      {id:"CTX011",date:"2023-01-15",type:"Storage Cost",amount:180,method:"GIRO",ref:"TWC-STOR-23",status:"Complete",notes:"Annual cellar storage fee"},
+      {id:"CTX012",date:"2024-01-15",type:"Storage Cost",amount:200,method:"GIRO",ref:"TWC-STOR-24",status:"Complete",notes:"Annual cellar storage fee"},
+      {id:"CTX013",date:"2025-01-15",type:"Storage Cost",amount:200,method:"GIRO",ref:"TWC-STOR-25",status:"Complete",notes:"Annual cellar storage fee"},
+      {id:"CTX014",date:"2025-10-20",type:"Valuation Update",amount:7200,method:"Market Data",ref:"LIVEX-OCT25",status:"Complete",notes:"Liv-ex Fine Wine 100 index tracking"},
+    ],
+  },
+  {
+    id:"CL005", category:"Classic Cars", name:"Porsche 911T Coupé", brand:"Porsche", modelRef:"911T (2.2L)", serialNo:"911xxxxxx",
+    year:1971, condition:"Very Good", quantity:1,
+    acquisitionDate:"2022-11-30", acquisitionPrice:158000, acquisitionSource:"Private sale — UK import",
+    currentValue:185000, valuationDate:"2025-11-15", valuerSource:"Classic Car Auctions Singapore",
+    storageLocation:"Storage Facility", specificStorage:"Autobahn Garage, Loyang — climate-controlled",
+    insuredValue:200000, insurancePolicyRef:"INS-CLASSIC-2026",
+    authenticated:true, certificateRef:"Porsche Certificate of Authenticity + UK V5C",
+    provenance:"UK barn find 2018, restored 2019-2021, imported to SG 2022",
+    currency:"SGD", status:"Active",
+    notes:"Matching numbers. Gemini Blue over black leather. COE extended to 2032 via classic scheme. Concours-level interior.",
+    transactions:[
+      {id:"CTX015",date:"2022-11-30",type:"Purchase",amount:158000,method:"Bank Transfer",ref:"911T-IMPORT",status:"Complete",notes:"Private import from UK — shipping and duties included"},
+      {id:"CTX016",date:"2023-03-20",type:"Maintenance",amount:4200,method:"Credit Card",ref:"911-SERV-23",status:"Complete",notes:"Post-import full service and roadworthy check"},
+      {id:"CTX017",date:"2024-06-10",type:"Maintenance",amount:2800,method:"Credit Card",ref:"911-SERV-24",status:"Complete",notes:"Annual service + carb tune"},
+      {id:"CTX018",date:"2025-01-15",type:"Insurance Premium",amount:1850,method:"GIRO",ref:"CLS-INS-25",status:"Complete",notes:"Annual classic car insurance"},
+      {id:"CTX019",date:"2025-07-20",type:"Storage Cost",amount:1440,method:"GIRO",ref:"AGB-STOR-25",status:"Complete",notes:"Annual storage — Autobahn Garage"},
+      {id:"CTX020",date:"2025-11-15",type:"Valuation Update",amount:185000,method:"Auction Estimate",ref:"CCA-NOV25",status:"Complete",notes:"Pre-sale estimate from Classic Car Auctions SG"},
+    ],
+  },
+  {
+    id:"CL006", category:"Trading Cards", name:"Charizard Base Set Unlimited (PSA 10)", brand:"Pokémon (WOTC)", modelRef:"1999 Base Set #4/102", serialNo:"PSA cert 12345678",
+    year:1999, condition:"Mint", quantity:1,
+    acquisitionDate:"2024-01-20", acquisitionPrice:5200, acquisitionSource:"PWCC auction",
+    currentValue:4800, valuationDate:"2025-12-01", valuerSource:"PSA Auction Prices Realized",
+    storageLocation:"Bank Safe Deposit", specificStorage:"OCBC safe deposit box",
+    insuredValue:6000, insurancePolicyRef:"INS-VAL-2026",
+    authenticated:true, certificateRef:"PSA 10 Gem Mint graded",
+    provenance:"PWCC Weekly Auction #142 - January 2024",
+    currency:"SGD", status:"Active",
+    notes:"Unlimited print (non-shadowless). Market has softened ~8% from 2024 peak. Hold long-term.",
+    transactions:[
+      {id:"CTX021",date:"2024-01-20",type:"Purchase",amount:5200,method:"Bank Transfer",ref:"PWCC-WK142",status:"Complete",notes:"PWCC winning bid + buyer's premium + shipping/tax"},
+      {id:"CTX022",date:"2025-12-01",type:"Valuation Update",amount:4800,method:"Market Data",ref:"PSA-APR-NOV25",status:"Complete",notes:"PSA 10 6-month average selling price"},
+    ],
+  },
+  {
+    id:"CL007", category:"Watches", name:"Royal Oak 41 Stainless", brand:"Audemars Piguet", modelRef:"15500ST.OO.1220ST.01", serialNo:"H-series",
+    year:2021, condition:"Excellent", quantity:1,
+    acquisitionDate:"2023-02-14", acquisitionPrice:42000, acquisitionSource:"Pre-owned — Watch Century",
+    currentValue:46500, valuationDate:"2026-01-20", valuerSource:"Consignee mid-quote",
+    storageLocation:"With Consignee", specificStorage:"Watch Century consignment",
+    insuredValue:48000, insurancePolicyRef:"INS-VAL-2026",
+    authenticated:true, certificateRef:"AP warranty card (2021) + extract from archives",
+    provenance:"2nd owner, full set",
+    currency:"SGD", status:"In Consignment",
+    notes:"Blue dial. Consigned at Watch Century since Dec 2025 — asking $49K, expected net ~$46-47K after 8% commission.",
+    transactions:[
+      {id:"CTX023",date:"2023-02-14",type:"Purchase",amount:42000,method:"Bank Transfer",ref:"AP-RO-15500",status:"Complete",notes:"Pre-owned purchase from dealer"},
+      {id:"CTX024",date:"2024-07-10",type:"Maintenance",amount:1100,method:"Credit Card",ref:"AP-SERV-24",status:"Complete",notes:"Pressure test + polish (AP Service Centre)"},
+      {id:"CTX025",date:"2025-12-05",type:"Consignment Fee",amount:0,method:"Netting",ref:"WC-CONSIGN-01",status:"Complete",notes:"Consigned — fee 8% of sale price, deducted on sale"},
+      {id:"CTX026",date:"2026-01-20",type:"Valuation Update",amount:46500,method:"Consignee Quote",ref:"WC-QTE-JAN26",status:"Complete",notes:"Expected net after consignment commission"},
+    ],
+  },
+  {
+    id:"CL008", category:"Jewellery", name:"Tiffany Solitaire Diamond Ring", brand:"Tiffany & Co.", modelRef:"The Tiffany Setting 1.5ct", serialNo:"GIA 2345678901",
+    year:2024, condition:"Mint", quantity:1,
+    acquisitionDate:"2024-11-22", acquisitionPrice:28500, acquisitionSource:"Tiffany ION Orchard",
+    currentValue:28500, valuationDate:"2024-11-22", valuerSource:"Retail (at purchase)",
+    storageLocation:"Home Safe", specificStorage:"Jewellery drawer — Stockinger safe",
+    insuredValue:32000, insurancePolicyRef:"INS-VAL-2026",
+    authenticated:true, certificateRef:"Tiffany certificate + GIA report (G, VS1, Ex/Ex/Ex)",
+    provenance:"New from Tiffany flagship",
+    currency:"SGD", status:"Active",
+    notes:"Anniversary gift. Not for resale consideration — sentimental.",
+    transactions:[
+      {id:"CTX027",date:"2024-11-22",type:"Purchase",amount:28500,method:"Credit Card",ref:"TIF-SOL-15",status:"Complete",notes:"Tiffany ION — 10th anniversary"},
+    ],
+  },
+];
+
+// ── Collectible Transaction Modal ─────────────────────────────
+function ColTxModalInner({ item, onSave, onClose }) {
+  const txTypes = ["Purchase","Sale","Valuation Update","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration"];
+  const txTypeIcon = {"Purchase":"📥","Sale":"📤","Valuation Update":"📊","Appraisal Fee":"🔍","Insurance Premium":"🛡","Maintenance":"🔧","Storage Cost":"📦","Consignment Fee":"🤝","Restoration":"🎨"};
+
+  const [f, setF] = useState({
+    type: "Valuation Update",
+    date: new Date().toISOString().slice(0,10),
+    amount: 0, method: "Credit Card", ref: "", notes: "",
+  });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const isOut = ["Purchase","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration"].includes(f.type);
+  const isIn = f.type === "Sale";
+  const isValOnly = f.type === "Valuation Update";
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{item.name} · {item.category}</div>
+        <div style={{marginBottom:14}}>
+          <Label required>Transaction Type</Label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {txTypes.map(t=>(
+              <button key={t} onClick={()=>set("type",t)}
+                style={{flex:"1 1 140px",padding:"10px 14px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:f.type===t?700:400,
+                  border:`1px solid ${f.type===t?T.selected:T.border}`,background:f.type===t?T.selected:T.bg,color:f.type===t?T.selectedText:T.muted}}>
+                {txTypeIcon[t]||"💰"} {t}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
+          <div><Label required>{isValOnly?"New Market Value":"Amount"}</Label><Input type="number" prefix="S$" value={f.amount} onChange={e=>set("amount",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Method</Label><Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Credit Card","Bank Transfer","GIRO","Cash","Cheque","Market Data","Auction Estimate","Netting"]}/></div>
+          <div><Label>Reference</Label><Input value={f.ref} onChange={e=>set("ref",e.target.value)} placeholder="e.g. RLX-SERV-25"/></div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Annual service, consignment listing, revaluation…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{background:isValOnly?T.accentBg:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{color:isValOnly?T.accent:isOut?T.down:T.up,fontWeight:600}}>
+            {isValOnly?"📊 Market value updated":isIn?"📥 Proceeds from sale":"📤 Expense / acquisition cost"}
+          </span>
+          <span style={{fontWeight:700,color:isValOnly?T.accent:isOut?T.down:T.up}}>{isValOnly?"":(isOut?"-":"+")} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0)?0.4:1}}>
+            Record {f.type}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Collectible Add/Edit Modal ────────────────────────────────
+function ColModal({ item, onSave, onClose }) {
+  const [f, setF] = useState({ ...item });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:580,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Item" : "Add Collectible"}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:14,marginBottom:14}}>
+          <div><Label required>Category</Label><Sel value={f.category} onChange={e=>set("category",e.target.value)} options={COL_CATEGORIES}/></div>
+          <div><Label required>Item Name</Label><Input value={f.name} onChange={e=>set("name",e.target.value)} placeholder='e.g. Rolex Submariner, "Harbour #3" by X'/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Brand / Maker / Artist</Label><Input value={f.brand} onChange={e=>set("brand",e.target.value)}/></div>
+          <div><Label>Model / Ref / Medium</Label><Input value={f.modelRef} onChange={e=>set("modelRef",e.target.value)}/></div>
+          <div><Label>Serial / Edition No.</Label><Input value={f.serialNo} onChange={e=>set("serialNo",e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Year</Label><Input type="number" value={f.year} onChange={e=>set("year",+e.target.value)}/></div>
+          <div><Label>Condition</Label><Sel value={f.condition} onChange={e=>set("condition",e.target.value)} options={COL_CONDITION_OPTS}/></div>
+          <div><Label>Quantity</Label><Input type="number" value={f.quantity} onChange={e=>set("quantity",+e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Acquisition Date</Label><Input type="date" value={f.acquisitionDate} onChange={e=>set("acquisitionDate",e.target.value)}/></div>
+          <div><Label required>Acquisition Price</Label><Input type="number" prefix="S$" value={f.acquisitionPrice} onChange={e=>set("acquisitionPrice",+e.target.value)}/></div>
+          <div><Label>Source</Label><Input value={f.acquisitionSource} onChange={e=>set("acquisitionSource",e.target.value)} placeholder="Dealer, auction, AD…"/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Current Value</Label><Input type="number" prefix="S$" value={f.currentValue} onChange={e=>set("currentValue",+e.target.value)}/></div>
+          <div><Label>Valuation Date</Label><Input type="date" value={f.valuationDate} onChange={e=>set("valuationDate",e.target.value)}/></div>
+          <div><Label>Valuer / Source</Label><Input value={f.valuerSource} onChange={e=>set("valuerSource",e.target.value)} placeholder="e.g. Chrono24, gallery"/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:14,marginBottom:14}}>
+          <div><Label>Storage Location</Label><Sel value={f.storageLocation} onChange={e=>set("storageLocation",e.target.value)} options={COL_STORAGE_OPTS}/></div>
+          <div><Label>Specific Storage</Label><Input value={f.specificStorage} onChange={e=>set("specificStorage",e.target.value)} placeholder="e.g. Study room safe, OCBC box #xxxx"/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Insured Value</Label><Input type="number" prefix="S$" value={f.insuredValue} onChange={e=>set("insuredValue",+e.target.value)}/></div>
+          <div><Label>Insurance Policy Ref</Label><Input value={f.insurancePolicyRef} onChange={e=>set("insurancePolicyRef",e.target.value)}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"auto 1fr",gap:14,marginBottom:14,alignItems:"center"}}>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
+            <input type="checkbox" checked={!!f.authenticated} onChange={e=>set("authenticated",e.target.checked)}/> Authenticated
+          </label>
+          <Input value={f.certificateRef} onChange={e=>set("certificateRef",e.target.value)} placeholder="Certificate / papers reference"/>
+        </div>
+        <div style={{marginBottom:14}}>
+          <Label>Provenance</Label>
+          <Input value={f.provenance} onChange={e=>set("provenance",e.target.value)} placeholder="Ownership history, acquisition lineage…"/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD","EUR","GBP","HKD","JPY"]}/></div>
+          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={COL_STATUS_OPTS}/></div>
+        </div>
+        <div style={{marginBottom:20}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes, stories, sentimental value…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.name||!f.category}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.name||!f.category)?0.4:1}}>
+            {f.id ? "Save Changes" : "Add Item"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Collectibles Screen ───────────────────────────────────────
+function CollectiblesScreen({ items, setItems, showToast }) {
+  const isMobile = useIsMobile();
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [filterCategory, setFilterCategory] = useState("All");
+  const [filterStatus, setFilterStatus] = useState("All");
+  const [searchQ, setSearchQ] = useState("");
+  const [drawerTab, setDrawerTab] = useState("overview");
+  const [showTxModal, setShowTxModal] = useState(false);
+  const colSort = useSortState();
+
+  const activeItems = items.filter(i => i.status === "Active" || i.status === "In Consignment");
+  const totalMarketValue = activeItems.reduce((s,i) => s + (i.currentValue||0), 0);
+  const totalCost = activeItems.reduce((s,i) => s + (i.acquisitionPrice||0), 0);
+  const totalUnrealised = totalMarketValue - totalCost;
+  const totalInsured = activeItems.reduce((s,i) => s + (i.insuredValue||0), 0);
+  const insuranceCoverage = totalMarketValue > 0 ? (totalInsured / totalMarketValue * 100) : 0;
+  const underInsured = activeItems.filter(i => (i.insuredValue||0) < (i.currentValue||0));
+
+  // Category breakdown
+  const categoryBreakdown = {};
+  activeItems.forEach(i => { categoryBreakdown[i.category] = (categoryBreakdown[i.category]||0) + (i.currentValue||0); });
+
+  const filtered = items.filter(i => {
+    if (filterCategory !== "All" && i.category !== filterCategory) return false;
+    if (filterStatus !== "All" && i.status !== filterStatus) return false;
+    if (searchQ) {
+      const q = searchQ.toLowerCase();
+      if (!(i.name||"").toLowerCase().includes(q) && !(i.brand||"").toLowerCase().includes(q) && !(i.modelRef||"").toLowerCase().includes(q) && !(i.category||"").toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const handleSave = (f) => {
+    if (f.id) {
+      setItems(prev => prev.map(i => i.id === f.id ? { ...i, ...f } : i));
+      showToast("Item updated", "success");
+    } else {
+      setItems(prev => [...prev, { ...f, id:"CL"+Date.now(), transactions:[] }]);
+      showToast("Item added", "success");
+    }
+    setShowModal(false);
+    setEditItem(null);
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {/* Page header */}
+      <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>Collectibles Portfolio</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>{activeItems.length} item{activeItems.length!==1?"s":""} · {items.length} total</div>
+        </div>
+        <button onClick={()=>{setEditItem({...EMPTY_COL,id:""});setShowModal(true);}}
+          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+          + Add Item
+        </button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:18}}>
+        {[
+          {label:"Total Market Value",value:fmtCompact(totalMarketValue),sub:`Cost: ${fmtCompact(totalCost)}`,icon:"💎",color:T.text},
+          {label:"Unrealised P&L",value:(totalUnrealised>=0?"+":"")+fmtCompact(totalUnrealised),sub:`${totalCost>0?((totalUnrealised/totalCost)*100).toFixed(1):0}% return`,icon:"📈",color:totalUnrealised>=0?T.up:T.down},
+          {label:"Insurance Coverage",value:`${insuranceCoverage.toFixed(0)}%`,sub:`${fmtCompact(totalInsured)} insured`,icon:"🛡",color:insuranceCoverage>=100?T.up:T.warn},
+          {label:"Items Tracked",value:String(activeItems.length),sub:`Across ${Object.keys(categoryBreakdown).length} categor${Object.keys(categoryBreakdown).length!==1?"ies":"y"}`,icon:"📦",color:T.accent},
+        ].map((c,i)=>(
+          <Card key={i} style={{padding:"18px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+              <span style={{fontSize:20}}>{c.icon}</span>
+            </div>
+            <div style={{fontSize:22,fontWeight:700,marginTop:8,color:c.color}}>{c.value}</div>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Breakdown bar */}
+      {Object.keys(categoryBreakdown).length > 0 && (
+        <Card style={{padding:"16px 20px",marginBottom:18}}>
+          <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Value by Category</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+            {Object.entries(categoryBreakdown).sort(([,a],[,b])=>b-a).map(([cat, val])=>{
+              const pct = totalMarketValue > 0 ? (val/totalMarketValue*100).toFixed(0) : 0;
+              const tc = COL_CATEGORY_CONFIG[cat] || {icon:"📦",color:T.muted,bg:T.inputBg};
+              return (
+                <div key={cat} style={{flex:"1 1 140px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:12,color:T.muted,fontWeight:500}}>{tc.icon} {cat}</span>
+                    <span style={{fontSize:12,fontWeight:600}}>{pct}%</span>
+                  </div>
+                  <div style={{height:6,background:T.inputBg,borderRadius:3,overflow:"hidden"}}>
+                    <div style={{width:`${pct}%`,height:"100%",background:tc.color,borderRadius:3}}/>
+                  </div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:4}}>{fmtCompact(val)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Underinsured alert */}
+      {underInsured.length > 0 && (
+        <Card style={{padding:"12px 16px",marginBottom:14,background:T.warnBg,border:`1px solid ${T.warn}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:18}}>⚠️</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:600,color:T.warn}}>{underInsured.length} item{underInsured.length!==1?"s":""} under-insured</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:1}}>Current market value exceeds insured value on {underInsured.map(u=>u.name).slice(0,3).join(", ")}{underInsured.length>3?` and ${underInsured.length-3} more`:""} — review your valuables policy</div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Filter toolbar */}
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:"1 1 200px"}}>
+          <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search name, brand, reference, category…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+        </div>
+        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+          {["All",...COL_STATUS_OPTS].map(s=>(
+            <button key={s} onClick={()=>setFilterStatus(s)}
+              style={{background:filterStatus===s?T.selected:T.inputBg,color:filterStatus===s?T.selectedText:T.muted,border:`1px solid ${filterStatus===s?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterStatus===s?600:400}}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <select value={filterCategory} onChange={e=>setFilterCategory(e.target.value)}
+          style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 12px",fontSize:12,fontFamily:"inherit",color:T.text,cursor:"pointer",outline:"none"}}>
+          {["All",...COL_CATEGORIES].map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filtered.length} of {items.length}</span>
+      </div>
+
+      {/* Table / Mobile cards */}
+      {filtered.length === 0 ? (
+        <Card style={{padding:"48px 24px",textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>💎</div>
+          <div style={{fontSize:14,fontWeight:600}}>No items found</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting filters or add a new item</div>
+        </Card>
+      ) : isMobile ? (
+        <Card style={{padding:0,overflow:"hidden"}}>
+          {filtered.map(it => {
+            const tc = COL_CATEGORY_CONFIG[it.category] || {icon:"📦",color:T.muted,bg:T.inputBg};
+            const pnl = (it.currentValue||0) - (it.acquisitionPrice||0);
+            return <MobileListItem key={it.id} onClick={()=>{setSelectedItem(it);setDrawerTab("overview");}}
+              icon={tc.icon} iconBg={tc.bg} title={it.name} subtitle={`${it.brand||it.category}${it.year?` · ${it.year}`:""}${it.quantity>1?` · ${it.quantity} pcs`:""}`}
+              value={fmtCompact(it.currentValue)} valueColor={T.text} valueSub={`Cost: ${fmtCompact(it.acquisitionPrice)}`}
+              badge={it.status} badgeBg={it.status==="Active"?T.upBg:it.status==="In Consignment"?T.accentBg:T.inputBg} badgeColor={it.status==="Active"?T.up:it.status==="In Consignment"?T.accent:T.muted}
+              extra={pnl !== 0 ? <span style={{fontSize:11,fontWeight:600,color:pnl>=0?T.up:T.down}}>{pnl>=0?"+":""}{fmtCompact(pnl)}</span> : null}
+            />;
+          })}
+        </Card>
+      ) : (
+        <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
+          <SortHeader gridCols="2.4fr 1fr 1fr 1.1fr 1fr 1fr 0.9fr" sortKey={colSort.sortKey} sortDir={colSort.sortDir} onSort={colSort.onSort}
+            columns={[["Item / Brand","left","name"],["Category","left","category"],["Condition","left","condition"],["Cost / Value","right","value"],["P&L","right","pnl"],["Storage","left","storage",{paddingLeft:20}],["Status","left","status"]]}/>
+          {colSort.sortFn(filtered, (it, k) => {
+            if (k==="name") return (it.name||"").toLowerCase();
+            if (k==="category") return (it.category||"").toLowerCase();
+            if (k==="condition") return (it.condition||"").toLowerCase();
+            if (k==="value") return it.currentValue||0;
+            if (k==="pnl") return (it.currentValue||0) - (it.acquisitionPrice||0);
+            if (k==="storage") return (it.storageLocation||"").toLowerCase();
+            if (k==="status") return it.status;
+            return 0;
+          }).map((it, idx) => {
+            const tc = COL_CATEGORY_CONFIG[it.category] || {icon:"📦",color:T.muted,bg:T.inputBg};
+            const pnl = (it.currentValue||0) - (it.acquisitionPrice||0);
+            const pnlPct = it.acquisitionPrice > 0 ? (pnl/it.acquisitionPrice*100) : 0;
+            const isDim = it.status === "Sold" || it.status === "Lost / Stolen" || it.status === "Damaged";
+            const underIns = (it.insuredValue||0) < (it.currentValue||0);
+            return (
+              <div key={it.id} onClick={()=>{setSelectedItem(it);setDrawerTab("overview");}}
+                style={{display:"grid",gridTemplateColumns:"2.4fr 1fr 1fr 1.1fr 1fr 1fr 0.9fr",padding:"13px 20px",borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+                  opacity:isDim?0.55:1,background:isDim?T.sidebar:""}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                onMouseLeave={e=>e.currentTarget.style.background=(isDim?T.sidebar:"")}>
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{width:34,height:34,borderRadius:9,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{tc.icon}</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,display:"flex",gap:6,alignItems:"center"}}>
+                      {it.name}
+                      {underIns && it.status === "Active" && <span title="Under-insured" style={{fontSize:11,color:T.warn}}>⚠</span>}
+                      {it.authenticated && <span title="Authenticated" style={{fontSize:11,color:T.up}}>✓</span>}
+                    </div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{it.brand||"—"}{it.modelRef?` · ${it.modelRef}`:""}{it.year?` · ${it.year}`:""}{it.quantity>1?` · ${it.quantity} pcs`:""}</div>
+                  </div>
+                </div>
+                <div style={{fontSize:12,color:T.muted}}>{it.category}</div>
+                <div style={{fontSize:12,color:T.muted}}>{it.condition}</div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:13,fontWeight:700}}>{fmtCompact(it.currentValue)}</div>
+                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>Cost: {fmtCompact(it.acquisitionPrice)}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12,fontWeight:600,color:pnl>=0?T.up:T.down}}>{pnl>=0?"+":""}{fmtCompact(pnl)}</div>
+                  <div style={{fontSize:10,color:pnl>=0?T.up:T.down,marginTop:1}}>{pnl>=0?"+":""}{pnlPct.toFixed(1)}%</div>
+                </div>
+                <div style={{fontSize:12,color:T.muted,paddingLeft:20}}>{it.storageLocation}</div>
+                <div>
+                  <Badge bg={it.status==="Active"?T.upBg:it.status==="In Consignment"?T.accentBg:it.status==="Sold"?T.inputBg:T.downBg}
+                    color={it.status==="Active"?T.up:it.status==="In Consignment"?T.accent:it.status==="Sold"?T.muted:T.down}>
+                    {it.status}
+                  </Badge>
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* ══ ITEM DETAIL DRAWER ══ */}
+      {selectedItem && (() => {
+        const item = items.find(i => i.id === selectedItem.id) || selectedItem;
+        const tc = COL_CATEGORY_CONFIG[item.category] || {icon:"📦",color:T.muted,bg:T.inputBg};
+        const txs = (item.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
+        const pnl = (item.currentValue||0) - (item.acquisitionPrice||0);
+        const pnlPct = item.acquisitionPrice > 0 ? (pnl/item.acquisitionPrice*100) : 0;
+        const holdingYears = item.acquisitionDate ? ((Date.now() - new Date(item.acquisitionDate))/31557600000).toFixed(1) : null;
+        const totalCostsIncurred = (item.transactions||[]).filter(t=>["Maintenance","Insurance Premium","Storage Cost","Appraisal Fee","Restoration","Consignment Fee"].includes(t.type)).reduce((s,t)=>s+(t.amount||0),0);
+        const underIns = (item.insuredValue||0) < (item.currentValue||0);
+        const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+        const mono  = "'Courier New',Courier,monospace";
+        const fmtA  = (v) => "S$" + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+        const cashAcct = "Assets:Bank:Cash";
+        const itemAcct = `Assets:Collectibles:${item.category.replace(/[ &/]/g,"")}:${(item.name||"").replace(/[ /"]/g,"").slice(0,24)}`;
+        const incAcct = "Income:Collectibles:RealisedGain";
+        const feeAcct = (type) => `Expense:Collectibles:${type.replace(/ /g,"")}`;
+        const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
+
+        return (
+          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+            onClick={e=>{if(e.target===e.currentTarget) setSelectedItem(null);}}>
+            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
+              {/* Header */}
+              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
+                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:16,fontWeight:700,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                      {item.name}
+                      {item.authenticated && <span style={{fontSize:10,background:T.upBg,color:T.up,borderRadius:4,padding:"1px 6px",fontWeight:700}}>✓ AUTHENTICATED</span>}
+                    </div>
+                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{item.brand||item.category}{item.modelRef?` · ${item.modelRef}`:""}{item.year?` · ${item.year}`:""}</div>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <Badge bg={item.status==="Active"?T.upBg:item.status==="In Consignment"?T.accentBg:T.inputBg} color={item.status==="Active"?T.up:item.status==="In Consignment"?T.accent:T.muted}>{item.status}</Badge>
+                    <button onClick={()=>{setEditItem(item);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
+                    <button onClick={()=>setSelectedItem(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:10,marginBottom:14}}>
+                  {[
+                    {l:"Market Value",v:fmtCompact(item.currentValue)},
+                    {l:"Cost Basis",v:fmtCompact(item.acquisitionPrice)},
+                    {l:"Unrealised P&L",v:`${pnl>=0?"+":""}${fmtCompact(pnl)} (${pnl>=0?"+":""}${pnlPct.toFixed(0)}%)`},
+                    {l:"Held for",v:holdingYears?`${holdingYears} yr${holdingYears!=="1.0"?"s":""}`:"—"},
+                  ].map(s=>(
+                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
+                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
+                      <div style={{fontSize:14,fontWeight:700,marginTop:4}}>{s.v}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:4}}>
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
+                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
+                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
+                      {dt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Body */}
+              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+                {drawerTab === "overview" && (
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    {underIns && item.status === "Active" && (
+                      <Card style={{padding:"10px 14px",background:T.warnBg,border:`1px solid ${T.warn}`}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <span style={{fontSize:16}}>⚠️</span>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:12,fontWeight:600,color:T.warn}}>Under-insured by {fmtCompact((item.currentValue||0) - (item.insuredValue||0))}</div>
+                            <div style={{fontSize:11,color:T.muted,marginTop:1}}>Insured at {fmtCompact(item.insuredValue)} vs current value {fmtCompact(item.currentValue)} — request a valuables policy top-up</div>
+                          </div>
+                        </div>
+                      </Card>
+                    )}
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📋 Item Details</div>
+                      {[
+                        ["Category",item.category],
+                        item.brand?["Brand / Maker",item.brand]:null,
+                        item.modelRef?["Model / Reference",item.modelRef]:null,
+                        item.serialNo?["Serial / Edition",item.serialNo]:null,
+                        item.year?["Year",String(item.year)]:null,
+                        ["Condition",item.condition],
+                        item.quantity>1?["Quantity",`${item.quantity} pieces`]:null,
+                        ["Authenticated",item.authenticated?"Yes":"No"],
+                        item.certificateRef?["Certificate / Papers",item.certificateRef]:null,
+                        item.provenance?["Provenance",item.provenance]:null,
+                      ].filter(Boolean).map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                          <span style={{fontSize:12,color:T.muted,flexShrink:0}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",maxWidth:"60%"}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>💰 Acquisition & Valuation</div>
+                      {[
+                        item.acquisitionDate?["Acquisition Date",item.acquisitionDate]:null,
+                        ["Acquisition Price",fmtCompact(item.acquisitionPrice)],
+                        item.acquisitionSource?["Source",item.acquisitionSource]:null,
+                        ["Current Market Value",fmtCompact(item.currentValue)],
+                        ["Unrealised P&L",`${pnl>=0?"+":""}${fmtCompact(pnl)} (${pnl>=0?"+":""}${pnlPct.toFixed(1)}%)`],
+                        item.valuationDate?["Last Valued",item.valuationDate]:null,
+                        item.valuerSource?["Valuation Source",item.valuerSource]:null,
+                        totalCostsIncurred>0?["Holding Costs (lifetime)",fmtCompact(totalCostsIncurred)]:null,
+                      ].filter(Boolean).map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                          <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",color:k==="Unrealised P&L"?(pnl>=0?T.up:T.down):T.text}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                      <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>🛡 Storage & Insurance</div>
+                      {[
+                        ["Storage Location",item.storageLocation],
+                        item.specificStorage?["Specific Storage",item.specificStorage]:null,
+                        ["Insured Value",fmtCompact(item.insuredValue)],
+                        item.insurancePolicyRef?["Policy Reference",item.insurancePolicyRef]:null,
+                        ["Coverage vs Value",`${item.currentValue>0?((item.insuredValue/item.currentValue)*100).toFixed(0):0}%`],
+                      ].filter(Boolean).map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                          <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",color:k==="Coverage vs Value"?(item.insuredValue>=item.currentValue?T.up:T.warn):T.text}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {item.notes && (
+                      <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📝 Notes</div>
+                        <div style={{padding:"12px 16px",fontSize:13,color:T.muted,lineHeight:1.6}}>{item.notes}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {drawerTab === "transactions" && (
+                  <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                      {(()=>{
+                        const acquired = txs.filter(t=>t.type==="Purchase");
+                        const costs = txs.filter(t=>["Maintenance","Insurance Premium","Storage Cost","Appraisal Fee","Restoration","Consignment Fee"].includes(t.type));
+                        const sales = txs.filter(t=>t.type==="Sale");
+                        return [
+                          {label:"Acquisition Cost",value:`S$${acquired.reduce((s,t)=>s+(t.amount||0),0).toLocaleString()}`,sub:`${acquired.length} purchase${acquired.length!==1?"s":""}`,color:T.text},
+                          {label:"Holding Costs",value:`S$${costs.reduce((s,t)=>s+(t.amount||0),0).toLocaleString()}`,sub:`${costs.length} expense${costs.length!==1?"s":""}`,color:T.down},
+                          {label:"Sale Proceeds",value:sales.length>0?`S$${sales.reduce((s,t)=>s+(t.amount||0),0).toLocaleString()}`:"—",sub:`${sales.length} sale${sales.length!==1?"s":""}`,color:T.up},
+                        ];
+                      })().map(s=>(
+                        <div key={s.label} style={{background:T.inputBg,borderRadius:9,padding:"10px 12px"}}>
+                          <div style={{fontSize:11,color:T.muted}}>{s.label}</div>
+                          <div style={{fontSize:14,fontWeight:700,color:s.color,marginTop:4}}>{s.value}</div>
+                          <div style={{fontSize:11,color:T.dim,marginTop:2}}>{s.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {item.status !== "Sold" && item.status !== "Lost / Stolen" && (
+                      <div style={{display:"flex",justifyContent:"flex-end"}}>
+                        <button onClick={()=>setShowTxModal(true)} style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>+ Record Transaction</button>
+                      </div>
+                    )}
+                    {txs.length===0?(
+                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No transactions yet</div></div>
+                    ):(
+                      <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        {txs.map((tx,i)=>{
+                          const isOut = ["Purchase","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration"].includes(tx.type);
+                          const isIn = tx.type === "Sale";
+                          const isVal = tx.type === "Valuation Update";
+                          const icon = {"Purchase":"📥","Sale":"📤","Valuation Update":"📊","Appraisal Fee":"🔍","Insurance Premium":"🛡","Maintenance":"🔧","Storage Cost":"📦","Consignment Fee":"🤝","Restoration":"🎨"}[tx.type]||"💰";
+                          return (
+                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                              <div style={{width:34,height:34,borderRadius:8,background:isIn?T.upBg:isOut?T.downBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:13,fontWeight:600}}>{tx.type}{tx.notes?` — ${tx.notes}`:""}</div>
+                                <div style={{fontSize:11,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                                  <span>{tx.date}</span>
+                                  {tx.method&&<span style={{fontSize:10,background:T.inputBg,borderRadius:4,padding:"1px 6px"}}>{tx.method}</span>}
+                                  {tx.ref&&<span style={{fontSize:10,color:T.dim,fontFamily:"monospace"}}>{tx.ref}</span>}
+                                </div>
+                              </div>
+                              <div style={{textAlign:"right",flexShrink:0}}>
+                                <div style={{fontSize:13,fontWeight:700,color:isIn?T.up:isOut?T.down:T.accent}}>
+                                  {isVal?"→":(isIn?"+":"-")} S${tx.amount.toLocaleString(undefined,{minimumFractionDigits:2})}
+                                </div>
+                                <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {drawerTab === "postings" && (() => {
+                  const sortedTxs = (item.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update"&&t.amount>0).slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  const journalRows = [];
+                  sortedTxs.forEach(tx => {
+                    if (tx.type==="Purchase") {
+                      journalRows.push(
+                        {date:tx.date,desc:`Purchase — ${tx.notes||item.name}`,account:itemAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:cashAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type==="Sale") {
+                      journalRows.push(
+                        {date:tx.date,desc:`Sale — ${tx.notes||item.name}`,account:cashAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:itemAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else {
+                      journalRows.push(
+                        {date:tx.date,desc:`${tx.type} — ${tx.notes||item.name}`,account:feeAcct(tx.type),amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:null,desc:"",account:cashAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    }
+                  });
+                  if (isMobile && journalRows.length > 0) return <MobilePostingsList journalRows={journalRows} entryCount={sortedTxs.length} entryLabel="transactions"/>;
+                  if (journalRows.length===0) return (
+                    <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}><div style={{fontSize:32,marginBottom:10}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No entries to post yet</div></div>
+                  );
+                  return (
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
+                      <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`}}>
+                        <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
+                        <div style={{fontSize:12,color:T.accent,marginTop:3,fontFamily:inter}}>Double-entry bookkeeping · PTA compliant · {sortedTxs.length} transaction{sortedTxs.length!==1?"s":""}</div>
+                      </div>
+                      <div style={{overflowX:"auto",overflowY:"auto",maxHeight:460}}>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead><tr style={{borderBottom:`1px solid ${T.border}`}}>
+                            {["Date","Account","Description","Debit","Credit"].map((h,hi)=>(
+                              <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",width:hi===0||hi>=3?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
+                            ))}
+                          </tr></thead>
+                          <tbody>
+                            {journalRows.map((row,ri)=>(
+                              <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
+                                  {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
+                                </td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top"}}><span style={{fontFamily:mono,fontSize:12,color:T.text}}>{row.account}</span></td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",fontSize:12,color:T.muted,fontFamily:inter}}>{row.desc}</td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                  {row.debit?<span style={{fontSize:13,fontWeight:700,color:T.up,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                </td>
+                                <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                  {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
+                        <div style={{fontSize:12,fontWeight:700,marginBottom:6,fontFamily:inter}}>Double-Entry Accounting</div>
+                        <div style={{fontSize:11,color:T.muted,lineHeight:1.8,fontFamily:inter}}>
+                          <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Purchase → increases collectible asset; Sale → increases cash; Expenses → recorded as holding cost</div>
+                          <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Purchase / expenses → reduce cash; Sale → reduces asset (gain/loss booked on disposal)</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Transaction modal */}
+      {showTxModal && selectedItem && (() => {
+        const item = items.find(i => i.id === selectedItem.id) || selectedItem;
+        return <ColTxModalInner item={item} onSave={(tx) => {
+          const newTx = {...tx, id:"CTX"+Date.now(), status:"Complete"};
+          setItems(prev => prev.map(i => {
+            if (i.id !== item.id) return i;
+            const nextTxs = [...(i.transactions||[]), newTx];
+            let patch = { transactions: nextTxs };
+            if (tx.type === "Valuation Update") { patch.currentValue = +tx.amount; patch.valuationDate = tx.date; patch.valuerSource = tx.method||""; }
+            else if (tx.type === "Sale") { patch.status = "Sold"; patch.currentValue = +tx.amount; patch.valuationDate = tx.date; }
+            return { ...i, ...patch };
+          }));
+          setShowTxModal(false);
+          showToast(`${tx.type} recorded`, "success");
+        }} onClose={()=>setShowTxModal(false)}/>;
+      })()}
+
+      {/* Add/Edit modal */}
+      {showModal && editItem && (
+        <ColModal item={editItem} onSave={handleSave} onClose={()=>{setShowModal(false);setEditItem(null);}}/>
       )}
     </div>
   );
@@ -9946,6 +13092,10 @@ const NAV = [
   { id: "realestate", label: "Real Estate", icon: "🏠", group: "Protection" },
   { id: "retirement", label: "Retirement", icon: "🏛️", group: "Protection" },
   { id: "bonds", label: "Bonds & T-Bills", icon: "📊", group: "Protection" },
+  { id: "crypto", label: "Cryptocurrencies", icon: "🪙", group: "Crypto Wallet" },
+  { id: "privateequity", label: "VC/PE Investments", icon: "💼", group: "Private Assets" },
+  { id: "partnerships", label: "Business Ventures", icon: "🤝", group: "Private Assets" },
+  { id: "collectibles", label: "Collectibles", icon: "💎", group: "Private Assets" },
   { id: "ai", label: "AI Agent", icon: "✦", group: "Tools", soon: true },
   { id: "import", label: "Import Data", icon: "⇄", group: "Tools", soon: true },
 ];
@@ -9964,6 +13114,10 @@ const subtitles = {
   realestate: "Properties, valuations, rental income and insurance",
   retirement: "CPF LIFE, SRS, retirement income plans and cash reserves",
   bonds: "Singapore Savings Bonds, SGS, T-Bills, corporate bonds and fixed deposits",
+  crypto: "Spot holdings, stablecoins, staking and DeFi positions across chains",
+  privateequity: "VC funds, PE funds, direct equity, SAFEs and secondary investments",
+  partnerships: "Partnerships, joint ventures, Pte Ltd shareholdings and co-owned businesses",
+  collectibles: "Watches, art, wine, classic cars, jewellery and other tangible assets",
 };
 
 export default function App() {
@@ -10010,6 +13164,10 @@ export default function App() {
   const [loans, setLoans] = useState(LOANS_INIT);
   const [retPlans, setRetPlans] = useState(RETIREMENT_INIT);
   const [bondHoldings, setBondHoldings] = useState(BONDS_INIT);
+  const [cryptoHoldings, setCryptoHoldings] = useState(CRYPTO_INIT);
+  const [peInvestments, setPEInvestments] = useState(PE_INIT);
+  const [bpVentures, setBPVentures] = useState(BP_INIT);
+  const [collectibles, setCollectibles] = useState(COL_INIT);
   const [transactions, setTransactions] = useState([
     { id: 1,  sym: "AAPL",  txType: "Buy",      date: "2025-01-12", qty: "45",  price: "152.30", fees: "1.50", currency: "SGD", broker: "Tiger Brokers", notes: "" },
     { id: 2,  sym: "MSFT",  txType: "Buy",      date: "2025-02-03", qty: "22",  price: "310.40", fees: "1.20", currency: "SGD", broker: "IBKR",          notes: "" },
@@ -10056,6 +13214,10 @@ export default function App() {
     if (page === "realestate") return <RealEstateScreen properties={properties} setProperties={setProperties} policies={policies} showToast={showToast} />;
     if (page === "retirement") return <RetirementScreen plans={retPlans} setPlans={setRetPlans} showToast={showToast} />;
     if (page === "bonds") return <BondsScreen bonds={bondHoldings} setBonds={setBondHoldings} showToast={showToast} />;
+    if (page === "crypto") return <CryptoScreen cryptos={cryptoHoldings} setCryptos={setCryptoHoldings} showToast={showToast} />;
+    if (page === "privateequity") return <PEScreen investments={peInvestments} setInvestments={setPEInvestments} showToast={showToast} />;
+    if (page === "partnerships") return <BPScreen ventures={bpVentures} setVentures={setBPVentures} showToast={showToast} />;
+    if (page === "collectibles") return <CollectiblesScreen items={collectibles} setItems={setCollectibles} showToast={showToast} />;
     return <div style={{ color: T.muted, fontSize: 13 }}>Coming soon.</div>;
   };
 
@@ -10139,7 +13301,7 @@ export default function App() {
         </div>
 
         {/* Page content */}
-        {page === "realestate" || page === "creditcards" || page === "insurance" || page === "loans" || page === "retirement" || page === "bonds" ? (
+        {page === "realestate" || page === "creditcards" || page === "insurance" || page === "loans" || page === "retirement" || page === "bonds" || page === "crypto" || page === "privateequity" || page === "partnerships" || page === "collectibles" ? (
           <div style={{ flex: 1, overflowY: "auto", minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
               <h1 className="wo-main-title" style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
