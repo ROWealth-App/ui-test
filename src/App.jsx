@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
@@ -75,18 +75,28 @@ const T = {
   warnBg: "#FFFBEB",
 };
 
-/* ─── Reusable primitives ───────────────────────────────────── */
-// Compact currency: auto-abbreviates to K / M when digits would overflow
-const fmtCompact = (v, prefix = "S$") => {
-  const abs = Math.abs(v);
-  if (abs >= 1e9) return `${prefix}${(v/1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${prefix}${(v/1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${prefix}${(v/1e3).toFixed(1)}K`;
-  return `${prefix}${v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+/* ─── Currency constants ────────────────────────────────────── */
+// Default base currency. The current value is held in App() state so the
+// user can change it from the Settings dropdown — components receive it as
+// a `baseCurrency` prop. This const remains as the fallback / initial value.
+const BASE_CURRENCY = "SGD";
+const CURRENCY_OPTIONS = ["SGD","USD","MYR","GBP","EUR","AUD","NZD","JPY","HKD","CNY","AED"];
+const CURRENCY_SYMBOLS = {
+  SGD:"S$", USD:"US$", MYR:"RM", GBP:"£", EUR:"€",
+  AUD:"A$", NZD:"NZ$", JPY:"¥", AED:"AED ", HKD:"HK$", CNY:"¥",
 };
 
-const Card = ({ children, style = {}, className }) => (
-  <div className={className} style={{ background: T.card, border: `1px solid ${T.cardBorder}`, borderRadius: 12, ...style }}>
+/* ─── Reusable primitives ───────────────────────────────────── */
+// Currency formatter — always full digits with thousands separators (no K/M/B short form)
+const fmtCompact = (v, prefix = "S$") => {
+  const abs = Math.abs(v);
+  const decimals = abs >= 1000 ? 0 : 2;
+  return `${prefix}${v.toLocaleString(undefined,{minimumFractionDigits:decimals,maximumFractionDigits:decimals})}`;
+};
+
+const Card = ({ children, style = {}, className, onClick }) => (
+  <div className={className} onClick={onClick}
+    style={{ background: T.card, border: `1px solid ${T.cardBorder}`, borderRadius: 12, ...style }}>
     {children}
   </div>
 );
@@ -97,13 +107,13 @@ const Badge = ({ children, bg, color }) => (
 );
 const Label = ({ children, required }) => (
   <div style={{ fontSize: 12, color: T.muted, fontWeight: 500, marginBottom: 6 }}>
-    {children}{required && <span style={{ color: T.down, marginLeft: 2 }}>*</span>}
+    {children}{required && <span style={{ color: T.down, marginLeft: 3, fontWeight: 700, fontSize: 14 }}>*</span>}
   </div>
 );
-const Input = ({ placeholder, value, onChange, type = "text", prefix, disabled }) => (
+const Input = ({ placeholder, value, onChange, type = "text", prefix, disabled, step }) => (
   <div style={{ position: "relative" }}>
     {prefix && <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: T.dim, pointerEvents: "none" }}>{prefix}</span>}
-    <input type={type} placeholder={placeholder} value={value} onChange={onChange} disabled={disabled}
+    <input type={type} placeholder={placeholder} value={value} onChange={onChange} disabled={disabled} step={step}
       style={{ width: "100%", boxSizing: "border-box", background: disabled ? T.hover : T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: prefix ? "9px 12px 9px 26px" : "9px 12px", fontSize: 13, fontFamily: "inherit", color: disabled ? T.dim : T.text, outline: "none" }} />
   </div>
 );
@@ -113,6 +123,180 @@ const Sel = ({ value, onChange, options, placeholder }) => (
     {options.map(o => <option key={o} value={o}>{o}</option>)}
   </select>
 );
+
+/* ─── Collapsible section for optional/non-mandatory fields ───
+   Hides advanced fields behind a "Show more" toggle so essential
+   fields stay front-and-centre. */
+function MoreOptions({ title="More options", count, children, defaultOpen=false, style={} }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{gridColumn:"1 / -1",...style}}>
+      <button type="button" onClick={()=>setOpen(o=>!o)}
+        style={{display:"inline-flex",alignItems:"center",gap:6,background:"transparent",border:"none",
+          color:T.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",padding:"4px 0"}}>
+        <span style={{display:"inline-block",transition:"transform 0.15s",transform:open?"rotate(90deg)":"rotate(0)"}}>▸</span>
+        {open ? `Hide ${title.toLowerCase()}` : `Show ${title.toLowerCase()}`}
+        {!open && count!=null && <span style={{color:T.dim,fontWeight:500}}>({count})</span>}
+      </button>
+      {open && (
+        <div style={{marginTop:10,display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Transaction money-flow categorization ───────────────────
+   Classifies each transaction type from the USER'S cash perspective:
+     in   → money received in your pocket  (income, sale proceeds, payout, dividend, distribution, redemption)
+     out  → money paid from your pocket    (purchase, capital call, fee, premium, maintenance)
+     info → no cash flow, informational    (valuation update, internal transfer, stake/unstake) */
+const TX_FLOW_IN  = new Set(["Sale","Sell","Coupon","Distribution","Interest","Redemption","Payout","Withdrawal","Staking Reward","Airdrop","Dividend","Profit Distribution","Salary / Drawings","Loan Repayment","Capital Withdrawal","Exit / Buyout","Exit / Realisation","Income / Gain"]);
+const TX_FLOW_OUT = new Set(["Purchase","Buy","Fee","Capital Contribution","Partner Loan","Capital Call","Management Fee","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration","Top-Up","Premium","Contribution"]);
+const TX_FLOW_INFO = new Set(["Valuation Update","Transfer In","Transfer Out","Stake","Unstake","Deposit","Withdraw"]);
+const classifyTxFlow = (type) =>
+  TX_FLOW_OUT.has(type)  ? "out"  :
+  TX_FLOW_IN.has(type)   ? "in"   :
+  TX_FLOW_INFO.has(type) ? "info" : "in";
+
+/* Money-flow preview banner used in every Record-Transaction modal.
+   Renders a coloured tag (MONEY IN / MONEY OUT / NO CASH FLOW), a contextual
+   description and a signed amount — all driven by the classifier above so the
+   visual treatment is consistent across asset classes. */
+const FlowBanner = ({ type, amount, label, prefix = "S$", flowOverride, style = {} }) => {
+  const flow = flowOverride || classifyTxFlow(type);
+  const palette = flow === "in"
+      ? { fg: T.up, bg: T.upBg, tag: "MONEY IN", sign: "+" }
+    : flow === "out"
+      ? { fg: T.down, bg: T.downBg, tag: "MONEY OUT", sign: "−" }
+      : { fg: T.accent, bg: T.accentBg, tag: "NO CASH FLOW", sign: "" };
+  return (
+    <div style={{ background: palette.bg, borderRadius: 10, padding: "12px 14px", marginBottom: 20, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, ...style }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+        <span style={{ fontSize: 9, fontWeight: 800, padding: "3px 7px", borderRadius: 4, background: palette.fg, color: "#fff", letterSpacing: 0.6, flexShrink: 0, whiteSpace: "nowrap" }}>{palette.tag}</span>
+        <span style={{ color: palette.fg, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+      </div>
+      {amount != null && (
+        <span style={{ fontWeight: 700, color: palette.fg, flexShrink: 0 }}>{palette.sign} {prefix}{(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+      )}
+    </div>
+  );
+};
+
+/* ─── Picker with "Other…" custom-value fallback ──────────────
+   Use for bank/institution dropdowns where users may need to enter
+   a value not in the predefined list. */
+const OTHER_OPT = "Other…";
+function PickerWithOther({ value, onChange, options, placeholder }) {
+  const isCustom = value && !options.includes(value);
+  const [mode, setMode] = useState(isCustom ? "other" : "list");
+  const [customVal, setCustomVal] = useState(isCustom ? value : "");
+  const displayed = mode === "other" ? OTHER_OPT : (value || "");
+  return (
+    <div>
+      <select value={displayed}
+        onChange={e => {
+          const v = e.target.value;
+          if (v === OTHER_OPT) {
+            setMode("other");
+            onChange({ target: { value: customVal } });
+          } else {
+            setMode("list");
+            onChange({ target: { value: v } });
+          }
+        }}
+        style={{ width:"100%", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:displayed?T.text:T.dim, outline:"none", cursor:"pointer" }}>
+        {placeholder && <option value="">{placeholder}</option>}
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+        <option value={OTHER_OPT}>{OTHER_OPT}</option>
+      </select>
+      {mode === "other" && (
+        <input value={customVal}
+          onChange={e => { setCustomVal(e.target.value); onChange({ target:{ value:e.target.value } }); }}
+          placeholder="Enter custom name…" autoFocus
+          style={{ marginTop:6, width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none" }}/>
+      )}
+    </div>
+  );
+}
+
+/* ─── Audit log ──────────────────────────────────────────────
+   Records create/update/delete on user-managed entities.
+   Powers the "History" tab in every detail drawer. */
+function diffEntities(before, after, ignore = ["id","transactions","loanContracts","loanRepayments","claims","premiums"]) {
+  const out = [];
+  if (!before || !after) return out;
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  keys.forEach(k => {
+    if (ignore.includes(k)) return;
+    const b = before[k], a = after[k];
+    if (Array.isArray(b) || Array.isArray(a) || (b && typeof b === "object") || (a && typeof a === "object")) return;
+    const nb = b == null ? "" : b;
+    const na = a == null ? "" : a;
+    if (String(nb) !== String(na)) out.push({ field:k, before:nb, after:na });
+  });
+  return out;
+}
+
+function makeAuditLogger(setAuditLog) {
+  return (entityType, entityId, action, before, after, label) => {
+    const entry = {
+      id: "AL" + Date.now().toString(36) + Math.floor(Math.random()*1000).toString(36),
+      ts: new Date().toISOString(),
+      entityType, entityId,
+      entityLabel: label || String(entityId || ""),
+      action,
+      changes: action === "update" ? diffEntities(before, after) : [],
+      user: "You",
+    };
+    setAuditLog(prev => [entry, ...prev]);
+  };
+}
+
+function AuditLogPanel({ auditLog, entityType, entityId }) {
+  const entries = (auditLog || []).filter(e => e.entityType === entityType && e.entityId === entityId);
+  if (entries.length === 0) {
+    return (
+      <div style={{padding:"36px 16px",textAlign:"center",color:T.muted,fontSize:13}}>
+        <div style={{fontSize:26,marginBottom:8}}>📜</div>
+        <div style={{fontWeight:600}}>No history yet</div>
+        <div style={{fontSize:11,marginTop:4,color:T.dim}}>Edits and updates to this record will appear here.</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:8,padding:"4px 0"}}>
+      {entries.map(e => {
+        const actionColor = e.action === "create" ? T.up : e.action === "delete" ? T.down : e.action === "add-transaction" ? T.warn : T.accent;
+        const actionLabel = e.action === "create" ? "Created" : e.action === "delete" ? "Deleted" : e.action === "add-transaction" ? "Transaction" : "Updated";
+        return (
+          <div key={e.id} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",background:T.bg}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:10,fontWeight:700,color:actionColor,background:`${actionColor}15`,padding:"3px 8px",borderRadius:4,letterSpacing:0.3}}>{actionLabel.toUpperCase()}</span>
+                <span style={{fontSize:12,color:T.muted}}>by {e.user}</span>
+              </div>
+              <span style={{fontSize:11,color:T.dim}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</span>
+            </div>
+            {e.changes.length > 0 && (
+              <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4,fontSize:12,lineHeight:1.5}}>
+                {e.changes.map((c,i)=>(
+                  <div key={i} style={{color:T.text}}>
+                    <span style={{fontWeight:600,color:T.muted}}>{c.field}:</span>{" "}
+                    <span style={{color:T.down,textDecoration:"line-through"}}>{String(c.before)||"—"}</span>
+                    <span style={{color:T.muted}}> → </span>
+                    <span style={{color:T.up,fontWeight:600}}>{String(c.after)||"—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /* ─── Mobile detection ─────────────────────────────────────── */
 const useIsMobile = (breakpoint = 768) => {
@@ -267,17 +451,20 @@ const incomeData = [
   { y: "2022", rev: 394.3, net: 99.8 }, { y: "2023", rev: 383.3, net: 97.0 },
   { y: "2024", rev: 391.0, net: 101.0 },
 ];
+// Map legacy broker labels to brokerage account IDs. "IBKR" → BR002 (Interactive Brokers).
 const HOLDINGS_INIT = [
-  { id: 1, sym: "AAPL", name: "Apple Inc.", qty: 45, price: 189.84, cost: 152.30, changeP: +0.66, value: 8542.80, weight: 22.1, sector: "Technology", broker: "Tiger Brokers", addedDate: "Jan 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 189.84, priceDate: "2026-03-16" },
-  { id: 2, sym: "MSFT", name: "Microsoft Corp.", qty: 22, price: 415.60, cost: 310.40, changeP: -0.51, value: 9143.20, weight: 23.7, sector: "Technology", broker: "IBKR", addedDate: "Feb 3, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 415.60, priceDate: "2026-03-16" },
-  { id: 3, sym: "VOO", name: "Vanguard S&P 500 ETF", qty: 18, price: 498.25, cost: 380.10, changeP: +0.69, value: 8968.50, weight: 23.2, sector: "ETF", broker: "Tiger Brokers", addedDate: "Feb 20, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 498.25, priceDate: "2026-03-16" },
-  { id: 4, sym: "NVDA", name: "NVIDIA Corp.", qty: 12, price: 875.40, cost: 420.00, changeP: +1.77, value: 10504.80, weight: 27.2, sector: "Technology", broker: "Moomoo", addedDate: "Mar 1, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 875.40, priceDate: "2026-03-16" },
-  { id: 5, sym: "JNJ", name: "Johnson & Johnson", qty: 30, price: 152.30, cost: 161.80, changeP: -0.30, value: 4569.00, weight: 11.8, sector: "Healthcare", broker: "IBKR", addedDate: "Mar 8, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 152.30, priceDate: "2026-03-16" },
-  { id: 6, sym: "AMZN", name: "Amazon.com Inc.", qty: 8, price: 182.50, cost: 140.20, changeP: +0.92, value: 1460.00, weight: 3.8, sector: "Technology", broker: "Tiger Brokers", addedDate: "Mar 10, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 182.50, priceDate: "2026-03-16" },
-  { id: 7, sym: "GOOGL", name: "Alphabet Inc.", qty: 15, price: 165.30, cost: 130.80, changeP: -0.44, value: 2479.50, weight: 6.4, sector: "Technology", broker: "IBKR", addedDate: "Mar 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 165.30, priceDate: "2026-03-16" },
-  { id: 8, sym: "META", name: "Meta Platforms Inc.", qty: 10, price: 512.40, cost: 320.00, changeP: +1.21, value: 5124.00, weight: 13.3, sector: "Technology", broker: "Moomoo", addedDate: "Mar 15, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 512.40, priceDate: "2026-03-16" },
-  { id: 9, sym: "BRK.B", name: "Berkshire Hathaway B", qty: 20, price: 410.10, cost: 360.50, changeP: +0.18, value: 8202.00, weight: 21.2, sector: "Financials", broker: "IBKR", addedDate: "Mar 18, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 410.10, priceDate: "2026-03-16" },
-  { id: 10, sym: "VTI", name: "Vanguard Total Market ETF", qty: 25, price: 240.80, cost: 210.40, changeP: +0.55, value: 6020.00, weight: 15.6, sector: "ETF", broker: "Tiger Brokers", addedDate: "Mar 20, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 240.80, priceDate: "2026-03-16" },
+  { id: 1, sym: "AAPL", name: "Apple Inc.", qty: 45, price: 189.84, cost: 152.30, changeP: +0.66, value: 8542.80, weight: 22.1, sector: "Technology", broker: "Tiger Brokers", accountId:"BR001", addedDate: "Jan 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 189.84, priceDate: "2026-03-16" },
+  { id: 2, sym: "MSFT", name: "Microsoft Corp.", qty: 22, price: 415.60, cost: 310.40, changeP: -0.51, value: 9143.20, weight: 23.7, sector: "Technology", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Feb 3, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 415.60, priceDate: "2026-03-16" },
+  { id: 3, sym: "VOO", name: "Vanguard S&P 500 ETF", qty: 18, price: 498.25, cost: 380.10, changeP: +0.69, value: 8968.50, weight: 23.2, sector: "ETF", broker: "Tiger Brokers", accountId:"BR001", addedDate: "Feb 20, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 498.25, priceDate: "2026-03-16" },
+  { id: 4, sym: "NVDA", name: "NVIDIA Corp.", qty: 12, price: 875.40, cost: 420.00, changeP: +1.77, value: 10504.80, weight: 27.2, sector: "Technology", broker: "Moomoo", accountId:"BR003", addedDate: "Mar 1, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 875.40, priceDate: "2026-03-16" },
+  { id: 5, sym: "JNJ", name: "Johnson & Johnson", qty: 30, price: 152.30, cost: 161.80, changeP: -0.30, value: 4569.00, weight: 11.8, sector: "Healthcare", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Mar 8, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 152.30, priceDate: "2026-03-16" },
+  { id: 6, sym: "AMZN", name: "Amazon.com Inc.", qty: 8, price: 182.50, cost: 140.20, changeP: +0.92, value: 1460.00, weight: 3.8, sector: "Technology", broker: "Tiger Brokers", accountId:"BR001", addedDate: "Mar 10, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 182.50, priceDate: "2026-03-16" },
+  { id: 7, sym: "GOOGL", name: "Alphabet Inc.", qty: 15, price: 165.30, cost: 130.80, changeP: -0.44, value: 2479.50, weight: 6.4, sector: "Technology", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Mar 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 165.30, priceDate: "2026-03-16" },
+  { id: 8, sym: "META", name: "Meta Platforms Inc.", qty: 10, price: 512.40, cost: 320.00, changeP: +1.21, value: 5124.00, weight: 13.3, sector: "Technology", broker: "Moomoo", accountId:"BR003", addedDate: "Mar 15, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 512.40, priceDate: "2026-03-16" },
+  { id: 9, sym: "BRK.B", name: "Berkshire Hathaway B", qty: 20, price: 410.10, cost: 360.50, changeP: +0.18, value: 8202.00, weight: 21.2, sector: "Financials", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Mar 18, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 410.10, priceDate: "2026-03-16" },
+  { id: 10, sym: "VTI", name: "Vanguard Total Market ETF", qty: 25, price: 240.80, cost: 210.40, changeP: +0.55, value: 6020.00, weight: 15.6, sector: "ETF", broker: "Tiger Brokers", accountId:"BR001", addedDate: "Mar 20, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 240.80, priceDate: "2026-03-16" },
+  // Same symbol (AAPL) in a different brokerage account → must show separately, not merged
+  { id: 11, sym: "AAPL", name: "Apple Inc.", qty: 20, price: 189.84, cost: 175.00, changeP: +0.66, value: 3796.80, weight: 4.8, sector: "Technology", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Apr 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 189.84, priceDate: "2026-03-16" },
 ];
 const allocData = [
   { name: "Technology", value: 73, color: T.accent },
@@ -312,6 +499,34 @@ function Toast({ msg, type, onClose }) {
       <span style={{ fontSize: 13, color: T.text, fontWeight: 500 }}>{msg}</span>
       <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: T.dim, cursor: "pointer", fontSize: 18 }}>×</button>
     </div>
+  );
+}
+
+/* ─── Wallet address — click to expand, copy button ─────────── */
+function AddressPill({ address, prefix, size = "sm" }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  if (!address) return null;
+  const truncated = address.length > 14 ? `${address.slice(0,6)}…${address.slice(-4)}` : address;
+  const handleCopy = (e) => {
+    e.stopPropagation();
+    if (navigator.clipboard) navigator.clipboard.writeText(address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  };
+  const fz = size === "md" ? 12 : 10;
+  return (
+    <span onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}
+      title={expanded ? "Click to collapse" : "Click to expand"}
+      style={{ display:"inline-flex", alignItems:"center", gap:4, fontSize:fz, color:T.muted, fontFamily:"'Courier New',Courier,monospace", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:6, padding:"2px 8px", cursor:"pointer", wordBreak:"break-all", lineHeight:1.3, maxWidth:"100%" }}>
+      {prefix && <span style={{ color:T.dim, fontFamily:"inherit" }}>{prefix}</span>}
+      <span>{expanded ? address : truncated}</span>
+      <button onClick={handleCopy}
+        title={copied ? "Copied" : "Copy address"}
+        style={{ background:"transparent", border:"none", cursor:"pointer", color: copied ? T.up : T.muted, fontSize:fz+1, padding:0, lineHeight:1, fontFamily:"inherit" }}>
+        {copied ? "✓" : "⧉"}
+      </button>
+    </span>
   );
 }
 
@@ -376,7 +591,7 @@ function OverviewScreen() {
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={portfolioChart} barSize={26}>
               <XAxis dataKey="d" tick={{ fontSize: 11, fill: T.dim }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: T.dim }} axisLine={false} tickLine={false} width={46} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} />
+              <YAxis tick={{ fontSize: 11, fill: T.dim }} axisLine={false} tickLine={false} width={70} tickFormatter={v => `$${v.toLocaleString()}`} />
               <Tooltip contentStyle={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 8, fontSize: 12 }} formatter={v => [`S$${v.toLocaleString()}`, "Value"]} />
               <Bar dataKey="v" fill={T.selected} radius={[4, 4, 0, 0]} />
             </BarChart>
@@ -571,8 +786,1804 @@ const CASH_ACCOUNTS_INIT = [
   { id: 5, name: "Revolut", type: "Multi-currency", currency: "GBP", balance: 620.00, flag: "🇬🇧", color: "#6366F1" },
   { id: 6, name: "Wise", type: "Multi-currency", currency: "EUR", balance: 340.00, flag: "🇪🇺", color: "#0EA5E9" },
 ];
-const FX = { SGD: 1, USD: 1.345, GBP: 1.705, EUR: 1.455, HKD: 0.172, AUD: 0.875 };
+const FX = { SGD: 1, USD: 1.345, GBP: 1.705, EUR: 1.455, HKD: 0.172, AUD: 0.875, MYR: 0.30, NZD: 0.81, JPY: 0.0089, AED: 0.366, CAD: 0.985,
+  // Major stablecoins — pegged to USD for FX conversion
+  USDC: 1.345, USDT: 1.345, DAI: 1.345, BUSD: 1.345 };
 const toSGD = (amount, ccy) => amount * (FX[ccy] || 1);
+// Major currencies — used for multi-currency brokerage cash balances
+const MAJOR_CCYS = ["SGD", "USD", "HKD", "EUR", "GBP", "JPY", "AUD", "CAD"];
+// Major stablecoins — used for multi-asset crypto wallet fiat balances
+const MAJOR_STABLES = ["USDC", "USDT", "DAI", "BUSD"];
+// Return the balances array for an account (falls back to single currency for legacy accounts)
+const acctBalances = (a) => (a && a.balances && a.balances.length) ? a.balances : [{ ccy: a?.currency || "SGD", amount: a?.balance || 0 }];
+// Total cash balance for an account, converted to SGD
+const acctCashSGD = (a) => acctBalances(a).reduce((s, b) => s + toSGD(b.amount || 0, b.ccy), 0);
+
+/* ═══════════════════════════════════════════════════════════════
+   STOCKS — Account-first drill-down (item 13 redesign)
+   ═══════════════════════════════════════════════════════════════ */
+function StocksScreen({ holdings, setHoldings, transactions, setTransactions, manualDivs, setManualDivs, accounts, setAccounts, showToast, auditLog, logAudit }) {
+  const isMobile = useIsMobile();
+  const [selectedAccount, setSelectedAccount] = useState(null);
+  const [drawerTab, setDrawerTab] = useState("holdings");
+  const [selectedHolding, setSelectedHolding] = useState(null);
+  const [holdingTab, setHoldingTab] = useState("overview");
+  const [holdingDefaultTxType, setHoldingDefaultTxType] = useState(null);
+  const [showHoldingModal, setShowHoldingModal] = useState(false);
+  const [buyModalAccount, setBuyModalAccount] = useState(null);
+  const [editHolding, setEditHolding] = useState(null);
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [filterCurrency, setFilterCurrency] = useState("All");
+  const [searchQ, setSearchQ] = useState("");
+  const stkSort = useSortState();
+
+  const brokerAccounts = accounts.filter(a => a.accountType === "Brokerage");
+  const cashAccounts = accounts.filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
+
+  // Aggregate stats per brokerage account
+  const accountStats = brokerAccounts.map(a => {
+    const hs = holdings.filter(h => h.accountId === a.id);
+    const value = hs.reduce((s,h) => s + toSGD((h.marketPrice||h.price)*h.qty, h.tradeCcy), 0);
+    const cost  = hs.reduce((s,h) => s + toSGD(h.cost * h.qty, h.tradeCcy), 0);
+    const pnl = value - cost;
+    const pnlPct = cost > 0 ? (pnl/cost*100) : 0;
+    return { account: a, holdingsCount: hs.length, value, cost, pnl, pnlPct };
+  });
+
+  // Portfolio totals (across all brokerage accounts)
+  const totalValue = accountStats.reduce((s,a) => s + a.value, 0);
+  const totalCost = accountStats.reduce((s,a) => s + a.cost, 0);
+  const totalPnL = totalValue - totalCost;
+  const totalPnLPct = totalCost > 0 ? (totalPnL/totalCost*100) : 0;
+  const totalCash = brokerAccounts.reduce((s,a) => s + acctCashSGD(a), 0);
+  const dividendIncome = transactions.filter(t => t.txType === "Dividend").reduce((s,t) => s + toSGD(parseFloat(t.qty||0)*parseFloat(t.price||0), t.currency||"SGD"), 0);
+
+  // Currency list for filter
+  const currencyList = [...new Set(brokerAccounts.map(a => a.currency))].filter(Boolean);
+
+  const filteredStats = accountStats.filter(s => {
+    if (filterCurrency !== "All" && s.account.currency !== filterCurrency) return false;
+    if (searchQ) {
+      const q = searchQ.toLowerCase();
+      const a = s.account;
+      if (!(a.bank||"").toLowerCase().includes(q) && !(a.accountName||"").toLowerCase().includes(q) && !(a.accountNumber||"").toLowerCase().includes(q) && !(a.last4||"").includes(q)) return false;
+    }
+    return true;
+  });
+
+  const handleSaveHolding = (f) => {
+    const matchAcct = brokerAccounts.find(a => a.bank === f.broker);
+    const accountId = f.accountId || (matchAcct ? matchAcct.id : null);
+    if (f.id) {
+      const prev = holdings.find(h => h.id === f.id);
+      const next = { ...prev, ...f, accountId };
+      setHoldings(prevHs => prevHs.map(h => h.id === f.id ? next : h));
+      if (logAudit) logAudit("stock", f.id, "update", prev, next, `${next.sym} · ${next.broker}`);
+      showToast("Holding updated", "success");
+    } else {
+      const id = Date.now();
+      const nh = {
+        ...f, id, accountId,
+        qty: parseFloat(f.qty) || 0,
+        cost: parseFloat(f.cost) || 0,
+        price: parseFloat(f.marketPrice || f.price) || 0,
+        marketPrice: parseFloat(f.marketPrice || f.price) || 0,
+        value: (parseFloat(f.qty) || 0) * (parseFloat(f.marketPrice || f.price) || 0),
+        changeP: 0,
+        weight: 0,
+      };
+      setHoldings(prev => [...prev, nh]);
+      if (logAudit) logAudit("stock", id, "create", null, nh, `${nh.sym} · ${nh.broker}`);
+      showToast("Holding added", "success");
+    }
+    setShowHoldingModal(false);
+    setEditHolding(null);
+  };
+
+  const handleDeleteHolding = (h) => {
+    setHoldings(prev => prev.filter(x => x.id !== h.id));
+    if (logAudit) logAudit("stock", h.id, "delete", h, null, `${h.sym} · ${h.broker}`);
+    showToast(`${h.sym} removed`, "error");
+    setSelectedHolding(null);
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+
+      {/* ── Page header ── */}
+      <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>Brokerage Accounts</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>
+            {brokerAccounts.length} account{brokerAccounts.length!==1?"s":""} · {holdings.length} holding{holdings.length!==1?"s":""} · manage accounts in Cash Accounts tab
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {brokerAccounts.length > 0 && cashAccounts.length > 0 && (
+            <button onClick={()=>setShowTransferModal(true)}
+              style={{background:T.inputBg,color:T.text,border:`1px solid ${T.border}`,borderRadius:9,padding:"9px 14px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              ⇄ Transfer Fiat
+            </button>
+          )}
+          <button onClick={()=>{
+              if (brokerAccounts.length === 0) { showToast("Add a brokerage account in Cash Accounts tab first","error"); return; }
+              setShowHoldingModal(true);
+            }}
+            style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+            + Add Holding
+          </button>
+        </div>
+      </div>
+
+      {/* ── Summary cards — 4 col like Loans ── */}
+      <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:18}}>
+        {[
+          { label:"Total Holdings Value", value:fmtCompact(totalValue), sub:`${holdings.length} position${holdings.length!==1?"s":""}`, icon:"📈", color:T.text },
+          { label:"Unrealised P&L", value:(totalPnL>=0?"+":"")+fmtCompact(totalPnL), sub:`${totalPnL>=0?"+":""}${totalPnLPct.toFixed(1)}% return`, icon:totalPnL>=0?"📊":"📉", color:totalPnL>=0?T.up:T.down },
+          { label:"Brokerage Cash", value:fmtCompact(totalCash), sub:`${brokerAccounts.length} account${brokerAccounts.length!==1?"s":""}`, icon:"💰", color:T.text },
+          { label:"Dividend Income", value:fmtCompact(dividendIncome), sub:`${transactions.filter(t=>t.txType==="Dividend").length} payment${transactions.filter(t=>t.txType==="Dividend").length!==1?"s":""}`, icon:"🎁", color:T.up },
+        ].map((c, i) => (
+          <Card key={i} style={{padding:"18px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+              <span style={{fontSize:20}}>{c.icon}</span>
+            </div>
+            <div style={{fontSize:22,fontWeight:700,marginTop:8,color:c.color}}>{c.value}</div>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* ── Allocation by Brokerage Account ── */}
+      {accountStats.length > 0 && totalValue > 0 && (
+        <Card style={{padding:"16px 20px",marginBottom:18}}>
+          <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Allocation by Brokerage Account</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+            {accountStats.slice().sort((a,b)=>b.value-a.value).map(s => {
+              const pct = totalValue > 0 ? (s.value/totalValue*100).toFixed(0) : 0;
+              const bc = BROKER_COLORS[s.account.bank] || { from:"#6B7280", to:"#374151" };
+              return (
+                <div key={s.account.id} style={{flex:"1 1 140px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:12,color:T.muted,fontWeight:500}}>{s.account.bank}</span>
+                    <span style={{fontSize:12,fontWeight:600}}>{pct}%</span>
+                  </div>
+                  <div style={{height:6,background:T.inputBg,borderRadius:3,overflow:"hidden"}}>
+                    <div style={{width:`${pct}%`,height:"100%",background:bc.from,borderRadius:3}}/>
+                  </div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:4}}>{fmtCompact(s.value)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* ── Filter toolbar ── */}
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:"1 1 200px"}}>
+          <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search broker, account name, account number…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+        </div>
+        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+          {["All", ...currencyList].map(c => (
+            <button key={c} onClick={()=>setFilterCurrency(c)}
+              style={{background:filterCurrency===c?T.selected:T.inputBg,color:filterCurrency===c?T.selectedText:T.muted,border:`1px solid ${filterCurrency===c?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterCurrency===c?600:400}}>
+              {c === "All" ? "All Currencies" : c}
+            </button>
+          ))}
+        </div>
+        <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filteredStats.length} of {brokerAccounts.length}</span>
+      </div>
+
+      {/* ── Brokerage accounts table ── */}
+      {brokerAccounts.length === 0 ? (
+        <Card style={{padding:"48px 24px",textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>📈</div>
+          <div style={{fontSize:14,fontWeight:600}}>No brokerage accounts yet</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:4}}>Add a brokerage account in the Cash Accounts tab to start tracking holdings</div>
+        </Card>
+      ) : filteredStats.length === 0 ? (
+        <Card style={{padding:"48px 24px",textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>📈</div>
+          <div style={{fontSize:14,fontWeight:600}}>No matches</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting filters</div>
+        </Card>
+      ) : isMobile ? (
+        <Card style={{padding:0,overflow:"hidden"}}>
+          {filteredStats.map(s => {
+            const bc = BROKER_COLORS[s.account.bank] || { from:"#374151", to:"#1F2937" };
+            return <MobileListItem key={s.account.id} onClick={()=>{setDrawerTab("holdings");setSelectedAccount(s.account);}}
+              icon="📈" iconBg={`linear-gradient(135deg,${bc.from},${bc.to})`}
+              title={s.account.bank} subtitle={`${s.account.accountName} · ${s.account.accountNumber || `••${s.account.last4||""}`}`}
+              value={fmtCompact(s.value)} valueColor={T.text}
+              valueSub={`${s.pnl>=0?"+":""}${s.pnlPct.toFixed(1)}%`}
+              badge={`${s.holdingsCount} position${s.holdingsCount!==1?"s":""}`} badgeBg={T.inputBg} badgeColor={T.muted}
+              extra={<span style={{fontSize:11,color:s.pnl>=0?T.up:T.down,fontWeight:600}}>{s.pnl>=0?"+":""}{fmtCompact(s.pnl)}</span>}
+            />;
+          })}
+        </Card>
+      ) : (
+        <Card style={{padding:0,overflow:"hidden"}}>
+          <SortHeader gridCols="2.2fr 0.8fr 0.9fr 1fr 1.1fr 1fr 0.9fr" sortKey={stkSort.sortKey} sortDir={stkSort.sortDir} onSort={stkSort.onSort}
+            columns={[["Broker / Account","left","bank"],["Currency","left","currency"],["Positions","right","count"],["Cash Balance","right","cash"],["Holdings Value (SGD)","right","value"],["P&L","right","pnl"],["Return","right","pnlPct"]]}/>
+          {stkSort.sortFn(filteredStats, (s, k) => {
+            if (k==="bank") return (s.account.bank||"").toLowerCase();
+            if (k==="currency") return (s.account.currency||"").toLowerCase();
+            if (k==="count") return s.holdingsCount;
+            if (k==="cash") return acctCashSGD(s.account);
+            if (k==="value") return s.value;
+            if (k==="pnl") return s.pnl;
+            if (k==="pnlPct") return s.pnlPct;
+            return 0;
+          }).map((s, i) => {
+            const bc = BROKER_COLORS[s.account.bank] || { from:"#374151", to:"#1F2937" };
+            const bals = acctBalances(s.account);
+            const cashSGD = acctCashSGD(s.account);
+            return (
+              <div key={s.account.id} onClick={()=>{setDrawerTab("holdings");setSelectedAccount(s.account);}}
+                style={{display:"grid",gridTemplateColumns:"2.2fr 0.8fr 0.9fr 1fr 1.1fr 1fr 0.9fr",padding:"13px 20px",borderBottom:i<filteredStats.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer"}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                onMouseLeave={e=>e.currentTarget.style.background=""}>
+                {/* Broker / Account */}
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0,color:"#fff"}}>📈</div>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600}}>{s.account.bank}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{s.account.accountName} · {s.account.accountNumber || `••${s.account.last4||""}`}</div>
+                  </div>
+                </div>
+                {/* Currency */}
+                <div><Badge bg={T.inputBg} color={T.muted}>{s.account.currency}</Badge></div>
+                {/* Positions */}
+                <div style={{textAlign:"right",fontSize:13,fontWeight:600}}>{s.holdingsCount}</div>
+                {/* Cash Balance — SGD total + currency count */}
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12,fontWeight:600}}>{fmtCompact(cashSGD)}</div>
+                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>{bals.length} currenc{bals.length===1?"y":"ies"}</div>
+                </div>
+                {/* Holdings Value */}
+                <div style={{textAlign:"right",fontSize:13,fontWeight:700}}>{fmtCompact(s.value)}</div>
+                {/* P&L */}
+                <div style={{textAlign:"right",fontSize:13,fontWeight:600,color:s.pnl>=0?T.up:T.down}}>{s.pnl>=0?"+":""}{fmtCompact(s.pnl)}</div>
+                {/* Return % */}
+                <div style={{textAlign:"right",fontSize:12,fontWeight:600,color:s.pnl>=0?T.up:T.down}}>{s.pnl>=0?"+":""}{s.pnlPct.toFixed(1)}%</div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {/* ── Brokerage account detail drawer (shows holdings inside) ── */}
+      {selectedAccount && (() => {
+        const acct = brokerAccounts.find(a => a.id === selectedAccount.id) || selectedAccount;
+        const acctHoldings = holdings.filter(h => h.accountId === acct.id);
+        const acctTxns = transactions.filter(t => t.accountId === acct.id);
+        const acctDivs = (manualDivs || []).filter(d => d.accountId === acct.id);
+        const value = acctHoldings.reduce((s,h) => s + toSGD((h.marketPrice||h.price)*h.qty, h.tradeCcy), 0);
+        const cost  = acctHoldings.reduce((s,h) => s + toSGD(h.cost * h.qty, h.tradeCcy), 0);
+        const pnl = value - cost;
+        const pnlPct = cost > 0 ? (pnl/cost*100) : 0;
+        const bc = BROKER_COLORS[acct.bank] || { from:"#374151", to:"#1F2937" };
+
+        // Wrapped setter so any new transaction is stamped with this account's id + broker name
+        const scopedSetTransactions = (updater) => {
+          if (typeof updater === "function") {
+            setTransactions(prev => {
+              const scoped = prev.filter(t => t.accountId === acct.id);
+              const others = prev.filter(t => t.accountId !== acct.id);
+              const nextScoped = updater(scoped);
+              const stamped = nextScoped.map(t => t.accountId ? t : { ...t, accountId: acct.id, broker: acct.bank });
+              return [...others, ...stamped];
+            });
+          } else {
+            setTransactions(updater);
+          }
+        };
+        // Wrapped setter for holdings (stamp accountId + broker)
+        const scopedSetHoldings = (updater) => {
+          if (typeof updater === "function") {
+            setHoldings(prev => {
+              const scoped = prev.filter(h => h.accountId === acct.id);
+              const others = prev.filter(h => h.accountId !== acct.id);
+              const nextScoped = updater(scoped);
+              const stamped = nextScoped.map(h => h.accountId ? h : { ...h, accountId: acct.id, broker: acct.bank, tradeCcy: h.tradeCcy || acct.currency });
+              return [...others, ...stamped];
+            });
+          } else {
+            setHoldings(updater);
+          }
+        };
+        return (
+          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+            onClick={e => { if (e.target === e.currentTarget) setSelectedAccount(null); }}>
+            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              {/* Header — matches Credit Cards drawer style */}
+              <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+                    <div style={{width:32,height:32,borderRadius:8,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>📈</div>
+                    <div style={{minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{fontSize:14,fontWeight:800}}>{acct.bank}</div>
+                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.accentBg,color:T.accent}}>Brokerage</span>
+                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{acct.currency}</span>
+                      </div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:3}}>{acct.accountName} · {acct.accountNumber || `••${acct.last4||""}`}</div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
+                    <button onClick={()=>setBuyModalAccount(acct)}
+                      style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:7,height:28,padding:"0 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",lineHeight:1}}>
+                      + Add Holding
+                    </button>
+                    <button onClick={()=>setSelectedAccount(null)} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:14,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
+                  </div>
+                </div>
+                {/* Stats — compact 4-col row */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:14}}>
+                  {(() => {
+                    const bals = acctBalances(acct);
+                    const cashSGD = acctCashSGD(acct);
+                    return [
+                      { l:"Holdings Value", v:fmtCompact(value), c:T.text },
+                      { l:"Cost Basis", v:fmtCompact(cost), c:T.muted },
+                      { l:"Unrealised P&L", v:(pnl>=0?"+":"")+fmtCompact(pnl), c:pnl>=0?T.up:T.down, sub:`${pnl>=0?"+":""}${pnlPct.toFixed(1)}%` },
+                      { l:"Cash Balance", v:fmtCompact(cashSGD), c:T.text, sub:`${bals.length} currenc${bals.length===1?"y":"ies"}` },
+                    ];
+                  })().map(s=>(
+                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
+                      <div style={{fontSize:11,color:T.muted,fontWeight:500}}>{s.l}</div>
+                      <div style={{fontSize:14,fontWeight:700,marginTop:3,color:s.c}}>{s.v}</div>
+                      {s.sub && <div style={{fontSize:10,color:s.c,marginTop:1}}>{s.sub}</div>}
+                    </div>
+                  ))}
+                </div>
+                {/* Cash Balances by Currency — chips */}
+                {(() => {
+                  const bals = acctBalances(acct);
+                  if (bals.length === 0) return null;
+                  return (
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
+                      <span style={{fontSize:11,color:T.muted,fontWeight:500}}>Cash by Currency:</span>
+                      {bals.map(b => (
+                        <span key={b.ccy} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11}}>
+                          <strong style={{color:T.muted,fontWeight:600}}>{b.ccy}</strong>
+                          <span style={{fontWeight:700}}>{(b.amount||0).toLocaleString(undefined,{maximumFractionDigits:2})}</span>
+                          <span style={{color:T.dim}}>· {fmtCompact(toSGD(b.amount||0, b.ccy))}</span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
+                {/* Pill tabs — like CC drawer */}
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {[
+                    { id:"holdings",     label:`Holdings (${acctHoldings.length})` },
+                    { id:"history",      label:`Transactions${acctTxns.length>0?` (${acctTxns.length})`:""}` },
+                    { id:"postings",     label:"Postings" },
+                  ].map(t => (
+                    <button key={t.id} onClick={()=>setDrawerTab(t.id)}
+                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===t.id?T.selected:T.inputBg,
+                        color:drawerTab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===t.id?700:400}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tab content — single scrollable area */}
+              <div style={{flex:1,overflowY:"auto",minHeight:0}}>
+                <div style={{padding:"18px 22px 32px"}}>
+                  {drawerTab === "holdings" && (
+                    acctHoldings.length === 0 ? (
+                      <div style={{padding:"28px",textAlign:"center",color:T.muted,fontSize:13,border:`1px dashed ${T.border}`,borderRadius:10}}>
+                        No holdings in this account yet. Use the Manage tab to add transactions.
+                      </div>
+                    ) : (
+                      <Card style={{padding:0,overflow:"hidden"}}>
+                        <div style={{display:"grid",gridTemplateColumns:"2fr 0.7fr 1fr 1fr 1fr 1fr",padding:"9px 14px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:500}}>
+                          <div>Asset</div>
+                          <div style={{textAlign:"right"}}>Qty</div>
+                          <div style={{textAlign:"right"}}>Avg Cost</div>
+                          <div style={{textAlign:"right"}}>Mkt Price</div>
+                          <div style={{textAlign:"right"}}>Value (SGD)</div>
+                          <div style={{textAlign:"right"}}>P&L</div>
+                        </div>
+                        {acctHoldings.map((h,i) => {
+                          const v = (h.marketPrice||h.price) * h.qty;
+                          const c = h.cost * h.qty;
+                          const p = v - c;
+                          const pp = c > 0 ? (p/c*100) : 0;
+                          return (
+                            <div key={h.id} onClick={()=>{setHoldingTab("overview");setHoldingDefaultTxType(null);setSelectedHolding(h);}}
+                              style={{display:"grid",gridTemplateColumns:"2fr 0.7fr 1fr 1fr 1fr 1fr",padding:"11px 14px",borderBottom:i<acctHoldings.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center",cursor:"pointer"}}
+                              onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                              onMouseLeave={e=>e.currentTarget.style.background=""}>
+                              <div style={{display:"flex",gap:8,alignItems:"center",minWidth:0}}>
+                                <div style={{width:28,height:28,borderRadius:7,background:T.inputBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:T.muted,flexShrink:0}}>{h.sym.slice(0,2)}</div>
+                                <div style={{minWidth:0}}>
+                                  <div style={{fontSize:12,fontWeight:600}}>{h.sym}</div>
+                                  <div style={{fontSize:10,color:T.muted,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{h.name}</div>
+                                </div>
+                              </div>
+                              <div style={{textAlign:"right"}}>{h.qty}</div>
+                              <div style={{textAlign:"right",color:T.muted}}>{h.tradeCcy} {h.cost.toFixed(2)}</div>
+                              <div style={{textAlign:"right"}}>{h.tradeCcy} {(h.marketPrice||h.price).toFixed(2)}</div>
+                              <div style={{textAlign:"right",fontWeight:700}}>{fmtCompact(toSGD(v, h.tradeCcy))}</div>
+                              <div style={{textAlign:"right"}}>
+                                <div style={{fontWeight:600,color:p>=0?T.up:T.down}}>{p>=0?"+":""}{fmtCompact(toSGD(p, h.tradeCcy))}</div>
+                                <div style={{fontSize:10,color:p>=0?T.up:T.down,marginTop:1}}>{p>=0?"+":""}{pp.toFixed(1)}%</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </Card>
+                    )
+                  )}
+
+                  {drawerTab === "history" && (
+                    <ManageScreen holdings={acctHoldings} setHoldings={scopedSetHoldings}
+                      transactions={acctTxns} setTransactions={scopedSetTransactions}
+                      showToast={showToast} onlyTab="history"/>
+                  )}
+
+                  {drawerTab === "postings" && (
+                    <ManageScreen holdings={acctHoldings} setHoldings={scopedSetHoldings}
+                      transactions={acctTxns} setTransactions={scopedSetTransactions}
+                      showToast={showToast} onlyTab="postings"/>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Individual holding detail drawer (nested over account drawer) ── */}
+      {selectedHolding && (() => {
+        const h = holdings.find(x => x.id === selectedHolding.id) || selectedHolding;
+        const value = (h.marketPrice||h.price) * h.qty;
+        const cost = h.cost * h.qty;
+        const pnl = value - cost;
+        const pnlPct = cost > 0 ? (pnl/cost*100) : 0;
+        const bc = BROKER_COLORS[h.broker] || { from:"#374151", to:"#1F2937" };
+        const symTxns = transactions.filter(t => t.sym === h.sym && (!t.accountId || t.accountId === h.accountId));
+        const symDivs = symTxns.filter(t => t.txType === "Dividend");
+        const dividendsReceived = symDivs.reduce((s,t) => s + toSGD(parseFloat(t.qty||0)*parseFloat(t.price||0), t.currency||"SGD"), 0);
+        return (
+          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:210,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+            onClick={e => { if (e.target === e.currentTarget) setSelectedHolding(null); }}>
+            <div style={{width:"min(720px, 92vw)",height:"100vh",background:T.bg,boxShadow:"-4px 0 32px rgba(0,0,0,0.25)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              {/* Header — matches CC drawer style */}
+              <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+                    <div style={{width:32,height:32,borderRadius:8,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}}>{h.sym.slice(0,2)}</div>
+                    <div style={{minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                        <div style={{fontSize:14,fontWeight:800}}>{h.sym}</div>
+                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{h.sector||"Stock"}</span>
+                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{h.tradeCcy}</span>
+                      </div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:3}}>{h.name} · {h.broker} · {h.exchange||"—"}</div>
+                    </div>
+                  </div>
+                  <button onClick={()=>setSelectedHolding(null)} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:14,color:T.muted,flexShrink:0,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
+                </div>
+                {/* Stats — compact 4-col row */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:14}}>
+                  {[
+                    { l:"Quantity", v:String(h.qty), c:T.text },
+                    { l:"Avg Cost", v:`${h.tradeCcy} ${h.cost.toFixed(2)}`, c:T.muted },
+                    { l:"Mkt Price", v:`${h.tradeCcy} ${(h.marketPrice||h.price).toFixed(2)}`, c:T.text },
+                    { l:"Mkt Value (SGD)", v:fmtCompact(toSGD(value, h.tradeCcy)), c:T.text, sub:`${pnl>=0?"+":""}${pnlPct.toFixed(1)}%`, subC:pnl>=0?T.up:T.down },
+                  ].map(s=>(
+                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
+                      <div style={{fontSize:11,color:T.muted,fontWeight:500}}>{s.l}</div>
+                      <div style={{fontSize:14,fontWeight:700,marginTop:3,color:s.c}}>{s.v}</div>
+                      {s.sub && <div style={{fontSize:10,color:s.subC,marginTop:1,fontWeight:600}}>{s.sub}</div>}
+                    </div>
+                  ))}
+                </div>
+                {/* Pill tabs */}
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {[
+                    { id:"overview",     label:"Overview" },
+                    { id:"transactions", label:`Transactions${symTxns.length>0?` (${symTxns.length})`:""}` },
+                    { id:"chart",        label:"Chart" },
+                    { id:"dividends",    label:`Dividends${symDivs.length>0?` (${symDivs.length})`:""}` },
+                    { id:"history",      label:"History" },
+                    { id:"manage",       label:"Manage" },
+                  ].map(t => (
+                    <button key={t.id} onClick={()=>{setHoldingTab(t.id);if(t.id!=="manage")setHoldingDefaultTxType(null);}}
+                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:holdingTab===t.id?T.selected:T.inputBg,
+                        color:holdingTab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:holdingTab===t.id?700:400}}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tab content — single scrollable */}
+              <div style={{flex:1,overflowY:"auto",minHeight:0}}>
+                <div style={{padding:"18px 22px 32px"}}>
+                  {/* OVERVIEW — transactions list + P&L */}
+                  {holdingTab === "overview" && (
+                    <>
+                      <div style={{padding:"12px 16px",background:pnl>=0?T.upBg:T.downBg,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+                        <span style={{fontSize:12,color:T.muted,fontWeight:600}}>Unrealised P&L</span>
+                        <span style={{fontSize:18,fontWeight:700,color:pnl>=0?T.up:T.down}}>
+                          {pnl>=0?"+":""}{fmtCompact(toSGD(pnl, h.tradeCcy))} ({pnl>=0?"+":""}{pnlPct.toFixed(1)}%)
+                        </span>
+                      </div>
+                      <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",marginBottom:16}}>
+                        <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📋 Holding Details</div>
+                        {[
+                          ["Symbol / Name",`${h.sym} · ${h.name}`],
+                          ["Exchange",h.exchange||"—"],
+                          ["Broker / Account",`${h.broker}${h.accountId?` · ${h.accountId}`:""}`],
+                          ["Sector",h.sector||"—"],
+                          ["Trade Currency",h.tradeCcy],
+                          ["Country",h.country||"—"],
+                        ].map(([k,v])=>(
+                          <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`,gap:12,alignItems:"center"}}>
+                            <span style={{fontSize:12,color:T.muted,flexShrink:0}}>{k}</span>
+                            <span style={{fontSize:12,fontWeight:600,textAlign:"right"}}>{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                        <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>💰 Financial Summary</div>
+                        {[
+                          ["Quantity Held",`${h.qty.toLocaleString()} shares`],
+                          ["Avg Cost / Share",`${h.tradeCcy} ${h.cost.toFixed(2)}`],
+                          ["Market Price / Share",`${h.tradeCcy} ${(h.marketPrice||h.price).toFixed(2)}`],
+                          ["Cost Basis",`${h.tradeCcy} ${cost.toLocaleString(undefined,{maximumFractionDigits:2})}`],
+                          ["Market Value",`${h.tradeCcy} ${value.toLocaleString(undefined,{maximumFractionDigits:2})}`],
+                          ["Unrealised P&L",`${pnl>=0?"+":""}${h.tradeCcy} ${pnl.toLocaleString(undefined,{maximumFractionDigits:2})} (${pnl>=0?"+":""}${pnlPct.toFixed(2)}%)`],
+                          ["Dividends Received (SGD)",fmtCompact(dividendsReceived)],
+                        ].map(([k,v])=>(
+                          <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                            <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                            <span style={{fontSize:12,fontWeight:600,textAlign:"right",color:k==="Unrealised P&L"?(pnl>=0?T.up:T.down):k==="Dividends Received (SGD)"?T.up:T.text}}>{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {holdingTab === "transactions" && (
+                    <>
+                      <div style={{fontSize:14,fontWeight:600,marginBottom:12}}>Transactions ({symTxns.length})</div>
+                      {symTxns.length === 0 ? (
+                        <div style={{padding:"28px",textAlign:"center",color:T.muted,fontSize:13,border:`1px dashed ${T.border}`,borderRadius:10}}>
+                          No transactions recorded for this position
+                        </div>
+                      ) : (
+                        <Card style={{padding:0,overflow:"hidden"}}>
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 0.8fr 0.8fr 0.8fr 0.8fr",padding:"9px 14px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:500}}>
+                            <div>Date</div><div>Type</div>
+                            <div style={{textAlign:"right"}}>Qty</div>
+                            <div style={{textAlign:"right"}}>Price</div>
+                            <div style={{textAlign:"right"}}>Total</div>
+                          </div>
+                          {symTxns.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map((t,i) => {
+                            const total = (parseFloat(t.qty||0))*(parseFloat(t.price||0)) + parseFloat(t.fees||0);
+                            const tColor = t.txType==="Buy"?T.up:t.txType==="Sell"?T.down:t.txType==="Dividend"?T.accent:T.muted;
+                            return (
+                              <div key={t.id||i} style={{display:"grid",gridTemplateColumns:"1fr 0.8fr 0.8fr 0.8fr 0.8fr",padding:"10px 14px",borderBottom:i<symTxns.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center"}}>
+                                <div>{t.date}</div>
+                                <div><Badge bg={`${tColor}15`} color={tColor}>{t.txType}</Badge></div>
+                                <div style={{textAlign:"right"}}>{t.qty}</div>
+                                <div style={{textAlign:"right",color:T.muted}}>{t.currency||"SGD"} {t.price}</div>
+                                <div style={{textAlign:"right",fontWeight:600}}>{t.currency||"SGD"} {total.toFixed(2)}</div>
+                              </div>
+                            );
+                          })}
+                        </Card>
+                      )}
+                    </>
+                  )}
+
+                  {/* CHART — single stock, compact (no scroll) */}
+                  {holdingTab === "chart" && (
+                    <CompactStockChart holding={h}/>
+                  )}
+
+                  {/* DIVIDENDS — for this stock only */}
+                  {holdingTab === "dividends" && (() => {
+                    // Build calendar events filtered to this sym
+                    const symSchedule = DIVIDEND_SCHEDULE.filter(d => d.sym === h.sym);
+                    const calEvents = {};
+                    symSchedule.forEach(d => {
+                      const day = parseInt(d.payDate.slice(8));
+                      const month = d.payDate.slice(0, 7);
+                      if (month === "2026-03") {
+                        if (!calEvents[day]) calEvents[day] = [];
+                        calEvents[day].push({ sym: d.sym, color: d.color });
+                      }
+                    });
+                    const todayDay = new Date().getDate();
+                    return (
+                    <>
+                      {/* Header row with + Add Dividend button */}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                        <div style={{fontSize:14,fontWeight:600}}>Dividend Overview</div>
+                        <button onClick={()=>{setHoldingDefaultTxType("Dividend");setHoldingTab("manage");}}
+                          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:7,padding:"7px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                          + Add Dividend
+                        </button>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:18}}>
+                        <Card style={{padding:"16px 18px"}}>
+                          <div style={{fontSize:11,color:T.muted,fontWeight:500}}>Total Received</div>
+                          <div style={{fontSize:20,fontWeight:700,marginTop:6,color:T.up}}>{fmtCompact(dividendsReceived)}</div>
+                          <div style={{fontSize:11,color:T.dim,marginTop:3}}>{symDivs.length} payment{symDivs.length!==1?"s":""}</div>
+                        </Card>
+                        <Card style={{padding:"16px 18px"}}>
+                          <div style={{fontSize:11,color:T.muted,fontWeight:500}}>Yield on Cost</div>
+                          <div style={{fontSize:20,fontWeight:700,marginTop:6}}>{cost > 0 ? ((dividendsReceived / toSGD(cost, h.tradeCcy)) * 100).toFixed(2) : "0.00"}%</div>
+                          <div style={{fontSize:11,color:T.dim,marginTop:3}}>vs cost basis</div>
+                        </Card>
+                        <Card style={{padding:"16px 18px"}}>
+                          <div style={{fontSize:11,color:T.muted,fontWeight:500}}>Avg per Share</div>
+                          <div style={{fontSize:20,fontWeight:700,marginTop:6}}>{symDivs.length>0 ? `${h.tradeCcy} ${(symDivs.reduce((s,t)=>s+parseFloat(t.price||0),0)/symDivs.length).toFixed(3)}` : "—"}</div>
+                          <div style={{fontSize:11,color:T.dim,marginTop:3}}>across {symDivs.length} payout{symDivs.length!==1?"s":""}</div>
+                        </Card>
+                      </div>
+
+                      {/* Dividend Calendar — filtered to this stock */}
+                      <Card style={{padding:"18px 20px",marginBottom:18}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                          <div style={{fontSize:13,fontWeight:600}}>Dividend Calendar · March 2026</div>
+                          {symSchedule.length === 0 && <span style={{fontSize:11,color:T.dim}}>No scheduled payouts</span>}
+                        </div>
+                        <div style={{fontSize:11,color:T.muted,marginBottom:14}}>Upcoming ex-div and payment dates for {h.sym}</div>
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+                          {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d => (
+                            <div key={d} style={{textAlign:"center",fontSize:10,color:T.dim,paddingBottom:4,fontWeight:500}}>{d}</div>
+                          ))}
+                          {[null,null,null,null,null,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31].map((d, idx) => {
+                            const evs = d ? calEvents[d] : null;
+                            const isToday = d === todayDay;
+                            return (
+                              <div key={idx} style={{height:36,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",borderRadius:6,background:isToday?T.selected:evs?evs[0].color+"15":d?T.inputBg:"transparent",border:`2px solid ${isToday?T.selected:evs?evs[0].color+"50":"transparent"}`}}>
+                                {d && <span style={{fontSize:11,color:isToday?T.selectedText:evs?evs[0].color:T.muted,fontWeight:isToday||evs?700:400}}>{d}</span>}
+                                {evs && !isToday && <span style={{fontSize:7,color:evs[0].color,fontWeight:700,lineHeight:1}}>PAY</span>}
+                                {isToday && <span style={{fontSize:7,color:T.selectedText,fontWeight:700,lineHeight:1}}>TODAY</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {symSchedule.length > 0 && (
+                          <div style={{display:"flex",gap:14,marginTop:14,flexWrap:"wrap"}}>
+                            {symSchedule.map(d => (
+                              <div key={d.payDate} style={{display:"flex",gap:6,alignItems:"center"}}>
+                                <div style={{width:8,height:8,borderRadius:2,background:d.color}}/>
+                                <span style={{fontSize:11,color:T.muted}}>{new Date(d.payDate).toLocaleDateString("en-SG",{day:"numeric",month:"short"})} — {h.tradeCcy} {d.perShare.toFixed(2)}/share</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </Card>
+
+                      <div style={{fontSize:14,fontWeight:600,marginBottom:12}}>Dividend Payments ({symDivs.length})</div>
+                      {symDivs.length === 0 ? (
+                        <div style={{padding:"28px",textAlign:"center",color:T.muted,fontSize:13,border:`1px dashed ${T.border}`,borderRadius:10}}>
+                          No dividend payments recorded for this position
+                        </div>
+                      ) : (
+                        <Card style={{padding:0,overflow:"hidden"}}>
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 0.8fr 0.8fr 1fr",padding:"9px 14px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:500}}>
+                            <div>Pay Date</div>
+                            <div style={{textAlign:"right"}}>Shares Held</div>
+                            <div style={{textAlign:"right"}}>Per Share</div>
+                            <div style={{textAlign:"right"}}>Total</div>
+                          </div>
+                          {symDivs.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map((d,i) => {
+                            const tot = parseFloat(d.qty||0)*parseFloat(d.price||0);
+                            return (
+                              <div key={d.id||i} style={{display:"grid",gridTemplateColumns:"1fr 0.8fr 0.8fr 1fr",padding:"10px 14px",borderBottom:i<symDivs.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center"}}>
+                                <div>{d.date}</div>
+                                <div style={{textAlign:"right"}}>{d.qty}</div>
+                                <div style={{textAlign:"right",color:T.muted}}>{d.currency||"SGD"} {d.price}</div>
+                                <div style={{textAlign:"right",fontWeight:600,color:T.up}}>+{d.currency||"SGD"} {tot.toFixed(2)}</div>
+                              </div>
+                            );
+                          })}
+                        </Card>
+                      )}
+                    </>
+                    );
+                  })()}
+
+                  {/* MANAGE — Buy/Sell/Dividend/Transfer In/Transfer Out + Delete */}
+                  {holdingTab === "manage" && (
+                    <StockActionPanel key={holdingDefaultTxType||"Buy"} holding={h} setHoldings={setHoldings} setTransactions={setTransactions}
+                      showToast={showToast} logAudit={logAudit} auditLog={auditLog}
+                      defaultTxType={holdingDefaultTxType}
+                      onDelete={()=>handleDeleteHolding(h)}/>
+                  )}
+
+                  {/* HISTORY — audit log */}
+                  {holdingTab === "history" && (
+                    <AuditLogPanel auditLog={auditLog} entityType="stock" entityId={h.id}/>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Modals ── */}
+      {showHoldingModal && brokerAccounts.length > 0 && (
+        <AccountPickerModal accounts={brokerAccounts}
+          onPick={(a) => { setShowHoldingModal(false); setBuyModalAccount(a); }}
+          onClose={()=>setShowHoldingModal(false)}/>
+      )}
+      {buyModalAccount && (
+        <BuyStockModal
+          account={buyModalAccount}
+          holdings={holdings}
+          setHoldings={setHoldings}
+          transactions={transactions}
+          setTransactions={setTransactions}
+          showToast={showToast}
+          onClose={()=>setBuyModalAccount(null)}/>
+      )}
+      {showTransferModal && brokerAccounts.length>0 && (
+        <StocksTransferModal
+          brokerAccount={brokerAccounts[0]} cashAccounts={cashAccounts} accounts={accounts}
+          setAccounts={setAccounts} setTransactions={setTransactions}
+          onClose={()=>setShowTransferModal(false)}
+          onComplete={()=>{ setShowTransferModal(false); showToast("Transfer recorded","success"); }}
+          logAudit={logAudit}/>
+      )}
+    </div>
+  );
+}
+
+// ── Per-stock action panel: Buy / Sell / Transfer In / Transfer Out / Delete ──
+// ── Compact stock chart used inside the stock detail drawer (fits without scroll) ──
+function CompactStockChart({ holding }) {
+  const [tf, setTf] = useState("1D");
+  const h = holding;
+  const mp = h.marketPrice || h.price;
+  const stats = [
+    { l:"Open", v:`${h.tradeCcy} ${(h.price*0.995).toFixed(2)}` },
+    { l:"Close", v:`${h.tradeCcy} ${mp.toFixed(2)}` },
+    { l:"52W High", v:`${h.tradeCcy} ${(h.price*1.1).toFixed(2)}` },
+    { l:"52W Low", v:`${h.tradeCcy} ${(h.price*0.85).toFixed(2)}` },
+    { l:"50D Avg", v:`${h.tradeCcy} ${(h.price*1.02).toFixed(2)}` },
+    { l:"Market Cap", v:`${h.tradeCcy} 2,943,000,000,000` },
+    { l:"Volume", v:"97,210,540" },
+    { l:"Dividend Yield", v:"0.53%" },
+  ];
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      <Card style={{padding:"14px 16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{display:"flex",gap:4}}>
+            {["1D","5D","1M","3M","1Y","MAX"].map(t => (
+              <button key={t} onClick={()=>setTf(t)}
+                style={{background:tf===t?T.selected:"transparent",color:tf===t?T.selectedText:T.muted,border:`1px solid ${tf===t?T.selected:T.border}`,borderRadius:5,padding:"3px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",fontWeight:tf===t?600:400}}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:16,fontWeight:700,lineHeight:1}}>{h.tradeCcy} {(h.marketPrice||h.price).toFixed(2)}</div>
+            <div style={{fontSize:11,color:h.changeP>=0?T.up:T.down,marginTop:2,fontWeight:600}}>
+              {h.changeP>=0?"+":""}{(h.changeP||0).toFixed(2)}% today
+            </div>
+          </div>
+        </div>
+        <ResponsiveContainer width="100%" height={140}>
+          <AreaChart data={stockChart}>
+            <defs>
+              <linearGradient id={`cg-${h.sym}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={T.accent} stopOpacity={0.18}/>
+                <stop offset="100%" stopColor={T.accent} stopOpacity={0.01}/>
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="t" tick={{fontSize:10,fill:T.dim}} axisLine={false} tickLine={false}/>
+            <YAxis domain={[184,192]} tick={{fontSize:10,fill:T.dim}} axisLine={false} tickLine={false} width={36}/>
+            <Tooltip contentStyle={{background:"#fff",border:`1px solid ${T.border}`,borderRadius:8,fontSize:11}}/>
+            <Area type="monotone" dataKey="c" stroke={T.accent} strokeWidth={2} fill={`url(#cg-${h.sym})`} dot={false}/>
+          </AreaChart>
+        </ResponsiveContainer>
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+        {stats.map(s => (
+          <div key={s.l} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:9,padding:"9px 11px"}}>
+            <div style={{fontSize:10,color:T.muted,fontWeight:500}}>{s.l}</div>
+            <div style={{fontSize:12,fontWeight:700,marginTop:3}}>{s.v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StockActionPanel({ holding, setHoldings, setTransactions, showToast, logAudit, auditLog, onDelete, defaultTxType }) {
+  const TYPES = ["Buy","Sell","Dividend","Transfer In","Transfer Out","Update Price"];
+  const US_EX = ["NASDAQ","NYSE","AMEX"];
+  const isUSStock = US_EX.includes(holding.exchange);
+  const [txType, setTxType] = useState(defaultTxType || "Buy");
+  const [form, setForm] = useState({
+    date: new Date().toISOString().slice(0,10),
+    qty: defaultTxType === "Dividend" ? String(holding.qty) : "",
+    price: defaultTxType === "Dividend" ? "" : String(holding.marketPrice || holding.price || ""),
+    fees:"", notes:"",
+  });
+  const [divWithhold, setDivWithhold] = useState(isUSStock);
+  const set = (k,v) => setForm(f => ({...f, [k]:v}));
+  const isUpdatePrice = txType === "Update Price";
+  const needsPrice = txType === "Buy" || txType === "Sell" || txType === "Dividend" || isUpdatePrice;
+  const canSubmit = isUpdatePrice
+    ? !!form.price && parseFloat(form.price) > 0
+    : form.date && form.qty && (txType === "Transfer In" || txType === "Transfer Out" || form.price);
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+
+    if (isUpdatePrice) {
+      const newPrice = parseFloat(form.price);
+      const prev = { ...holding };
+      const next = { ...holding, marketPrice: newPrice, price: newPrice };
+      setHoldings(prevHs => prevHs.map(x => x.id === holding.id ? { ...x, marketPrice: newPrice, price: newPrice } : x));
+      if (logAudit) logAudit("stock", holding.id, "update", prev, next, `${holding.sym} · price ${holding.tradeCcy} ${(holding.marketPrice||holding.price||0).toFixed(2)} → ${holding.tradeCcy} ${newPrice.toFixed(2)}`);
+      showToast(`${holding.sym} price updated to ${holding.tradeCcy} ${newPrice.toFixed(2)}`, "success");
+      setForm(f => ({ ...f, price: String(newPrice) }));
+      return;
+    }
+
+    const qty = parseFloat(form.qty);
+    const price = parseFloat(form.price || 0);
+    const fees = parseFloat(form.fees || 0);
+    const tx = {
+      id: Date.now(),
+      sym: holding.sym, name: holding.name,
+      txType, date: form.date,
+      qty: form.qty, price: form.price || "0", fees: form.fees || "0",
+      currency: holding.tradeCcy || "SGD",
+      broker: holding.broker, accountId: holding.accountId,
+      notes: form.notes,
+    };
+    setTransactions(prev => [...prev, tx]);
+
+    // Update holding qty + avg cost
+    if (txType === "Buy" || txType === "Transfer In") {
+      const addQty = qty;
+      const newQty = holding.qty + addQty;
+      // Average cost only changes on Buy (Transfer In keeps cost basis)
+      const newCost = txType === "Buy" && newQty > 0
+        ? ((holding.cost * holding.qty) + (price * addQty)) / newQty
+        : holding.cost;
+      setHoldings(prev => prev.map(x => x.id === holding.id ? { ...x, qty: newQty, cost: newCost } : x));
+    } else if (txType === "Sell" || txType === "Transfer Out") {
+      const newQty = Math.max(0, holding.qty - qty);
+      setHoldings(prev => prev.map(x => x.id === holding.id ? { ...x, qty: newQty } : x));
+    }
+
+    if (logAudit) logAudit("stock", holding.id, "add-transaction", null, tx, `${txType} ${form.qty} ${holding.sym}`);
+    showToast(`${txType} recorded — ${form.qty} ${holding.sym}`, "success");
+    setForm({ date:new Date().toISOString().slice(0,10), qty: txType === "Dividend" ? String(holding.qty) : "", price: txType === "Dividend" ? "" : String(holding.marketPrice||holding.price||""), fees:"", notes:"" });
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* Type pills */}
+      <Card style={{padding:"16px 18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Transaction Type</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {TYPES.map(t => {
+            const active = txType === t;
+            const tColor = t==="Buy"?T.up:t==="Sell"?T.down:t==="Dividend"?T.warn:t==="Update Price"?T.text:T.accent;
+            return (
+              <button key={t} onClick={()=>{
+                  setTxType(t);
+                  // refresh defaults when switching modes
+                  if (t === "Update Price") {
+                    setForm(f => ({...f, price: String(holding.marketPrice||holding.price||"")}));
+                  } else {
+                    setForm(f => ({...f, qty: t==="Dividend" ? String(holding.qty) : "", price: t==="Dividend" ? "" : String(holding.marketPrice||holding.price||"")}));
+                  }
+                  if (t === "Dividend") setDivWithhold(isUSStock);
+                }}
+                style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${active?tColor:T.border}`,
+                  background:active?`${tColor}15`:T.inputBg,color:active?tColor:T.muted,
+                  cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500}}>
+                {t==="Buy"?"📥":t==="Sell"?"📤":t==="Dividend"?"💰":t==="Transfer In"?"⬇":t==="Transfer Out"?"⬆":"💲"} {t}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* Details form */}
+      <Card style={{padding:"18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>{isUpdatePrice ? `Update Market Price — ${holding.sym}` : "Details"}</div>
+        {isUpdatePrice ? (
+          <>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+              <div><Label required>New Market Price ({holding.tradeCcy})</Label>
+                <Input type="number" step="0.01" value={form.price} onChange={e=>set("price",e.target.value)} placeholder={String(holding.marketPrice||holding.price||"0.00")}/>
+              </div>
+              {(() => {
+                const newPrice = parseFloat(form.price) || 0;
+                const newValue = newPrice * (holding.qty||0);
+                const cost = (holding.cost||0) * (holding.qty||0);
+                const newPnl = newValue - cost;
+                const newPnlPct = cost > 0 ? (newPnl/cost*100) : 0;
+                const oldPrice = holding.marketPrice || holding.price || 0;
+                return (
+                  <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                      <span>Current Price</span>
+                      <span style={{fontWeight:600,color:T.text}}>{holding.tradeCcy} {oldPrice.toFixed(2)}</span>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                      <span>New P/L Value</span>
+                      <span style={{fontWeight:700,color:newPnl>=0?T.up:T.down}}>{newPnl>=0?"+":""}{holding.tradeCcy} {newPnl.toFixed(2)}</span>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                      <span>New P/L %</span>
+                      <span style={{fontWeight:700,color:newPnlPct>=0?T.up:T.down}}>{newPnlPct>=0?"+":""}{newPnlPct.toFixed(2)}%</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </>
+        ) : (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <div><Label required>Date</Label>
+              <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+            </div>
+            <div><Label required>{txType === "Dividend" ? "Shares Held" : "Quantity"}</Label>
+              <Input type="number" step="1" value={form.qty} onChange={e=>set("qty",e.target.value)} placeholder="0"/>
+            </div>
+            {needsPrice && (
+              <div><Label required>{txType === "Dividend" ? `Dividend Per Share (${holding.tradeCcy})` : `Price per Share (${holding.tradeCcy})`}</Label>
+                <Input type="number" value={form.price} onChange={e=>set("price",e.target.value)} placeholder="0.00"/>
+              </div>
+            )}
+            <MoreOptions count={(txType==="Buy"||txType==="Sell")?2:1}>
+              {(txType === "Buy" || txType === "Sell") && (
+                <div><Label>Fees ({holding.tradeCcy})</Label>
+                  <Input type="number" value={form.fees} onChange={e=>set("fees",e.target.value)} placeholder="0.00"/>
+                </div>
+              )}
+              <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Optional notes…"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+              </div>
+            </MoreOptions>
+          </div>
+        )}
+
+        {/* US Withholding Tax checkbox — Dividend only */}
+        {txType === "Dividend" && (
+          <div onClick={() => setDivWithhold(v => !v)}
+            style={{marginTop:14,display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:divWithhold?T.downBg:T.inputBg,border:`1px solid ${divWithhold?T.down+"40":T.border}`,borderRadius:10,cursor:"pointer",userSelect:"none"}}>
+            <div style={{width:20,height:20,borderRadius:5,border:`2px solid ${divWithhold?T.down:T.dim}`,background:divWithhold?T.down:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              {divWithhold && <span style={{color:"#fff",fontSize:13,fontWeight:700,lineHeight:1}}>✓</span>}
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:600,color:divWithhold?T.down:T.text}}>US Stock Market (Apply 30% Withholding Tax)</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                {divWithhold ? "30% withholding tax deducted under IRS rules." : "No withholding tax — full gross dividend paid out."}
+              </div>
+            </div>
+            {divWithhold && <Badge bg={T.downBg} color={T.down}>−30%</Badge>}
+          </div>
+        )}
+
+        {/* Dividend Payout Breakdown */}
+        {txType === "Dividend" && form.qty && form.price && (() => {
+          const qty = parseFloat(form.qty) || 0;
+          const eps = parseFloat(form.price) || 0;
+          const gross = qty * eps * (FX[holding.tradeCcy] || 1);
+          const withhold = divWithhold ? gross * 0.30 : 0;
+          const net = gross - withhold;
+          return (
+            <div style={{marginTop:14,background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:10,padding:"14px 16px",display:"flex",flexDirection:"column",gap:8}}>
+              <div style={{fontSize:12,fontWeight:600,color:T.muted,marginBottom:2}}>Dividend Payout Breakdown</div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}>
+                <span style={{color:T.muted}}>Gross ({qty} shares × {holding.tradeCcy} {eps.toFixed(4)} EPS)</span>
+                <span style={{fontWeight:500}}>S${gross.toFixed(2)}</span>
+              </div>
+              {divWithhold && (
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}>
+                  <span style={{color:T.down}}>US Withholding Tax (30%)</span>
+                  <span style={{fontWeight:500,color:T.down}}>− S${withhold.toFixed(2)}</span>
+                </div>
+              )}
+              <div style={{borderTop:`1px solid ${T.border}`,paddingTop:8,display:"flex",justifyContent:"space-between",fontSize:14}}>
+                <span style={{fontWeight:600}}>Net Received</span>
+                <span style={{fontWeight:700,color:T.up}}>S${net.toFixed(2)}</span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Simple total — non-Dividend types only */}
+        {needsPrice && txType !== "Dividend" && form.qty && form.price && (
+          <div style={{marginTop:14,padding:"10px 12px",background:T.inputBg,borderRadius:8,display:"flex",justifyContent:"space-between",fontSize:12}}>
+            <span style={{color:T.muted}}>Total ({txType})</span>
+            <span style={{fontWeight:700}}>{holding.tradeCcy} {((parseFloat(form.qty)||0)*(parseFloat(form.price)||0)+(parseFloat(form.fees)||0)).toFixed(2)}</span>
+          </div>
+        )}
+
+        {/* Money-flow categorization banner */}
+        {!isUpdatePrice && (() => {
+          const totalLocal = txType === "Dividend"
+            ? (parseFloat(form.qty)||0) * (parseFloat(form.price)||0) * (divWithhold ? 0.7 : 1)
+            : (parseFloat(form.qty)||0) * (parseFloat(form.price)||0) + (parseFloat(form.fees)||0);
+          const flowOverride =
+            txType === "Buy" ? "out" :
+            txType === "Sell" || txType === "Dividend" ? "in" :
+            "info";
+          const label =
+            txType === "Buy" ? "📤 Capital deployed to stock"
+            : txType === "Sell" ? "📥 Sale proceeds"
+            : txType === "Dividend" ? `💰 Dividend income${divWithhold ? " (net of WHT)" : ""}`
+            : txType === "Transfer In" ? "⬇ Inbound transfer (no cash flow)"
+            : txType === "Transfer Out" ? "⬆ Outbound transfer (no cash flow)"
+            : "💰 Transaction";
+          const showAmount = txType !== "Transfer In" && txType !== "Transfer Out";
+          return (
+            <div style={{marginTop:14}}>
+              <FlowBanner type={txType} flowOverride={flowOverride} prefix={`${holding.tradeCcy} `}
+                amount={showAmount ? totalLocal : null} label={label} style={{marginBottom:0}}/>
+            </div>
+          );
+        })()}
+
+        <div style={{marginTop:16,display:"flex",justifyContent:"flex-end",gap:8}}>
+          <button onClick={handleSubmit} disabled={!canSubmit}
+            style={{background:canSubmit?T.selected:T.border,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            {isUpdatePrice ? "Update Price" : `Record ${txType}`}
+          </button>
+        </div>
+      </Card>
+
+      {/* Price update history — Update Price mode only */}
+      {isUpdatePrice && (() => {
+        const priceUpdates = (auditLog || [])
+          .filter(e => e.entityType === "stock" && e.entityId === holding.id && e.action === "update"
+            && (e.changes||[]).some(c => c.field === "marketPrice" || c.field === "price"));
+        return (
+          <Card style={{padding:"16px 18px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:13,fontWeight:600}}>Price History</div>
+              <div style={{fontSize:11,color:T.muted}}>{priceUpdates.length} {priceUpdates.length === 1 ? "entry" : "entries"}</div>
+            </div>
+            {priceUpdates.length === 0 ? (
+              <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
+                <div style={{fontSize:22,marginBottom:6}}>📈</div>
+                <div style={{fontWeight:600}}>No manual price updates yet</div>
+                <div style={{fontSize:11,marginTop:3,color:T.dim}}>Your price updates will be tracked here.</div>
+              </div>
+            ) : (
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead>
+                    <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
+                      <th style={{padding:"8px 10px"}}>Date</th>
+                      <th style={{padding:"8px 10px",textAlign:"right"}}>Old Price</th>
+                      <th style={{padding:"8px 10px",textAlign:"right"}}>New Price</th>
+                      <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
+                      <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
+                      <th style={{padding:"8px 10px"}}>By</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {priceUpdates.map(e => {
+                      const ch = (e.changes||[]).find(c => c.field === "marketPrice") || (e.changes||[]).find(c => c.field === "price");
+                      const before = parseFloat(ch?.before) || 0;
+                      const after = parseFloat(ch?.after) || 0;
+                      const delta = after - before;
+                      const pct = before > 0 ? (delta/before*100) : 0;
+                      const up = delta >= 0;
+                      return (
+                        <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                          <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
+                          <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>{holding.tradeCcy} {before.toFixed(2)}</td>
+                          <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>{holding.tradeCcy} {after.toFixed(2)}</td>
+                          <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{delta.toFixed(2)}</td>
+                          <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{pct.toFixed(2)}%</td>
+                          <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        );
+      })()}
+
+      {/* Danger zone */}
+      <Card style={{padding:"16px 18px",borderColor:`${T.down}30`}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:8,color:T.down}}>Danger Zone</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
+          <div style={{fontSize:12,color:T.muted}}>Permanently remove this holding from your portfolio.</div>
+          <button onClick={onDelete}
+            style={{background:T.downBg,color:T.down,border:`1px solid ${T.down}40`,borderRadius:7,padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+            🗑 Delete Holding
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ── Brokerage account picker (opens before the Manage tab) ──
+function AccountPickerModal({ accounts, onPick, onClose }) {
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:T.bg,borderRadius:14,width:"min(440px, 100%)",maxHeight:"80vh",overflow:"auto",border:`1px solid ${T.border}`}}>
+        <div style={{padding:"18px 22px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700}}>Add Holding</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:2}}>Pick the brokerage account to add to</div>
+          </div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:14,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
+        </div>
+        <div style={{padding:"14px 14px",display:"flex",flexDirection:"column",gap:8}}>
+          {accounts.map(a => {
+            const bc = BROKER_COLORS[a.bank] || { from:"#374151", to:"#1F2937" };
+            return (
+              <button key={a.id} onClick={()=>onPick(a)}
+                style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:"12px 14px",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:10,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                onMouseLeave={e=>e.currentTarget.style.background=T.inputBg}>
+                <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>📈</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600}}>{a.bank}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:1}}>{a.accountName} · {a.accountNumber || `••${a.last4||""}`} · {a.currency}</div>
+                </div>
+                <span style={{fontSize:14,color:T.muted}}>→</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Buy Stock modal — full Add Stock form scoped to a brokerage account ──
+function BuyStockModal({ account, holdings, setHoldings, transactions, setTransactions, showToast, onClose }) {
+  const scopedSetHoldings = (updater) => {
+    if (typeof updater === "function") {
+      setHoldings(prev => {
+        const next = updater(prev.filter(h => h.accountId === account.id));
+        const others = prev.filter(h => h.accountId !== account.id);
+        return [...others, ...next.map(h => ({ ...h, accountId: h.accountId || account.id, broker: h.broker || account.bank }))];
+      });
+    } else setHoldings(updater);
+  };
+  const scopedSetTransactions = (updater) => {
+    if (typeof updater === "function") {
+      setTransactions(prev => {
+        const next = updater(prev.filter(t => t.accountId === account.id));
+        const others = prev.filter(t => t.accountId !== account.id);
+        return [...others, ...next.map(t => ({ ...t, accountId: t.accountId || account.id, broker: t.broker || account.bank }))];
+      });
+    } else setTransactions(updater);
+  };
+  const acctHoldings = holdings.filter(h => h.accountId === account.id);
+  const acctTxns = transactions.filter(t => t.accountId === account.id);
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:320,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:T.bg,borderRadius:16,width:"min(820px, 100%)",maxHeight:"90vh",display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,overflow:"hidden"}}>
+        <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <div style={{fontSize:16,fontWeight:800}}>Add Holding</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{padding:"22px",overflowY:"auto",flex:1,minHeight:0}}>
+          <ManageScreen
+            holdings={acctHoldings} setHoldings={scopedSetHoldings}
+            transactions={acctTxns} setTransactions={scopedSetTransactions}
+            showToast={(m,t)=>{showToast(m,t); onClose();}}
+            onlyTab="add" allowedTxTypes={["Buy","Transfer In"]} onCancel={onClose}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Inline holdings table for a single brokerage account ──
+function StocksHoldingsPanel({ holdings, account }) {
+  if (holdings.length === 0) {
+    return (
+      <Card style={{padding:"48px 24px",textAlign:"center"}}>
+        <div style={{fontSize:30,marginBottom:10}}>📭</div>
+        <div style={{fontSize:14,fontWeight:600}}>No holdings in this account</div>
+        <div style={{fontSize:12,color:T.muted,marginTop:4}}>Use the Manage tab to add transactions and build holdings</div>
+      </Card>
+    );
+  }
+  return (
+    <Card style={{padding:0,overflowX:"auto"}}>
+      <div style={{display:"grid",gridTemplateColumns:"2fr 0.8fr 1fr 1fr 1fr 1.1fr",padding:"11px 18px",background:T.sidebar,fontSize:11,fontWeight:600,color:T.muted,letterSpacing:0.3,textTransform:"uppercase"}}>
+        <div>Asset</div>
+        <div style={{textAlign:"right"}}>Qty</div>
+        <div style={{textAlign:"right"}}>Avg Cost</div>
+        <div style={{textAlign:"right"}}>Market Price</div>
+        <div style={{textAlign:"right"}}>P&L</div>
+        <div style={{textAlign:"right"}}>Value</div>
+      </div>
+      {holdings.map((h,i) => {
+        const value = (h.marketPrice||h.price) * h.qty;
+        const cost = h.cost * h.qty;
+        const pnl = value - cost;
+        const pnlPct = cost > 0 ? (pnl/cost*100) : 0;
+        return (
+          <div key={h.id} style={{display:"grid",gridTemplateColumns:"2fr 0.8fr 1fr 1fr 1fr 1.1fr",padding:"13px 18px",borderTop:`1px solid ${T.border}`,alignItems:"center"}}>
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              <div style={{width:30,height:30,borderRadius:7,background:T.inputBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:T.muted}}>{h.sym.slice(0,2)}</div>
+              <div>
+                <div style={{fontSize:13,fontWeight:600}}>{h.sym}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:1}}>{h.name} · {h.exchange||""}</div>
+              </div>
+            </div>
+            <div style={{textAlign:"right",fontSize:12}}>{h.qty}</div>
+            <div style={{textAlign:"right",fontSize:12,color:T.muted}}>{h.tradeCcy} {h.cost.toFixed(2)}</div>
+            <div style={{textAlign:"right",fontSize:12}}>{h.tradeCcy} {(h.marketPrice||h.price).toFixed(2)}</div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:12,fontWeight:600,color:pnl>=0?T.up:T.down}}>{pnl>=0?"+":""}{h.tradeCcy} {pnl.toFixed(0)}</div>
+              <div style={{fontSize:10,color:pnl>=0?T.up:T.down,marginTop:1}}>{pnl>=0?"+":""}{pnlPct.toFixed(1)}%</div>
+            </div>
+            <div style={{textAlign:"right",fontSize:13,fontWeight:700}}>{h.tradeCcy} {value.toFixed(0)}</div>
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
+// ── Fiat transfer between brokerage account ↔ cash account ──
+function StocksTransferModal({ brokerAccount, brokerOptions, brokerLabel, allowedCcys, cashAccounts, accounts, setAccounts, setTransactions, onClose, onComplete, logAudit }) {
+  const [direction, setDirection] = useState("in"); // in = cash→broker, out = broker→cash
+  const [cashAcctId, setCashAcctId] = useState(cashAccounts[0]?.id || "");
+  const [selectedBrokerId, setSelectedBrokerId] = useState(brokerAccount?.id);
+  const activeBroker = (brokerOptions && brokerOptions.find(b => b.id === selectedBrokerId)) || brokerAccount;
+  const brokerBals = acctBalances(activeBroker);
+  const [brokerCcy, setBrokerCcy] = useState(activeBroker.currency || brokerBals[0]?.ccy || "SGD");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(new Date().toISOString().slice(0,10));
+  const [notes, setNotes] = useState("");
+  const cashAcct = cashAccounts.find(a => a.id === cashAcctId);
+  const brokerCcyBal = brokerBals.find(b => b.ccy === brokerCcy)?.amount || 0;
+  const canSubmit = amount > 0 && cashAcct && (direction === "in" || parseFloat(amount) <= brokerCcyBal);
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    const amt = parseFloat(amount);
+    setAccounts(prev => prev.map(a => {
+      if (a.id === activeBroker.id) {
+        // Update the matching currency slot in balances[]
+        const cur = acctBalances(a);
+        const has = cur.find(b => b.ccy === brokerCcy);
+        const delta = direction === "in" ? amt : -amt;
+        const nextBals = has
+          ? cur.map(b => b.ccy === brokerCcy ? { ...b, amount: (b.amount||0) + delta } : b)
+          : [...cur, { ccy: brokerCcy, amount: delta }];
+        // Also update legacy primary balance if user transferred the primary currency
+        const nextLegacy = brokerCcy === a.currency ? { balance: (a.balance||0) + delta } : {};
+        return { ...a, balances: nextBals, ...nextLegacy };
+      }
+      if (a.id === cashAcctId) return { ...a, balance: (a.balance||0) + (direction==="in" ? -amt : amt) };
+      return a;
+    }));
+    const txId = "TR" + Date.now();
+    const tx = {
+      id: txId, txType:"Transfer", date,
+      direction, amount: amt,
+      brokerAccountId: activeBroker.id, cashAccountId: cashAcctId,
+      currency: brokerCcy, notes,
+      accountId: activeBroker.id, broker: activeBroker.bank,
+    };
+    setTransactions(prev => [tx, ...prev]);
+    if (logAudit) logAudit("account", activeBroker.id, "add-transaction", null, tx,
+      `${direction==="in"?"Deposit":"Withdrawal"} · ${brokerCcy} ${amt} ${direction==="in"?"from":"to"} ${cashAcct.bank} ${cashAcct.accountName}`);
+    onComplete();
+  };
+
+  const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+
+  return (
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:500}}/>
+      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:501,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:460,boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,fontSize:14,fontWeight:700}}>Transfer Fiat</div>
+        <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:14}}>
+          {/* Wallet/Broker picker — only shown when multiple options provided */}
+          {brokerOptions && brokerOptions.length > 1 && (
+            <div><Label>{brokerLabel || "Account"}</Label>
+              <select value={selectedBrokerId} onChange={e=>{setSelectedBrokerId(e.target.value); const nb = brokerOptions.find(b=>b.id===e.target.value); setBrokerCcy(nb?.currency || acctBalances(nb)[0]?.ccy || "SGD"); setAmount("");}} style={iStyle}>
+                {brokerOptions.map(b => (
+                  <option key={b.id} value={b.id}>{b.bank} {b.accountName} ({b.currency})</option>
+                ))}
+              </select></div>
+          )}
+          {/* Direction toggle */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {[
+              {id:"in",  label:`Cash → ${activeBroker.bank}`, sub:`Deposit to ${brokerLabel?brokerLabel.toLowerCase():"brokerage"}`},
+              {id:"out", label:`${activeBroker.bank} → Cash`, sub:"Withdraw to bank"},
+            ].map(d=>(
+              <button key={d.id} onClick={()=>setDirection(d.id)}
+                style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${direction===d.id?T.selected:T.border}`,
+                  background:direction===d.id?T.accentBg:T.inputBg,color:direction===d.id?T.accent:T.muted,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                <div style={{fontSize:12,fontWeight:700}}>{d.label}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:3}}>{d.sub}</div>
+              </button>
+            ))}
+          </div>
+
+          <div><Label required>Cash Account</Label>
+            <select value={cashAcctId} onChange={e=>setCashAcctId(e.target.value)} style={iStyle}>
+              {cashAccounts.length === 0 && <option>— No cash accounts —</option>}
+              {cashAccounts.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.bank} {a.accountName} ({a.accountType} ••{a.last4||""}) — {a.currency} {(a.balance||0).toLocaleString()}
+                </option>
+              ))}
+            </select></div>
+
+          {/* Brokerage/Wallet currency picker — show available balances */}
+          <div>
+            <Label>{brokerLabel ? `${brokerLabel} Currency` : "Brokerage Currency"}</Label>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {/* Existing currencies on the account */}
+              {brokerBals.map(b => (
+                <button key={b.ccy} type="button" onClick={()=>setBrokerCcy(b.ccy)}
+                  style={{background:brokerCcy===b.ccy?T.selected:T.inputBg,color:brokerCcy===b.ccy?T.selectedText:T.muted,border:`1px solid ${brokerCcy===b.ccy?T.selected:T.border}`,borderRadius:7,padding:"6px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:brokerCcy===b.ccy?700:500,display:"inline-flex",alignItems:"center",gap:6}}>
+                  <span>{b.ccy}</span>
+                  <span style={{fontSize:10,color:brokerCcy===b.ccy?T.selectedText:T.dim}}>{(b.amount||0).toLocaleString(undefined,{maximumFractionDigits:2})}</span>
+                </button>
+              ))}
+              {/* Allow depositing in a new major currency (only on inbound transfers) */}
+              {direction === "in" && (allowedCcys || MAJOR_CCYS).filter(c => !brokerBals.find(b => b.ccy === c)).map(c => (
+                <button key={c} type="button" onClick={()=>setBrokerCcy(c)}
+                  style={{background:brokerCcy===c?T.selected:"transparent",color:brokerCcy===c?T.selectedText:T.dim,border:`1px dashed ${brokerCcy===c?T.selected:T.border}`,borderRadius:7,padding:"6px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:brokerCcy===c?700:400}}>
+                  + {c}
+                </button>
+              ))}
+            </div>
+            {direction === "out" && (
+              <div style={{fontSize:11,color:T.muted,marginTop:6}}>Available {brokerCcy}: <strong>{brokerCcyBal.toLocaleString(undefined,{maximumFractionDigits:2})}</strong></div>
+            )}
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div><Label required>Amount ({brokerCcy})</Label>
+              <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" style={iStyle}/></div>
+            <div><Label>Date</Label>
+              <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={iStyle}/></div>
+          </div>
+
+          {cashAcct && cashAcct.currency !== brokerCcy && (
+            <div style={{background:T.warnBg,border:"1px solid #FDE68A",borderRadius:8,padding:"9px 12px",fontSize:11,color:T.warn}}>
+              ⚠️ Currency mismatch: brokerage leg {brokerCcy} vs cash account {cashAcct.currency}. Conversion is recorded at face amount only — no FX applied in mock.
+            </div>
+          )}
+
+          {direction === "out" && amount && parseFloat(amount) > brokerCcyBal && (
+            <div style={{background:T.downBg,border:`1px solid ${T.down}40`,borderRadius:8,padding:"9px 12px",fontSize:11,color:T.down}}>
+              ⚠️ Insufficient {brokerCcy} balance — available {brokerCcyBal.toLocaleString(undefined,{maximumFractionDigits:2})}.
+            </div>
+          )}
+
+          <div><Label>Notes</Label>
+            <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={2} placeholder="e.g. Funding for new purchases" style={{...iStyle,resize:"vertical"}}/></div>
+        </div>
+        <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10}}>
+          <button disabled={!canSubmit} onClick={handleSubmit}
+            style={{flex:1,background:canSubmit?T.selected:T.inputBg,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            Record Transfer
+          </button>
+          <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   WORKFLOWS — IFTTT-style triggers/conditions/actions (item 10)
+   ═══════════════════════════════════════════════════════════════ */
+const WORKFLOW_TRIGGER_KINDS = [
+  { id:"before_due",     label:"Before Due Date",      sublabel:"Fires N days before a payment due date", needsDays:true,   entityTypes:["creditcard","loan","insurance"] },
+  { id:"after_due",      label:"After Due Date",       sublabel:"Fires N days after a missed payment",    needsDays:true,   entityTypes:["creditcard","loan","insurance"] },
+  { id:"balance_below",  label:"Balance Below",        sublabel:"Fires when balance drops below a value", needsValue:true,  entityTypes:["account"] },
+  { id:"balance_above",  label:"Balance Above",        sublabel:"Fires when balance climbs above a value",needsValue:true,  entityTypes:["account"] },
+  { id:"transaction_over",label:"Large Transaction",    sublabel:"Fires for transactions above a value",   needsValue:true,  entityTypes:["creditcard","account"] },
+  { id:"price_change",   label:"Price Move",           sublabel:"Fires when a holding changes by N%",     needsValue:true,  entityTypes:["crypto","stock"] },
+  { id:"scheduled",      label:"Scheduled",            sublabel:"Fires on a recurring schedule",          needsCron:true,   entityTypes:["any"] },
+];
+
+const WORKFLOW_ACTION_KINDS = [
+  { id:"reminder",      label:"In-App Reminder",       sublabel:"Show a banner inside WealthOS" },
+  { id:"notification",  label:"Push Notification",     sublabel:"Send a push notification (mock)" },
+  { id:"email",         label:"Email",                 sublabel:"Send an email (mock)" },
+  { id:"task",          label:"Create Task",           sublabel:"Add a task to your to-do list" },
+  { id:"log",           label:"Log Only",              sublabel:"Just record that the trigger fired" },
+];
+
+const WORKFLOW_ENTITY_LABELS = {
+  creditcard:"Credit Cards", loan:"Loans", insurance:"Insurance Policies",
+  account:"Cash Accounts", crypto:"Crypto Holdings", stock:"Stock Holdings",
+  any:"Anything",
+};
+
+const WORKFLOWS_INIT = [
+  { id:"WF001", name:"Credit Card Due Reminder", description:"Notify 3 days before any credit card payment is due",
+    enabled:true, runCount:12, lastRunAt:"2026-05-20T08:00:00.000Z",
+    trigger:{ kind:"before_due", days:3, entityType:"creditcard" },
+    conditions:[{ field:"currentBalance", op:">", value:0 }],
+    actions:[{ kind:"reminder", message:"Credit card payment due in 3 days" }],
+    createdAt:"2025-12-01T10:00:00.000Z",
+  },
+  { id:"WF002", name:"Loan Repayment Heads-Up", description:"Alert 7 days before active loan repayment due dates",
+    enabled:true, runCount:6, lastRunAt:"2026-05-15T08:00:00.000Z",
+    trigger:{ kind:"before_due", days:7, entityType:"loan" },
+    conditions:[{ field:"status", op:"=", value:"Active" }],
+    actions:[{ kind:"reminder", message:"Loan payment due in a week" }, { kind:"email", to:"dilwyn@betawerkz.com.sg" }],
+    createdAt:"2026-01-10T10:00:00.000Z",
+  },
+  { id:"WF003", name:"Low Cash Alert", description:"Alert when any cash account drops below S$1,000",
+    enabled:false, runCount:0, lastRunAt:null,
+    trigger:{ kind:"balance_below", value:1000, entityType:"account" },
+    conditions:[{ field:"accountType", op:"!=", value:"Brokerage" }],
+    actions:[{ kind:"notification", message:"Cash balance is low" }],
+    createdAt:"2026-04-12T10:00:00.000Z",
+  },
+];
+
+const EMPTY_WORKFLOW = {
+  id:"", name:"", description:"", enabled:true, runCount:0, lastRunAt:null,
+  trigger:{ kind:"before_due", days:3, entityType:"creditcard" },
+  conditions:[],
+  actions:[{ kind:"reminder", message:"" }],
+};
+
+function workflowSummary(wf) {
+  const trig = WORKFLOW_TRIGGER_KINDS.find(t => t.id === wf.trigger.kind);
+  const target = WORKFLOW_ENTITY_LABELS[wf.trigger.entityType] || wf.trigger.entityType || "—";
+  const part = trig?.needsDays ? `${wf.trigger.days||0} days` : trig?.needsValue ? `${wf.trigger.value||0}` : "";
+  return { triggerLabel: `${trig?.label||wf.trigger.kind} ${part}`.trim(), targetLabel: target };
+}
+
+function WorkflowsScreen({ workflows, setWorkflows, showToast, auditLog, logAudit }) {
+  const isMobile = useIsMobile();
+  const [showModal, setShowModal] = useState(false);
+  const [editWF, setEditWF] = useState(null);
+  const [filterStatus, setFilterStatus] = useState("All");
+  const [searchQ, setSearchQ] = useState("");
+
+  const activeCount = workflows.filter(w => w.enabled).length;
+  const totalRuns = workflows.reduce((s,w) => s + (w.runCount||0), 0);
+
+  const filtered = workflows.filter(w => {
+    if (filterStatus === "Active" && !w.enabled) return false;
+    if (filterStatus === "Paused" && w.enabled) return false;
+    if (searchQ && !(w.name||"").toLowerCase().includes(searchQ.toLowerCase()) && !(w.description||"").toLowerCase().includes(searchQ.toLowerCase())) return false;
+    return true;
+  });
+
+  const handleToggle = (id) => {
+    const prev = workflows.find(w => w.id === id);
+    const updated = { ...prev, enabled: !prev.enabled };
+    setWorkflows(prevWs => prevWs.map(w => w.id === id ? updated : w));
+    if (logAudit) logAudit("workflow", id, "update", prev, updated, prev.name);
+    showToast(updated.enabled ? "Workflow activated" : "Workflow paused", "success");
+  };
+
+  const handleSave = (f) => {
+    if (f.id) {
+      const prev = workflows.find(w => w.id === f.id);
+      setWorkflows(prevWs => prevWs.map(w => w.id===f.id ? f : w));
+      if (logAudit) logAudit("workflow", f.id, "update", prev, f, f.name);
+      showToast("Workflow updated", "success");
+    } else {
+      const id = "WF"+Date.now();
+      const nw = { ...f, id, createdAt:new Date().toISOString() };
+      setWorkflows(prev => [...prev, nw]);
+      if (logAudit) logAudit("workflow", id, "create", null, nw, nw.name);
+      showToast("Workflow created", "success");
+    }
+    setShowModal(false);
+    setEditWF(null);
+  };
+
+  const handleDelete = (id) => {
+    const wf = workflows.find(w => w.id === id);
+    setWorkflows(prevWs => prevWs.filter(w => w.id !== id));
+    if (logAudit) logAudit("workflow", id, "delete", wf, null, wf?.name||id);
+    showToast("Workflow deleted", "success");
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>All Automations</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>
+            {workflows.length} total · {activeCount} active · {totalRuns} run{totalRuns!==1?"s":""}
+          </div>
+        </div>
+        <button onClick={()=>{setEditWF({...EMPTY_WORKFLOW,id:""});setShowModal(true);}}
+          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+          + New Workflow
+        </button>
+      </div>
+
+      <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:12,marginBottom:18}}>
+        {[
+          {label:"Active Workflows",value:String(activeCount),sub:`${workflows.length} total`,icon:"⚡",color:T.up},
+          {label:"Total Runs",value:String(totalRuns),sub:"Across all workflows",icon:"🔁",color:T.text},
+          {label:"Last Triggered",value:(() => {
+            const last = workflows.filter(w => w.lastRunAt).sort((a,b)=>b.lastRunAt.localeCompare(a.lastRunAt))[0];
+            if (!last) return "—";
+            const d = new Date(last.lastRunAt);
+            return d.toLocaleDateString("en-SG",{day:"numeric",month:"short"});
+          })(),sub:"Most recent trigger",icon:"🕒",color:T.accent},
+        ].map((c,i)=>(
+          <Card key={i} style={{padding:"18px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+              <span style={{fontSize:20}}>{c.icon}</span>
+            </div>
+            <div style={{fontSize:22,fontWeight:700,marginTop:8,color:c.color}}>{c.value}</div>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{position:"relative",flex:"1 1 200px"}}>
+          <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search workflows…"
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+        </div>
+        <div style={{display:"flex",gap:5}}>
+          {["All","Active","Paused"].map(s=>(
+            <button key={s} onClick={()=>setFilterStatus(s)}
+              style={{background:filterStatus===s?T.selected:T.inputBg,color:filterStatus===s?T.selectedText:T.muted,border:`1px solid ${filterStatus===s?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterStatus===s?600:400}}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filtered.length} of {workflows.length}</span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <Card style={{padding:"48px 24px",textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>⚡</div>
+          <div style={{fontSize:14,fontWeight:600}}>No workflows yet</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:4}}>Create your first automation to get reminders, alerts and actions</div>
+        </Card>
+      ) : (
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill, minmax(380px, 1fr))",gap:14}}>
+          {filtered.map(wf => {
+            const sum = workflowSummary(wf);
+            return (
+              <Card key={wf.id} style={{padding:0,overflow:"hidden",opacity:wf.enabled?1:0.65}}>
+                <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`,background:wf.enabled?T.accentBg:T.sidebar}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+                    <div style={{minWidth:0,flex:1}}>
+                      <div style={{fontSize:14,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{wf.name}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:3,lineHeight:1.5}}>{wf.description}</div>
+                    </div>
+                    <div onClick={()=>handleToggle(wf.id)}
+                      style={{width:38,height:22,borderRadius:11,background:wf.enabled?T.selected:T.border,cursor:"pointer",position:"relative",transition:"background 0.2s",flexShrink:0}}>
+                      <div style={{position:"absolute",top:3,left:wf.enabled?19:3,width:16,height:16,borderRadius:"50%",background:T.bg,transition:"left 0.2s"}}/>
+                    </div>
+                  </div>
+                </div>
+                <div style={{padding:"12px 18px",display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                    <span style={{fontSize:14,flexShrink:0,marginTop:1}}>📌</span>
+                    <div style={{minWidth:0,flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:T.muted,letterSpacing:0.3,textTransform:"uppercase"}}>When</div>
+                      <div style={{fontSize:12,marginTop:2}}>{sum.triggerLabel} <span style={{color:T.muted}}>on {sum.targetLabel}</span></div>
+                    </div>
+                  </div>
+                  {wf.conditions.length > 0 && (
+                    <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                      <span style={{fontSize:14,flexShrink:0,marginTop:1}}>🔍</span>
+                      <div style={{minWidth:0,flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:T.muted,letterSpacing:0.3,textTransform:"uppercase"}}>If</div>
+                        <div style={{fontSize:12,marginTop:2}}>{wf.conditions.map(c=>`${c.field} ${c.op} ${c.value}`).join(" AND ")}</div>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                    <span style={{fontSize:14,flexShrink:0,marginTop:1}}>▶️</span>
+                    <div style={{minWidth:0,flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:T.muted,letterSpacing:0.3,textTransform:"uppercase"}}>Then</div>
+                      <div style={{fontSize:12,marginTop:2}}>{wf.actions.map(a => {
+                        const ak = WORKFLOW_ACTION_KINDS.find(x => x.id === a.kind);
+                        return ak?.label || a.kind;
+                      }).join(", ")}</div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{padding:"9px 18px",fontSize:11,color:T.muted,background:T.sidebar,borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span>Run {wf.runCount||0}× · {wf.lastRunAt ? `last ${new Date(wf.lastRunAt).toLocaleDateString("en-SG",{day:"numeric",month:"short"})}` : "never run"}</span>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>{setEditWF(wf);setShowModal(true);}}
+                      style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
+                    <button onClick={()=>handleDelete(wf.id)}
+                      style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",color:T.down}}>Delete</button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {showModal && editWF && (
+        <WorkflowModal workflow={editWF} onSave={handleSave} onClose={()=>{setShowModal(false);setEditWF(null);}}/>
+      )}
+    </div>
+  );
+}
+
+function WorkflowModal({ workflow, onSave, onClose }) {
+  const [f, setFState] = useState({ ...workflow, conditions: workflow.conditions || [], actions: workflow.actions || [{kind:"reminder",message:""}] });
+  const setF = (k,v) => setFState(prev => ({ ...prev, [k]: v }));
+  const setTrig = (k,v) => setFState(prev => ({ ...prev, trigger: { ...prev.trigger, [k]: v } }));
+  const updateCond = (i,patch) => setFState(prev => ({ ...prev, conditions: prev.conditions.map((c,idx) => idx===i ? {...c, ...patch} : c) }));
+  const updateAct = (i,patch)  => setFState(prev => ({ ...prev, actions: prev.actions.map((a,idx) => idx===i ? {...a, ...patch} : a) }));
+  const trigDef = WORKFLOW_TRIGGER_KINDS.find(t => t.id === f.trigger.kind);
+  const canSubmit = (f.name||"").trim().length > 0 && f.actions.length > 0;
+
+  const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+
+  return (
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:400}}/>
+      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:580,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{padding:"16px 22px",borderBottom:`1px solid ${T.border}`,fontSize:15,fontWeight:700,position:"sticky",top:0,background:T.bg,zIndex:1}}>
+          {workflow.id ? "Edit Workflow" : "New Workflow"}
+        </div>
+        <div style={{padding:"20px 22px",display:"flex",flexDirection:"column",gap:16}}>
+
+          {/* Name + description */}
+          <div><Label required>Workflow Name</Label>
+            <input value={f.name} onChange={e=>setF("name",e.target.value)} placeholder="e.g. Credit card due reminder" style={iStyle}/></div>
+          <div><Label>Description</Label>
+            <input value={f.description} onChange={e=>setF("description",e.target.value)} placeholder="What does this workflow do?" style={iStyle}/></div>
+
+          {/* When (trigger) */}
+          <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"14px 16px",background:T.accentBg}}>
+            <div style={{fontSize:10,fontWeight:700,color:T.accent,letterSpacing:0.5,marginBottom:10}}>📌 WHEN — TRIGGER</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><Label>Trigger Type</Label>
+                <select value={f.trigger.kind} onChange={e=>{
+                  const next = e.target.value;
+                  const td = WORKFLOW_TRIGGER_KINDS.find(t => t.id === next);
+                  // Reset entityType to first valid one for new trigger
+                  setFState(prev => ({...prev, trigger: { ...prev.trigger, kind: next, entityType: td?.entityTypes?.[0] || "any" }}));
+                }} style={iStyle}>
+                  {WORKFLOW_TRIGGER_KINDS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select></div>
+              <div><Label>Applies To</Label>
+                <select value={f.trigger.entityType} onChange={e=>setTrig("entityType",e.target.value)} style={iStyle}>
+                  {(trigDef?.entityTypes || ["any"]).map(et => <option key={et} value={et}>{WORKFLOW_ENTITY_LABELS[et] || et}</option>)}
+                </select></div>
+            </div>
+            {trigDef?.sublabel && <div style={{fontSize:11,color:T.muted,marginTop:8}}>{trigDef.sublabel}</div>}
+            <div style={{marginTop:12}}>
+              {trigDef?.needsDays && (
+                <div><Label>Days Before / After</Label>
+                  <input type="number" value={f.trigger.days||""} onChange={e=>setTrig("days",parseInt(e.target.value)||0)} placeholder="3" style={iStyle}/></div>
+              )}
+              {trigDef?.needsValue && (
+                <div><Label>Threshold Value</Label>
+                  <input type="number" value={f.trigger.value||""} onChange={e=>setTrig("value",parseFloat(e.target.value)||0)} placeholder="1000" style={iStyle}/></div>
+              )}
+              {trigDef?.needsCron && (
+                <div><Label>Schedule (CRON-like)</Label>
+                  <input value={f.trigger.cron||""} onChange={e=>setTrig("cron",e.target.value)} placeholder="e.g. 0 9 * * 1 (every Monday 09:00)" style={iStyle}/></div>
+              )}
+            </div>
+          </div>
+
+          {/* If (conditions) */}
+          <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"14px 16px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:10,fontWeight:700,color:T.muted,letterSpacing:0.5}}>🔍 IF — CONDITIONS (OPTIONAL)</div>
+              <button onClick={()=>setF("conditions",[...f.conditions,{field:"",op:"=",value:""}])}
+                style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",color:T.text}}>+ Add</button>
+            </div>
+            {f.conditions.length === 0 ? (
+              <div style={{fontSize:11,color:T.dim}}>No conditions — trigger fires for all matching entities</div>
+            ) : (
+              f.conditions.map((c,i) => (
+                <div key={i} style={{display:"grid",gridTemplateColumns:"1.4fr 0.7fr 1.4fr 30px",gap:8,marginBottom:8,alignItems:"center"}}>
+                  <input value={c.field} onChange={e=>updateCond(i,{field:e.target.value})} placeholder="field (e.g. status)" style={{...iStyle,padding:"7px 10px"}}/>
+                  <select value={c.op} onChange={e=>updateCond(i,{op:e.target.value})} style={{...iStyle,padding:"7px 10px"}}>
+                    <option>=</option><option>!=</option><option>{"<"}</option><option>{"<="}</option><option>{">"}</option><option>{">="}</option><option>contains</option>
+                  </select>
+                  <input value={c.value} onChange={e=>updateCond(i,{value:e.target.value})} placeholder="value" style={{...iStyle,padding:"7px 10px"}}/>
+                  <button onClick={()=>setF("conditions",f.conditions.filter((_,idx)=>idx!==i))}
+                    style={{background:"transparent",border:"none",color:T.down,cursor:"pointer",fontSize:14,fontFamily:"inherit"}}>✕</button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Then (actions) */}
+          <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"14px 16px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:10,fontWeight:700,color:T.up,letterSpacing:0.5}}>▶️ THEN — ACTIONS</div>
+              <button onClick={()=>setF("actions",[...f.actions,{kind:"reminder",message:""}])}
+                style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",color:T.text}}>+ Add</button>
+            </div>
+            {f.actions.map((a,i) => {
+              const ak = WORKFLOW_ACTION_KINDS.find(x => x.id === a.kind);
+              return (
+                <div key={i} style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10,padding:"10px 12px",background:T.sidebar,borderRadius:8}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 30px",gap:8,alignItems:"center"}}>
+                    <select value={a.kind} onChange={e=>updateAct(i,{kind:e.target.value})} style={{...iStyle,padding:"7px 10px"}}>
+                      {WORKFLOW_ACTION_KINDS.map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
+                    </select>
+                    {f.actions.length > 1 && (
+                      <button onClick={()=>setF("actions",f.actions.filter((_,idx)=>idx!==i))}
+                        style={{background:"transparent",border:"none",color:T.down,cursor:"pointer",fontSize:14,fontFamily:"inherit"}}>✕</button>
+                    )}
+                  </div>
+                  {(a.kind === "reminder" || a.kind === "notification") && (
+                    <input value={a.message||""} onChange={e=>updateAct(i,{message:e.target.value})} placeholder="Message to show" style={{...iStyle,padding:"7px 10px"}}/>
+                  )}
+                  {a.kind === "email" && (
+                    <input value={a.to||""} onChange={e=>updateAct(i,{to:e.target.value})} placeholder="Recipient email" style={{...iStyle,padding:"7px 10px"}}/>
+                  )}
+                  {ak?.sublabel && <div style={{fontSize:10,color:T.muted}}>{ak.sublabel}</div>}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Enable toggle */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:T.sidebar,borderRadius:8}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600}}>Workflow Status</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:2}}>{f.enabled?"Active — will trigger on matching events":"Paused — saved but won't fire"}</div>
+            </div>
+            <div onClick={()=>setF("enabled",!f.enabled)}
+              style={{width:40,height:22,borderRadius:11,background:f.enabled?T.selected:T.border,cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
+              <div style={{position:"absolute",top:3,left:f.enabled?21:3,width:16,height:16,borderRadius:"50%",background:T.bg,transition:"left 0.2s"}}/>
+            </div>
+          </div>
+        </div>
+        <div style={{padding:"14px 22px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+          <button disabled={!canSubmit} onClick={()=>onSave(f)}
+            style={{flex:1,background:canSubmit?T.selected:T.inputBg,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            {workflow.id ? "Save Changes" : "Create Workflow"}
+          </button>
+          <button onClick={onClose}
+            style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"11px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+        </div>
+      </div>
+    </>
+  );
+}
 
 function HoldingsScreen() {
   const isMobile = useIsMobile();
@@ -1321,9 +3332,10 @@ function AIScreen() {
 /* ══════════════════════════════════════════════════════════════
    MANAGE STOCKS SCREEN — ADD / REMOVE / HISTORY / API TABS
 ══════════════════════════════════════════════════════════════ */
-function ManageScreen({ holdings, setHoldings, transactions, setTransactions, showToast }) {
+function ManageScreen({ holdings, setHoldings, transactions, setTransactions, showToast, onlyTab, onlyTabs, defaultAccount, brokerAccounts, allowedTxTypes, onCancel }) {
   const isMobile = useIsMobile();
-  const [tab, setTab] = useState("add");
+  const [tab, setTab] = useState(onlyTab || (onlyTabs && onlyTabs[0]) || "add");
+  const txTypes = allowedTxTypes || TX_TYPES;
   const [divWithhold, setDivWithhold] = useState(false);
   const [histSearch, setHistSearch] = useState("");
   const [histTypeFilter, setHistTypeFilter] = useState("All");
@@ -1343,9 +3355,9 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
       const totalQty = existing.qty + parseFloat(form.qty);
       setHoldings(prev => prev.map(h => h.sym === form.sym ? { ...h, qty: totalQty, cost: totalCost / totalQty } : h));
     } else if (form.txType === "Buy" || form.txType === "Transfer In") {
-      setHoldings(prev => [...prev, { id: Date.now(), sym: form.sym, name: form.name || form.sym, qty: parseFloat(form.qty), price: parseFloat(form.price), cost: parseFloat(form.price), changeP: 0, value: parseFloat(form.qty) * parseFloat(form.price), weight: 0, sector: "Other", broker: form.broker || "Manual", addedDate: form.date }]);
+      setHoldings(prev => [...prev, { id: Date.now(), sym: form.sym, name: form.name || form.sym, qty: parseFloat(form.qty), price: parseFloat(form.price), cost: parseFloat(form.price), changeP: 0, value: parseFloat(form.qty) * parseFloat(form.price), weight: 0, sector: "Other", broker: defaultAccount?.bank || "Manual", addedDate: form.date }]);
     }
-    setTransactions(prev => [...prev, { ...form, id: Date.now() }]);
+    setTransactions(prev => [...prev, { ...form, broker: defaultAccount?.bank || "Manual", id: Date.now() }]);
     showToast(`${form.txType} recorded — ${form.qty} shares of ${form.sym}`, "success");
     setForm(EMPTY);
     setTab("history");
@@ -1381,34 +3393,40 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
 
   const filtered = holdings.filter(h => h.sym.toLowerCase().includes(search.toLowerCase()) || h.name.toLowerCase().includes(search.toLowerCase()));
 
-  const TABS = [
+  const ALL_TABS = [
     { id: "add",      label: "Add Stock",         icon: "+" },
     { id: "remove",   label: `Holdings (${holdings.length})`,    icon: "⊟" },
     { id: "history",  label: `Transactions (${transactions.length})`, icon: "☰" },
     { id: "postings", label: "Postings",           icon: "" },
     { id: "api",      label: "Integrations",       icon: "🔗", badge: "Soon" },
   ];
+  const TABS = onlyTabs ? ALL_TABS.filter(t => onlyTabs.includes(t.id)) : ALL_TABS;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {/* Inner tab bar */}
-      <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}`, marginBottom: 22, marginLeft: -32, marginRight: -32, paddingLeft: 32, overflowX: "auto", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ background: "transparent", color: tab === t.id ? T.text : T.muted, border: "none", borderBottom: `2px solid ${tab === t.id ? T.selected : "transparent"}`, padding: "10px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: tab === t.id ? 600 : 400, display: "flex", alignItems: "center", gap: 5, marginBottom: -1, whiteSpace: "nowrap", flexShrink: 0 }}>
-            <span style={{ fontSize: 13 }}>{t.icon}</span>{t.label}
-            {t.badge && <Badge bg={T.warnBg} color={T.warn}>{t.badge}</Badge>}
-          </button>
-        ))}
-      </div>
+      {/* Inner tab bar — hidden when onlyTab is set (single tab); shown when onlyTabs is an array */}
+      {!onlyTab && (
+        <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}`, marginBottom: 22, marginLeft: -32, marginRight: -32, paddingLeft: 32, overflowX: "auto", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{ background: "transparent", color: tab === t.id ? T.text : T.muted, border: "none", borderBottom: `2px solid ${tab === t.id ? T.selected : "transparent"}`, padding: "10px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: tab === t.id ? 600 : 400, display: "flex", alignItems: "center", gap: 5, marginBottom: -1, whiteSpace: "nowrap", flexShrink: 0 }}>
+              <span style={{ fontSize: 13 }}>{t.icon}</span>{t.label}
+              {t.badge && <Badge bg={T.warnBg} color={T.warn}>{t.badge}</Badge>}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── ADD TAB ── */}
-      {tab === "add" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Card style={{ padding: "20px 22px" }}>
+      {tab === "add" && (() => {
+        const inModal = !!onCancel;
+        const Wrap = inModal ? ({children, style}) => <div style={style}>{children}</div> : Card;
+        return (
+        <div style={{ display: "flex", flexDirection: "column", gap: inModal ? 18 : 16 }}>
+          <Wrap style={inModal ? { padding: 0 } : { padding: "20px 22px" }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Transaction Type</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {TX_TYPES.map(t => {
-                const disabled = ["Transfer In", "Transfer Out", "Stock Split"].includes(t);
+              {txTypes.map(t => {
+                const disabled = !allowedTxTypes && ["Transfer In", "Transfer Out", "Stock Split"].includes(t);
                 const active = form.txType === t;
                 return (
                   <div key={t} style={{ position: "relative" }}>
@@ -1432,9 +3450,9 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
                 );
               })}
             </div>
-          </Card>
+          </Wrap>
 
-          <Card style={{ padding: "22px" }}>
+          <Wrap style={inModal ? { padding: 0 } : { padding: "22px" }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 18 }}>Stock Details</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               {/* Ticker — restricted to holdings for Sell & Dividend */}
@@ -1481,24 +3499,22 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
               </div>
               <div>
                 <Label required>{form.txType === "Dividend" ? "Earnings Per Share" : "Number of Shares"}</Label>
-                <Input type="number" placeholder="0.00" value={form.qty} onChange={e => setF("qty", e.target.value)} />
+                <Input type="number" placeholder={form.txType === "Dividend" ? "0.00" : "0"} step={form.txType === "Dividend" ? undefined : "1"} value={form.qty} onChange={e => setF("qty", e.target.value)} />
               </div>
               {form.txType !== "Dividend" && (
-                <>
-                  <div>
-                    <Label required>Price per Share</Label>
-                    <Input type="number" placeholder="0.00" prefix="$" value={form.price} onChange={e => setF("price", e.target.value)} />
-                  </div>
+                <div>
+                  <Label required>Price per Share</Label>
+                  <Input type="number" placeholder="0.00" prefix="$" value={form.price} onChange={e => setF("price", e.target.value)} />
+                </div>
+              )}
+              {form.txType !== "Dividend" && (
+                <MoreOptions count={1}>
                   <div>
                     <Label>Fees & Commission</Label>
                     <Input type="number" placeholder="0.00" prefix="$" value={form.fees} onChange={e => setF("fees", e.target.value)} />
                   </div>
-                </>
+                </MoreOptions>
               )}
-              <div>
-                <Label>Broker / Platform</Label>
-                <Sel value={form.broker} onChange={e => setF("broker", e.target.value)} options={BROKERS} placeholder="Select broker" />
-              </div>
             </div>
 
             {/* ── US Withholding Tax checkbox (Dividend only) ── */}
@@ -1561,16 +3577,22 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
               );
             })()}
 
-            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+              {!onCancel && (
+                <button onClick={() => { setForm(EMPTY); setDivWithhold(false); }} style={{ background: "transparent", color: T.muted, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 20px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>
+              )}
+              {onCancel && (
+                <button onClick={onCancel} style={{ background: "transparent", color: T.muted, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 20px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              )}
               <button onClick={handleAdd} disabled={!form.sym || !form.qty || !form.date || (form.txType !== "Dividend" && !form.price)}
-                style={{ flex: 1, background: (!form.sym || !form.qty || !form.date || (form.txType !== "Dividend" && !form.price)) ? T.inputBg : T.selected, color: (!form.sym || !form.qty || !form.date || (form.txType !== "Dividend" && !form.price)) ? T.dim : T.selectedText, border: "none", borderRadius: 8, padding: "11px", fontSize: 13, cursor: (!form.sym || !form.qty || !form.date || (form.txType !== "Dividend" && !form.price)) ? "not-allowed" : "pointer", fontFamily: "inherit", fontWeight: 600 }}>
-                + Add Transaction
+                style={{ background: T.selected, color: T.selectedText, border: "none", borderRadius: 8, padding: "9px 22px", fontSize: 13, cursor: (!form.sym || !form.qty || !form.date || (form.txType !== "Dividend" && !form.price)) ? "not-allowed" : "pointer", fontFamily: "inherit", fontWeight: 700, opacity:(!form.sym || !form.qty || !form.date || (form.txType !== "Dividend" && !form.price))?0.4:1 }}>
+                Add Holding
               </button>
-              <button onClick={() => { setForm(EMPTY); setDivWithhold(false); }} style={{ background: "transparent", color: T.muted, border: `1px solid ${T.border}`, borderRadius: 8, padding: "11px 20px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>
             </div>
-          </Card>
+          </Wrap>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── MANAGE / REMOVE TAB ── */}
       {tab === "remove" && (
@@ -2488,13 +4510,14 @@ function BondTxModalInner({ bond, onSave, onClose }) {
     amount: 0, method: "CDP Credit", ref: "", notes: "",
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const isOut = ["Sale","Redemption"].includes(f.type);
-  const isIn = ["Coupon","Distribution","Interest"].includes(f.type);
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{bond.name} · {bond.issuer}</div>
         <div style={{marginBottom:14}}>
           <Label required>Transaction Type</Label>
@@ -2521,10 +4544,15 @@ function BondTxModalInner({ bond, onSave, onClose }) {
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Semi-annual coupon, maturity redemption…"
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
         </div>
-        <div style={{background:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{color:isOut?T.down:T.up,fontWeight:600}}>{f.type==="Purchase"?"📥 Capital deployed":isOut?"📤 Capital returned":"📥 Income received"}</span>
-          <span style={{fontWeight:700,color:isOut?T.down:T.up}}>{isOut||f.type==="Purchase"?"-":"+"} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
-        </div>
+        <FlowBanner type={f.type} amount={f.amount} label={
+          f.type==="Purchase" ? "📤 Capital deployed to bond"
+          : f.type==="Sale" ? "📥 Sale proceeds"
+          : f.type==="Redemption" ? "📥 Principal returned at maturity"
+          : f.type==="Coupon" ? "🎁 Coupon income"
+          : f.type==="Distribution" ? "🎁 Distribution income"
+          : f.type==="Interest" ? "💰 Interest income"
+          : "💰 Transaction"
+        }/>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
           <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
@@ -2544,44 +4572,45 @@ function BondModal({ bond, onSave, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:540,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Holding" : "Add Bond / T-Bill"}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:800}}>{f.id ? "Edit Holding" : "Add Bond / T-Bill"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
           <div><Label required>Product Type</Label><Sel value={f.productType} onChange={e=>set("productType",e.target.value)} options={BOND_TYPES}/></div>
           <div><Label required>Issuer</Label><Input value={f.issuer} onChange={e=>set("issuer",e.target.value)} placeholder="e.g. MAS, DBS, Azalea"/></div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label required>Name</Label><Input value={f.name} onChange={e=>set("name",e.target.value)} placeholder="e.g. SSB GX24010Z, DBS 12M FD"/></div>
-          <div><Label>Issue Code / Ticker</Label><Input value={f.issueCode} onChange={e=>set("issueCode",e.target.value)}/></div>
+        <div style={{marginBottom:14}}>
+          <Label required>Name</Label><Input value={f.name} onChange={e=>set("name",e.target.value)} placeholder="e.g. SSB GX24010Z, DBS 12M FD"/>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label required>Face Value</Label><Input type="number" prefix="S$" value={f.faceValue} onChange={e=>set("faceValue",+e.target.value)}/></div>
-          <div><Label>Purchase Price</Label><Input type="number" prefix="S$" value={f.purchasePrice} onChange={e=>set("purchasePrice",+e.target.value)}/></div>
-          <div><Label>Current Value</Label><Input type="number" prefix="S$" value={f.currentValue} onChange={e=>set("currentValue",+e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Coupon / Interest Rate (%)</Label><Input type="number" value={f.couponRate} onChange={e=>set("couponRate",+e.target.value)}/></div>
-          <div><Label>Yield to Maturity (%)</Label><Input type="number" value={f.yieldToMaturity} onChange={e=>set("yieldToMaturity",+e.target.value)}/></div>
-          <div><Label>Credit Rating</Label><Input value={f.creditRating} onChange={e=>set("creditRating",e.target.value)} placeholder="e.g. AAA, A+"/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Issue Date</Label><Input type="date" value={f.issueDate} onChange={e=>set("issueDate",e.target.value)}/></div>
-          <div><Label>Maturity Date</Label><Input type="date" value={f.maturityDate} onChange={e=>set("maturityDate",e.target.value)}/></div>
-          <div><Label>Tenure</Label><Input value={f.tenure} onChange={e=>set("tenure",e.target.value)} placeholder="e.g. 6M, 1Y, 10Y"/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Coupon Frequency</Label><Sel value={f.couponFrequency} onChange={e=>set("couponFrequency",e.target.value)} options={["Semi-Annual","Annual","Quarterly","At Maturity","Zero-Coupon"]}/></div>
-          <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD"]}/></div>
-          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={BOND_STATUS_OPTS}/></div>
+        <div style={{marginBottom:14}}>
+          <Label required>Face Value</Label><Input type="number" prefix="S$" value={f.faceValue} onChange={e=>set("faceValue",+e.target.value)}/>
         </div>
         <div style={{marginBottom:20}}>
-          <Label>Notes</Label>
-          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes…"
-            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+          <MoreOptions count={14} style={{gridColumn:"unset"}}>
+            <div><Label>Issue Code / Ticker</Label><Input value={f.issueCode} onChange={e=>set("issueCode",e.target.value)}/></div>
+            <div><Label>Purchase Price</Label><Input type="number" prefix="S$" value={f.purchasePrice} onChange={e=>set("purchasePrice",+e.target.value)}/></div>
+            <div><Label>Current Value</Label><Input type="number" prefix="S$" value={f.currentValue} onChange={e=>set("currentValue",+e.target.value)}/></div>
+            <div><Label>Coupon / Interest Rate (%)</Label><Input type="number" value={f.couponRate} onChange={e=>set("couponRate",+e.target.value)}/></div>
+            <div><Label>Yield to Maturity (%)</Label><Input type="number" value={f.yieldToMaturity} onChange={e=>set("yieldToMaturity",+e.target.value)}/></div>
+            <div><Label>Credit Rating</Label><Input value={f.creditRating} onChange={e=>set("creditRating",e.target.value)} placeholder="e.g. AAA, A+"/></div>
+            <div><Label>Issue Date</Label><Input type="date" value={f.issueDate} onChange={e=>set("issueDate",e.target.value)}/></div>
+            <div><Label>Maturity Date</Label><Input type="date" value={f.maturityDate} onChange={e=>set("maturityDate",e.target.value)}/></div>
+            <div><Label>Tenure</Label><Input value={f.tenure} onChange={e=>set("tenure",e.target.value)} placeholder="e.g. 6M, 1Y, 10Y"/></div>
+            <div><Label>Coupon Frequency</Label><Sel value={f.couponFrequency} onChange={e=>set("couponFrequency",e.target.value)} options={["Semi-Annual","Annual","Quarterly","At Maturity","Zero-Coupon"]}/></div>
+            <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD"]}/></div>
+            <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={BOND_STATUS_OPTS}/></div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <Label>Notes</Label>
+              <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes…"
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+            </div>
+          </MoreOptions>
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.productType||!f.name||!f.issuer}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.productType||!f.name||!f.issuer)?0.4:1}}>
+          <button onClick={()=>onSave(f)} disabled={!f.productType||!f.name||!f.issuer||!f.faceValue}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.productType||!f.name||!f.issuer||!f.faceValue)?0.4:1}}>
             {f.id ? "Save Changes" : "Add Holding"}
           </button>
         </div>
@@ -2590,8 +4619,219 @@ function BondModal({ bond, onSave, onClose }) {
   );
 }
 
+// ── Bond Action Panel — pills + Update Price + price history ──
+function BondActionPanel({ bond, setBonds, auditLog, logAudit, showToast }) {
+  const TX_TYPES_BY_PRODUCT = {
+    "T-Bill": ["Purchase","Redemption"],
+    "Bond ETF": ["Purchase","Sale","Distribution"],
+    "Fixed Deposit": ["Purchase","Redemption","Interest"],
+  };
+  const baseTypes = TX_TYPES_BY_PRODUCT[bond.productType] || ["Purchase","Sale","Coupon","Redemption"];
+  const ALL_TYPES = [...baseTypes, "Update Price"];
+  const ICONS = {Purchase:"📥",Sale:"📤",Coupon:"🎁",Distribution:"🎁",Interest:"🏦",Redemption:"📤","Update Price":"💲"};
+  const colorFor = (t) => t==="Purchase"?T.up
+    : t==="Sale"||t==="Redemption"?T.down
+    : t==="Coupon"||t==="Distribution"||t==="Interest"?T.warn
+    : t==="Update Price"?T.text : T.accent;
+
+  const [txType, setTxType] = useState(baseTypes[0]);
+  const blankForm = () => ({
+    date: new Date().toISOString().slice(0,10),
+    amount: "", method: "CDP Credit", ref: "", notes: "",
+    pricePerUnit: String(bond.currentPricePerUnit || ""),
+  });
+  const [form, setForm] = useState(blankForm());
+  const isUpdatePrice = txType === "Update Price";
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const switchType = (t) => {
+    setTxType(t);
+    if (t === "Update Price") {
+      setForm(f => ({ ...f, pricePerUnit: String(bond.currentPricePerUnit || "") }));
+    } else {
+      setForm(blankForm());
+    }
+  };
+
+  const canSubmit = isUpdatePrice
+    ? !!form.pricePerUnit && parseFloat(form.pricePerUnit) > 0
+    : form.date && parseFloat(form.amount) > 0;
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+
+    if (isUpdatePrice) {
+      const newPrice = parseFloat(form.pricePerUnit);
+      const prev = { ...bond };
+      const units = bond.units || 0;
+      const newValue = units > 0 ? newPrice * units : bond.currentValue || 0;
+      const next = { ...bond, currentPricePerUnit: newPrice, currentValue: newValue };
+      setBonds(prevBs => prevBs.map(b => b.id === bond.id ? { ...b, currentPricePerUnit: newPrice, currentValue: newValue } : b));
+      if (logAudit) logAudit("bond", bond.id, "update", prev, next, `${bond.issuer} · ${bond.name} · price S$${(bond.currentPricePerUnit||0).toFixed(3)} → S$${newPrice.toFixed(3)}`);
+      showToast(`${bond.name} price updated to S$${newPrice.toFixed(3)}`, "success");
+      setForm(f => ({ ...f, pricePerUnit: String(newPrice) }));
+      return;
+    }
+
+    const amt = parseFloat(form.amount);
+    const newTx = {
+      id: "BTX" + Date.now(),
+      type: txType, date: form.date,
+      amount: amt, method: form.method, ref: form.ref, notes: form.notes,
+      status: "Paid",
+    };
+    setBonds(prevBs => prevBs.map(b => b.id === bond.id ? { ...b, transactions: [...(b.transactions||[]), newTx] } : b));
+    if (logAudit) logAudit("bond", bond.id, "add-transaction", null, newTx, `${txType} · S$${amt.toFixed(2)}`);
+    showToast(`${txType} recorded — S$${amt.toFixed(2)}`, "success");
+    setForm(blankForm());
+  };
+
+  const priceUpdates = (auditLog || [])
+    .filter(e => e.entityType === "bond" && e.entityId === bond.id && e.action === "update"
+      && (e.changes||[]).some(c => c.field === "currentPricePerUnit"));
+
+  const oldPrice = bond.currentPricePerUnit || 0;
+  const units = bond.units || 0;
+  const newPriceVal = parseFloat(form.pricePerUnit) || 0;
+  const newValue = newPriceVal * units;
+  const cost = (bond.purchasePricePerUnit || 0) * units;
+  const newPnl = newValue - cost;
+  const newPnlPct = cost > 0 ? (newPnl/cost*100) : 0;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <Card style={{padding:"16px 18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Action</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {ALL_TYPES.map(t => {
+            const active = txType === t;
+            const c = colorFor(t);
+            return (
+              <button key={t} onClick={()=>switchType(t)}
+                style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${active?c:T.border}`,
+                  background:active?`${c}15`:T.inputBg,color:active?c:T.muted,
+                  cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500}}>
+                {ICONS[t]||"💰"} {t}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card style={{padding:"18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>{isUpdatePrice ? `Update Price per Unit — ${bond.name}` : `${txType} — ${bond.name}`}</div>
+        {isUpdatePrice ? (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <div>
+              <Label required>New Price per Unit (S$)</Label>
+              <Input type="number" step="0.001" value={form.pricePerUnit} onChange={e=>set("pricePerUnit",e.target.value)} placeholder={String(oldPrice||"0.000")}/>
+            </div>
+            <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                <span>Current Price</span>
+                <span style={{fontWeight:600,color:T.text}}>S${oldPrice.toFixed(3)}</span>
+              </div>
+              {units > 0 && (
+                <>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                    <span>New Value ({units.toLocaleString()} units)</span>
+                    <span style={{fontWeight:700,color:T.text}}>S${newValue.toLocaleString(undefined,{maximumFractionDigits:2})}</span>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                    <span>New P/L</span>
+                    <span style={{fontWeight:700,color:newPnl>=0?T.up:T.down}}>{newPnl>=0?"+":""}S${newPnl.toLocaleString(undefined,{maximumFractionDigits:2})} ({newPnlPct>=0?"+":""}{newPnlPct.toFixed(2)}%)</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <div><Label required>Date</Label>
+              <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+            </div>
+            <div><Label required>Amount (S$)</Label>
+              <Input type="number" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/>
+            </div>
+            <MoreOptions count={3}>
+              <div><Label>Method</Label>
+                <Sel value={form.method} onChange={e=>set("method",e.target.value)} options={["CDP Credit","Bank Transfer","GIRO","Cash"]}/>
+              </div>
+              <div><Label>Reference</Label>
+                <Input value={form.ref} onChange={e=>set("ref",e.target.value)} placeholder="Optional"/>
+              </div>
+              <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Semi-annual coupon, maturity redemption…"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+              </div>
+            </MoreOptions>
+          </div>
+        )}
+
+        <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+          <button onClick={handleSubmit} disabled={!canSubmit}
+            style={{background:canSubmit?T.selected:T.border,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            {isUpdatePrice ? "Update Price" : `Record ${txType}`}
+          </button>
+        </div>
+      </Card>
+
+      {isUpdatePrice && (
+        <Card style={{padding:"16px 18px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:600}}>Price History</div>
+            <div style={{fontSize:11,color:T.muted}}>{priceUpdates.length} {priceUpdates.length === 1 ? "entry" : "entries"}</div>
+          </div>
+          {priceUpdates.length === 0 ? (
+            <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
+              <div style={{fontSize:22,marginBottom:6}}>📈</div>
+              <div style={{fontWeight:600}}>No manual price updates yet</div>
+              <div style={{fontSize:11,marginTop:3,color:T.dim}}>Your price updates will be tracked here.</div>
+            </div>
+          ) : (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead>
+                  <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
+                    <th style={{padding:"8px 10px"}}>Date</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>Old Price</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>New Price</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
+                    <th style={{padding:"8px 10px"}}>By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {priceUpdates.map(e => {
+                    const ch = (e.changes||[]).find(c => c.field === "currentPricePerUnit");
+                    const before = parseFloat(ch?.before) || 0;
+                    const after = parseFloat(ch?.after) || 0;
+                    const delta = after - before;
+                    const pct = before > 0 ? (delta/before*100) : 0;
+                    const up = delta >= 0;
+                    return (
+                      <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                        <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>S${before.toFixed(3)}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>S${after.toFixed(3)}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{delta.toFixed(3)}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{pct.toFixed(2)}%</td>
+                        <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
 // ── Bonds & T-Bills Screen ────────────────────────────────────
-function BondsScreen({ bonds, setBonds, showToast }) {
+function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [selectedBond, setSelectedBond] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -2627,10 +4867,15 @@ function BondsScreen({ bonds, setBonds, showToast }) {
 
   const handleSave = (f) => {
     if (f.id) {
-      setBonds(prev => prev.map(b => b.id === f.id ? { ...b, ...f } : b));
+      const prev = bonds.find(b => b.id === f.id);
+      setBonds(prevBs => prevBs.map(b => b.id === f.id ? { ...b, ...f } : b));
+      if (logAudit) logAudit("bond", f.id, "update", prev, f, `${f.issuer||""} · ${f.bondName||f.isin||""}`);
       showToast("Holding updated", "success");
     } else {
-      setBonds(prev => [...prev, { ...f, id:"BD"+Date.now(), transactions:[] }]);
+      const id = "BD"+Date.now();
+      const nb = { ...f, id, transactions:[] };
+      setBonds(prev => [...prev, nb]);
+      if (logAudit) logAudit("bond", id, "create", null, nb, `${nb.issuer||""} · ${nb.bondName||nb.isin||""}`);
       showToast("Holding added", "success");
     }
     setShowModal(false);
@@ -2845,7 +5090,7 @@ function BondsScreen({ bonds, setBonds, showToast }) {
                   ))}
                 </div>
                 <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
                     <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
                       style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
                         color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
@@ -2934,7 +5179,6 @@ function BondsScreen({ bonds, setBonds, showToast }) {
                     ):(
                       <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
                         {txs.map((tx,i)=>{
-                          const isOut=["Sale","Redemption","Purchase"].includes(tx.type);
                           const isIncome=["Coupon","Distribution","Interest"].includes(tx.type);
                           return (
                             <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
@@ -3029,6 +5273,12 @@ function BondsScreen({ bonds, setBonds, showToast }) {
                     </div>
                   );
                 })()}
+                {drawerTab === "history" && (
+                  <AuditLogPanel auditLog={auditLog} entityType="bond" entityId={bond.id}/>
+                )}
+                {drawerTab === "manage" && (
+                  <BondActionPanel bond={bond} setBonds={setBonds} auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+                )}
               </div>
             </div>
           </div>
@@ -3041,6 +5291,7 @@ function BondsScreen({ bonds, setBonds, showToast }) {
         return <BondTxModalInner bond={bond} onSave={(tx) => {
           const newTx = {...tx, id:"BTX"+Date.now(), status:"Paid"};
           setBonds(prev => prev.map(b => b.id === bond.id ? { ...b, transactions: [...(b.transactions||[]), newTx] } : b));
+          if (logAudit) logAudit("bond", bond.id, "add-transaction", null, newTx, `${tx.type} · ${tx.amount||tx.qty||""}`);
           setShowTxModal(false);
           showToast(`${tx.type} recorded`, "success");
         }} onClose={()=>setShowTxModal(false)}/>;
@@ -3204,70 +5455,76 @@ function RetirementPlanModal({ plan, onSave, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:540,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Plan" : "Add Retirement Plan"}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:800}}>{f.id ? "Edit Plan" : "Add Retirement Plan"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
           <div><Label required>Plan Type</Label><Sel value={f.planType} onChange={e=>{set("planType",e.target.value);}} options={RET_PLAN_TYPES}/></div>
           <div><Label required>Provider / Institution</Label><Input value={f.provider} onChange={e=>set("provider",e.target.value)} placeholder="e.g. CPF Board, DBS, NTUC Income"/></div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label required>Plan Name</Label><Input value={f.planName} onChange={e=>set("planName",e.target.value)} placeholder="e.g. CPF LIFE Standard, DBS SRS Account"/></div>
-          <div><Label>Account / Policy No.</Label><Input value={f.accountNumber} onChange={e=>set("accountNumber",e.target.value)}/></div>
+          <div style={{gridColumn:"span 2"}}><Label required>Plan Name</Label><Input value={f.planName} onChange={e=>set("planName",e.target.value)} placeholder="e.g. CPF LIFE Standard, DBS SRS Account"/></div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label required>Balance / Value</Label><Input type="number" prefix="S$" value={f.balance} onChange={e=>set("balance",+e.target.value)}/></div>
-          <div><Label>Total Contributed</Label><Input type="number" prefix="S$" value={f.totalContributed} onChange={e=>set("totalContributed",+e.target.value)}/></div>
-          <div><Label>Annual Contribution</Label><Input type="number" prefix="S$" value={f.annualContribution} onChange={e=>set("annualContribution",+e.target.value)}/></div>
+        <div style={{marginBottom:14}}>
+          <Label required>Balance / Value</Label><Input type="number" prefix="S$" value={f.balance} onChange={e=>set("balance",+e.target.value)}/>
         </div>
 
-        {/* Payout fields */}
-        {(isCpfLife || isIncome || isLegacy) && (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-            <div><Label>Monthly Payout</Label><Input type="number" prefix="S$" value={f.monthlyPayout} onChange={e=>set("monthlyPayout",+e.target.value)}/></div>
-            <div><Label>Payout Start Age</Label><Input type="number" value={f.payoutStartAge} onChange={e=>set("payoutStartAge",+e.target.value)}/></div>
-            <div><Label>Payout Period</Label><Input value={f.payoutPeriod} onChange={e=>set("payoutPeriod",e.target.value)} placeholder="Lifetime / 20 years"/></div>
-          </div>
-        )}
-        {isCpfLife && (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-            <div><Label>CPF LIFE Plan</Label><Sel value={f.payoutPlan||"Standard"} onChange={e=>set("payoutPlan",e.target.value)} options={["Basic","Standard","Escalating"]}/></div>
-            <div><Label>Retirement Sum Tier</Label><Sel value={f.retirementSum||"FRS"} onChange={e=>set("retirementSum",e.target.value)} options={["BRS","FRS","ERS"]}/></div>
-          </div>
-        )}
-        {isSrs && (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-            <div><Label>Cash (Uninvested)</Label><Input type="number" prefix="S$" value={f.cashBalance||0} onChange={e=>set("cashBalance",+e.target.value)}/></div>
-            <div><Label>Invested Amount</Label><Input type="number" prefix="S$" value={f.investedBalance||0} onChange={e=>set("investedBalance",+e.target.value)}/></div>
-          </div>
-        )}
-        {isCpfBal && (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-            <div><Label>OA Balance</Label><Input type="number" prefix="S$" value={f.oaBalance||0} onChange={e=>set("oaBalance",+e.target.value)}/></div>
-            <div><Label>SA Balance</Label><Input type="number" prefix="S$" value={f.saBalance||0} onChange={e=>set("saBalance",+e.target.value)}/></div>
-            <div><Label>MA Balance</Label><Input type="number" prefix="S$" value={f.maBalance||0} onChange={e=>set("maBalance",+e.target.value)}/></div>
-          </div>
-        )}
-
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Interest / Return Rate (%)</Label><Input type="number" value={f.interestRate} onChange={e=>set("interestRate",+e.target.value)}/></div>
-          <div><Label>Funding Source</Label><Sel value={f.fundingSource} onChange={e=>set("fundingSource",e.target.value)} options={["Cash","CPF","SRS"]}/></div>
-          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={RET_STATUS_OPTS}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Account / Policy No.</Label><Input value={f.accountNumber} onChange={e=>set("accountNumber",e.target.value)}/></div>
+          <div><Label required>Interest / Return Rate (%)</Label><Input type="number" value={f.interestRate} onChange={e=>set("interestRate",+e.target.value)}/></div>
         </div>
-        {(isIncome || isLegacy) && (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-            <div><Label>Surrender Value</Label><Input type="number" prefix="S$" value={f.surrenderValue} onChange={e=>set("surrenderValue",+e.target.value)}/></div>
-            <div><Label>Death Benefit</Label><Input type="number" prefix="S$" value={f.deathBenefit} onChange={e=>set("deathBenefit",+e.target.value)}/></div>
-          </div>
-        )}
+
         <div style={{marginBottom:20}}>
-          <Label>Notes</Label>
-          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes…"
-            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+          <MoreOptions count={8} style={{gridColumn:"unset"}}>
+            <div><Label>Total Contributed</Label><Input type="number" prefix="S$" value={f.totalContributed} onChange={e=>set("totalContributed",+e.target.value)}/></div>
+            <div><Label>Annual Contribution</Label><Input type="number" prefix="S$" value={f.annualContribution} onChange={e=>set("annualContribution",+e.target.value)}/></div>
+            {(isCpfLife || isIncome || isLegacy) && (
+              <>
+                <div><Label>Monthly Payout</Label><Input type="number" prefix="S$" value={f.monthlyPayout} onChange={e=>set("monthlyPayout",+e.target.value)}/></div>
+                <div><Label>Payout Start Age</Label><Input type="number" value={f.payoutStartAge} onChange={e=>set("payoutStartAge",+e.target.value)}/></div>
+                <div><Label>Payout Period</Label><Input value={f.payoutPeriod} onChange={e=>set("payoutPeriod",e.target.value)} placeholder="Lifetime / 20 years"/></div>
+              </>
+            )}
+            {isCpfLife && (
+              <>
+                <div><Label>CPF LIFE Plan</Label><Sel value={f.payoutPlan||"Standard"} onChange={e=>set("payoutPlan",e.target.value)} options={["Basic","Standard","Escalating"]}/></div>
+                <div><Label>Retirement Sum Tier</Label><Sel value={f.retirementSum||"FRS"} onChange={e=>set("retirementSum",e.target.value)} options={["BRS","FRS","ERS"]}/></div>
+              </>
+            )}
+            {isSrs && (
+              <>
+                <div><Label>Cash (Uninvested)</Label><Input type="number" prefix="S$" value={f.cashBalance||0} onChange={e=>set("cashBalance",+e.target.value)}/></div>
+                <div><Label>Invested Amount</Label><Input type="number" prefix="S$" value={f.investedBalance||0} onChange={e=>set("investedBalance",+e.target.value)}/></div>
+              </>
+            )}
+            {isCpfBal && (
+              <>
+                <div><Label>OA Balance</Label><Input type="number" prefix="S$" value={f.oaBalance||0} onChange={e=>set("oaBalance",+e.target.value)}/></div>
+                <div><Label>SA Balance</Label><Input type="number" prefix="S$" value={f.saBalance||0} onChange={e=>set("saBalance",+e.target.value)}/></div>
+                <div><Label>MA Balance</Label><Input type="number" prefix="S$" value={f.maBalance||0} onChange={e=>set("maBalance",+e.target.value)}/></div>
+              </>
+            )}
+            <div><Label>Funding Source</Label><Sel value={f.fundingSource} onChange={e=>set("fundingSource",e.target.value)} options={["Cash","CPF","SRS"]}/></div>
+            <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={RET_STATUS_OPTS}/></div>
+            {(isIncome || isLegacy) && (
+              <>
+                <div><Label>Surrender Value</Label><Input type="number" prefix="S$" value={f.surrenderValue} onChange={e=>set("surrenderValue",+e.target.value)}/></div>
+                <div><Label>Death Benefit</Label><Input type="number" prefix="S$" value={f.deathBenefit} onChange={e=>set("deathBenefit",+e.target.value)}/></div>
+              </>
+            )}
+            <div style={{gridColumn:"1 / -1"}}>
+              <Label>Notes</Label>
+              <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes…"
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+            </div>
+          </MoreOptions>
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.planType||!f.planName||!f.provider}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.planType||!f.planName||!f.provider)?0.4:1}}>
+          <button onClick={()=>onSave(f)} disabled={!f.planType||!f.planName||!f.provider||!f.accountNumber||!f.interestRate}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.planType||!f.planName||!f.provider||!f.accountNumber||!f.interestRate)?0.4:1}}>
             {f.id ? "Save Changes" : "Add Plan"}
           </button>
         </div>
@@ -3299,7 +5556,10 @@ function RetirementTxModalInner({ plan, txTypes, txTypeIcon, onSave, onClose }) 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{plan.planName} · {plan.provider}</div>
 
         {/* Transaction type selector */}
@@ -3334,10 +5594,16 @@ function RetirementTxModalInner({ plan, txTypes, txTypeIcon, onSave, onClose }) 
         </div>
 
         {/* Summary */}
-        <div style={{background:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{color:isOut?T.down:T.up,fontWeight:600}}>{isOut?"📤 Outflow — reduces plan balance":"📥 Inflow — increases plan balance"}</span>
-          <span style={{fontWeight:700,color:isOut?T.down:T.up}}>{isOut?"-":"+"} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
-        </div>
+        <FlowBanner type={f.type} amount={f.amount} label={
+          f.type==="Top-Up" ? "📤 Top-up contribution to plan"
+          : f.type==="Premium" ? "📤 Premium paid"
+          : f.type==="Contribution" ? "📤 Plan contribution"
+          : f.type==="Payout" ? "📥 Payout received from plan"
+          : f.type==="Withdrawal" ? "📥 Withdrawal from plan"
+          : f.type==="Interest" ? "💰 Interest credited"
+          : f.type==="Coupon" ? "🎁 Coupon credited"
+          : "💰 Transaction"
+        }/>
 
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
@@ -3352,7 +5618,139 @@ function RetirementTxModalInner({ plan, txTypes, txTypeIcon, onSave, onClose }) 
 }
 
 // ── Retirement Screen ─────────────────────────────────────────
-function RetirementScreen({ plans, setPlans, showToast }) {
+/* ─── Generic field-update action panel ─────────────────────────
+   Used for Manage tabs on Retirement / Real Estate / Loan / CC / BP.
+   Renders action pills, current/new comparison, submit button, and an
+   audit-log-driven history table for the currently selected field. */
+function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, auditLog, logAudit, showToast }) {
+  const [actionKey, setActionKey] = useState(fields[0].key);
+  const current = fields.find(f => f.key === actionKey) || fields[0];
+  const [val, setVal] = useState(String(entity[current.key] ?? ""));
+
+  const switchAction = (key) => {
+    const f = fields.find(x => x.key === key);
+    setActionKey(key);
+    setVal(String(entity[f.key] ?? ""));
+  };
+
+  const oldVal = +entity[current.key] || 0;
+  const newVal = parseFloat(val) || 0;
+  const delta = newVal - oldVal;
+  const pct = oldVal > 0 ? (delta / oldVal * 100) : 0;
+  const canSubmit = !!val && newVal >= 0 && newVal !== oldVal;
+  const prefix = current.prefix ?? "S$";
+  const suffix = current.suffix ?? "";
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    const prev = { ...entity };
+    const next = { ...entity, [current.key]: newVal };
+    onUpdate(next);
+    if (logAudit) logAudit(entityType, entity.id, "update", prev, next, `${entityLabel} · ${current.label} ${prefix}${oldVal.toLocaleString()} → ${prefix}${newVal.toLocaleString()}`);
+    showToast(`${current.label} updated`, "success");
+    setVal(String(newVal));
+  };
+
+  const updates = (auditLog || []).filter(e => e.entityType === entityType && e.entityId === entity.id && e.action === "update"
+    && (e.changes || []).some(c => c.field === current.key));
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <Card style={{padding:"16px 18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Action</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {fields.map(f => (
+            <button key={f.key} onClick={()=>switchAction(f.key)}
+              style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${actionKey===f.key?T.selected:T.border}`,
+                background:actionKey===f.key?`${T.selected}15`:T.inputBg,color:actionKey===f.key?T.selected:T.muted,
+                cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:actionKey===f.key?700:500}}>
+              {f.icon || "💲"} Update {f.label}
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      <Card style={{padding:"18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>Update {current.label} — {entityLabel}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div>
+            <Label required>New {current.label}{suffix?` (${suffix})`:""}</Label>
+            <Input type="number" step={current.step || "0.01"} prefix={prefix} value={val}
+              onChange={e=>setVal(e.target.value)} placeholder={String(oldVal)}/>
+          </div>
+          <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+              <span>Current</span>
+              <span style={{fontWeight:600,color:T.text}}>{prefix}{oldVal.toLocaleString()}{suffix?` ${suffix}`:""}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+              <span>Change</span>
+              <span style={{fontWeight:700,color:delta>=0?T.up:T.down}}>{delta>=0?"+":""}{prefix}{delta.toLocaleString()} ({delta>=0?"+":""}{pct.toFixed(2)}%)</span>
+            </div>
+            {current.helper && <div style={{fontSize:10,color:T.dim,marginTop:2}}>{current.helper}</div>}
+          </div>
+        </div>
+        <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+          <button onClick={handleSubmit} disabled={!canSubmit}
+            style={{background:canSubmit?T.selected:T.border,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            Update {current.label}
+          </button>
+        </div>
+      </Card>
+
+      <Card style={{padding:"16px 18px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600}}>{current.label} History</div>
+          <div style={{fontSize:11,color:T.muted}}>{updates.length} {updates.length === 1 ? "entry" : "entries"}</div>
+        </div>
+        {updates.length === 0 ? (
+          <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
+            <div style={{fontSize:22,marginBottom:6}}>📈</div>
+            <div style={{fontWeight:600}}>No updates yet</div>
+            <div style={{fontSize:11,marginTop:3,color:T.dim}}>Your {current.label.toLowerCase()} updates will be tracked here.</div>
+          </div>
+        ) : (
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead>
+                <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
+                  <th style={{padding:"8px 10px"}}>Date</th>
+                  <th style={{padding:"8px 10px",textAlign:"right"}}>Old</th>
+                  <th style={{padding:"8px 10px",textAlign:"right"}}>New</th>
+                  <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
+                  <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
+                  <th style={{padding:"8px 10px"}}>By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {updates.map(e => {
+                  const ch = (e.changes||[]).find(c => c.field === current.key);
+                  const before = parseFloat(ch?.before) || 0;
+                  const after = parseFloat(ch?.after) || 0;
+                  const d = after - before;
+                  const p = before > 0 ? (d/before*100) : 0;
+                  const up = d >= 0;
+                  return (
+                    <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                      <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
+                      <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>{prefix}{before.toLocaleString()}</td>
+                      <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>{prefix}{after.toLocaleString()}</td>
+                      <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{d.toLocaleString()}</td>
+                      <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{p.toFixed(2)}%</td>
+                      <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -3386,10 +5784,15 @@ function RetirementScreen({ plans, setPlans, showToast }) {
 
   const handleSave = (f) => {
     if (f.id) {
-      setPlans(prev => prev.map(p => p.id === f.id ? { ...p, ...f } : p));
+      const prev = plans.find(p => p.id === f.id);
+      setPlans(prevPs => prevPs.map(p => p.id === f.id ? { ...p, ...f } : p));
+      if (logAudit) logAudit("retirement", f.id, "update", prev, f, `${f.provider||""} · ${f.planName||f.planType||""}`);
       showToast("Plan updated", "success");
     } else {
-      setPlans(prev => [...prev, { ...f, id:"RT"+Date.now() }]);
+      const id = "RT"+Date.now();
+      const np = { ...f, id };
+      setPlans(prev => [...prev, np]);
+      if (logAudit) logAudit("retirement", id, "create", null, np, `${np.provider||""} · ${np.planName||np.planType||""}`);
       showToast("Plan added", "success");
     }
     setShowModal(false);
@@ -3633,7 +6036,7 @@ function RetirementScreen({ plans, setPlans, showToast }) {
                 </div>
                 {/* Pill tabs — same style as Loans/CC drawer */}
                 <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
                     <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
                       style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
                         color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
@@ -3756,7 +6159,6 @@ function RetirementScreen({ plans, setPlans, showToast }) {
                       <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
                         {txs.map((tx,i)=>{
                           const isOut = ["Payout","Withdrawal"].includes(tx.type);
-                          const isIn = ["Premium","Top-Up","Contribution"].includes(tx.type);
                           const isPassive = ["Interest","Coupon"].includes(tx.type);
                           return (
                             <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
@@ -3880,6 +6282,22 @@ function RetirementScreen({ plans, setPlans, showToast }) {
                     </div>
                   );
                 })()}
+                {drawerTab === "history" && (
+                  <AuditLogPanel auditLog={auditLog} entityType="retirement" entityId={plan.id}/>
+                )}
+                {drawerTab === "manage" && (
+                  <FieldUpdatePanel
+                    entity={plan}
+                    entityType="retirement"
+                    entityLabel={plan.planName}
+                    fields={[
+                      { key:"balance",        label:"Balance",        icon:"💰", prefix:"S$" },
+                      { key:"interestRate",   label:"Interest Rate",  icon:"📈", prefix:"",   suffix:"% p.a.", step:"0.01" },
+                      { key:"monthlyPayout",  label:"Monthly Payout", icon:"📅", prefix:"S$", helper:"Payout per month (for in-payout plans)" },
+                    ]}
+                    onUpdate={(next)=>setPlans(prev=>prev.map(x=>x.id===plan.id?next:x))}
+                    auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+                )}
 
               </div>
             </div>
@@ -3913,6 +6331,7 @@ function RetirementScreen({ plans, setPlans, showToast }) {
                 balance: isOut ? Math.max(0, p.balance - tx.amount) : p.balance + tx.amount,
                 totalContributed: !isOut && tx.type !== "Interest" && tx.type !== "Coupon" ? p.totalContributed + tx.amount : p.totalContributed,
               } : p));
+              if (logAudit) logAudit("retirement", plan.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount}`);
               setShowTxModal(false);
               showToast(`${tx.type} recorded`, "success");
             }}
@@ -3948,6 +6367,14 @@ const CRYPTO_CHAINS = ["Bitcoin","Ethereum","Solana","BNB Chain","Polygon","Arbi
 
 const CRYPTO_WALLET_TYPES = ["Exchange","Hardware Wallet","Hot Wallet","Custody","DeFi Protocol"];
 
+const CRYPTO_WALLET_CONFIG = {
+  "Exchange":         { icon:"🏦", color:"#3B82F6", bg:"#EFF6FF" },
+  "Hardware Wallet":  { icon:"🛡️", color:"#10B981", bg:"#ECFDF5" },
+  "Hot Wallet":       { icon:"🔥", color:"#F59E0B", bg:"#FFFBEB" },
+  "Custody":          { icon:"🏛️", color:"#6366F1", bg:"#EEF2FF" },
+  "DeFi Protocol":    { icon:"⚡", color:"#8B5CF6", bg:"#F5F3FF" },
+};
+
 const EMPTY_CRYPTO = {
   id:"", holdingType:"Spot Crypto", symbol:"", name:"", chain:"Bitcoin",
   wallet:"", walletType:"Exchange", walletAddress:"",
@@ -3960,7 +6387,7 @@ const EMPTY_CRYPTO = {
 const CRYPTO_INIT = [
   {
     id:"CR001", holdingType:"Spot Crypto", symbol:"BTC", name:"Bitcoin", chain:"Bitcoin",
-    wallet:"Ledger Nano X", walletType:"Hardware Wallet", walletAddress:"bc1q...4m7x",
+    wallet:"Ledger Nano X", walletType:"Hardware Wallet", walletAddress:"bc1q...4m7x", walletAccountId:"WL001",
     quantity:0.5842, avgCostPrice:48200, currentPrice:88750,
     stakingYield:0, lendingProtocol:"",
     acquisitionDate:"2024-03-12", currency:"SGD", status:"Active",
@@ -3974,7 +6401,7 @@ const CRYPTO_INIT = [
   },
   {
     id:"CR002", holdingType:"Spot Crypto", symbol:"ETH", name:"Ethereum", chain:"Ethereum",
-    wallet:"MetaMask", walletType:"Hot Wallet", walletAddress:"0x742d...38a1",
+    wallet:"MetaMask", walletType:"Hot Wallet", walletAddress:"0x742d...38a1", walletAccountId:"WL002",
     quantity:4.25, avgCostPrice:3240, currentPrice:4820,
     stakingYield:0, lendingProtocol:"",
     acquisitionDate:"2024-05-08", currency:"SGD", status:"Active",
@@ -3986,7 +6413,7 @@ const CRYPTO_INIT = [
   },
   {
     id:"CR003", holdingType:"Stablecoin", symbol:"USDC", name:"USD Coin", chain:"Ethereum",
-    wallet:"Binance", walletType:"Exchange", walletAddress:"",
+    wallet:"Binance", walletType:"Exchange", walletAddress:"", walletAccountId:"WL003",
     quantity:12500, avgCostPrice:1.35, currentPrice:1.34,
     stakingYield:0, lendingProtocol:"",
     acquisitionDate:"2025-01-10", currency:"SGD", status:"Active",
@@ -3997,7 +6424,7 @@ const CRYPTO_INIT = [
   },
   {
     id:"CR004", holdingType:"Lending / DeFi", symbol:"USDT", name:"Tether USD", chain:"BNB Chain",
-    wallet:"Crypto.com Earn", walletType:"DeFi Protocol", walletAddress:"",
+    wallet:"Crypto.com Earn", walletType:"DeFi Protocol", walletAddress:"", walletAccountId:"WL004",
     quantity:8000, avgCostPrice:1.34, currentPrice:1.34,
     stakingYield:6.5, lendingProtocol:"Crypto.com Earn",
     acquisitionDate:"2024-11-20", currency:"SGD", status:"Active",
@@ -4012,7 +6439,7 @@ const CRYPTO_INIT = [
   },
   {
     id:"CR005", holdingType:"Staked", symbol:"ETH", name:"Ethereum (Staked via Lido)", chain:"Ethereum",
-    wallet:"Lido — stETH", walletType:"DeFi Protocol", walletAddress:"0x742d...38a1",
+    wallet:"Lido — stETH", walletType:"DeFi Protocol", walletAddress:"0x742d...38a1", walletAccountId:"WL005",
     quantity:2.0, avgCostPrice:3350, currentPrice:4820,
     stakingYield:3.2, lendingProtocol:"Lido",
     acquisitionDate:"2024-08-15", currency:"SGD", status:"Active",
@@ -4025,7 +6452,7 @@ const CRYPTO_INIT = [
   },
   {
     id:"CR006", holdingType:"Staked", symbol:"SOL", name:"Solana", chain:"Solana",
-    wallet:"Phantom", walletType:"Hot Wallet", walletAddress:"7xKw...9mP2",
+    wallet:"Phantom", walletType:"Hot Wallet", walletAddress:"7xKw...9mP2", walletAccountId:"WL006",
     quantity:62.5, avgCostPrice:180, currentPrice:310,
     stakingYield:7.1, lendingProtocol:"Marinade Finance",
     acquisitionDate:"2024-09-03", currency:"SGD", status:"Active",
@@ -4039,7 +6466,7 @@ const CRYPTO_INIT = [
   },
   {
     id:"CR007", holdingType:"Spot Crypto", symbol:"AVAX", name:"Avalanche", chain:"Avalanche",
-    wallet:"Coinbase", walletType:"Exchange", walletAddress:"",
+    wallet:"Coinbase", walletType:"Exchange", walletAddress:"", walletAccountId:"WL007",
     quantity:85, avgCostPrice:42, currentPrice:38.50,
     stakingYield:0, lendingProtocol:"",
     acquisitionDate:"2025-02-28", currency:"SGD", status:"Active",
@@ -4073,13 +6500,14 @@ function CryptoTxModalInner({ crypto, onSave, onClose }) {
       return next;
     });
   };
-  const isOut = ["Sell","Transfer Out","Unstake","Withdraw","Fee"].includes(f.type);
-  const isIn = ["Staking Reward","Interest","Airdrop"].includes(f.type);
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{crypto.symbol} · {crypto.name} · {crypto.wallet}</div>
         <div style={{marginBottom:14}}>
           <Label required>Transaction Type</Label>
@@ -4095,7 +6523,7 @@ function CryptoTxModalInner({ crypto, onSave, onClose }) {
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
           <div><Label required>Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
-          <div><Label>Quantity ({crypto.symbol})</Label><Input type="number" value={f.qty} onChange={e=>set("qty",+e.target.value)}/></div>
+          <div><Label>Quantity ({crypto.symbol})</Label><Input type="number" step="1" placeholder="0" value={f.qty} onChange={e=>set("qty",+e.target.value)}/></div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
           <div><Label>Price per Unit</Label><Input type="number" prefix="S$" value={f.price} onChange={e=>set("price",+e.target.value)}/></div>
@@ -4110,12 +6538,21 @@ function CryptoTxModalInner({ crypto, onSave, onClose }) {
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. DCA buy, staking reward, moved to cold storage…"
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
         </div>
-        <div style={{background:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{color:isOut?T.down:T.up,fontWeight:600}}>
-            {f.type==="Buy"||f.type==="Deposit"||f.type==="Stake"?"📥 Capital deployed":isOut?"📤 Capital returned":isIn?"🎁 Income received":"🔄 Transfer"}
-          </span>
-          <span style={{fontWeight:700,color:isOut?T.down:T.up}}>{isOut?"-":"+"} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
-        </div>
+        <FlowBanner type={f.type} amount={f.amount} label={
+          f.type==="Buy" ? "📤 Capital deployed to crypto"
+          : f.type==="Sell" ? "📥 Sale proceeds"
+          : f.type==="Fee" ? "📤 Network / protocol fee"
+          : f.type==="Staking Reward" ? "🎁 Staking reward"
+          : f.type==="Interest" ? "💰 DeFi / lending interest"
+          : f.type==="Airdrop" ? "🎉 Airdrop received"
+          : f.type==="Transfer In" ? "⬇ Inbound transfer (no cash flow)"
+          : f.type==="Transfer Out" ? "⬆ Outbound transfer (no cash flow)"
+          : f.type==="Stake" ? "🔒 Staked (no cash flow)"
+          : f.type==="Unstake" ? "🔓 Unstaked (no cash flow)"
+          : f.type==="Deposit" ? "📥 DeFi deposit (no cash flow)"
+          : f.type==="Withdraw" ? "📤 DeFi withdrawal (no cash flow)"
+          : "💰 Transaction"
+        }/>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
           <button onClick={()=>onSave(f)} disabled={!f.date}
@@ -4135,10 +6572,13 @@ function CryptoModal({ crypto, onSave, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:560,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Holding" : "Add Crypto Holding"}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:800}}>{f.id ? "Edit Holding" : "Add Crypto Holding"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
           <div><Label required>Holding Type</Label><Sel value={f.holdingType} onChange={e=>set("holdingType",e.target.value)} options={CRYPTO_TYPES}/></div>
-          <div><Label required>Chain / Network</Label><Sel value={f.chain} onChange={e=>set("chain",e.target.value)} options={CRYPTO_CHAINS}/></div>
+          <div><Label required>Chain / Network (free text)</Label><PickerWithOther value={f.chain} onChange={e=>set("chain",e.target.value)} options={CRYPTO_CHAINS}/></div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:14,marginBottom:14}}>
           <div><Label required>Symbol</Label><Input value={f.symbol} onChange={e=>set("symbol",e.target.value.toUpperCase())} placeholder="BTC, ETH, SOL"/></div>
@@ -4146,37 +6586,34 @@ function CryptoModal({ crypto, onSave, onClose }) {
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
           <div><Label required>Wallet / Venue</Label><Input value={f.wallet} onChange={e=>set("wallet",e.target.value)} placeholder="Binance, Ledger, MetaMask"/></div>
-          <div><Label>Wallet Type</Label><Sel value={f.walletType} onChange={e=>set("walletType",e.target.value)} options={CRYPTO_WALLET_TYPES}/></div>
-        </div>
-        <div style={{marginBottom:14}}>
-          <Label>Wallet Address (optional)</Label>
-          <Input value={f.walletAddress} onChange={e=>set("walletAddress",e.target.value)} placeholder="0x... or bc1q..."/>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label required>Quantity</Label><Input type="number" value={f.quantity} onChange={e=>set("quantity",+e.target.value)}/></div>
-          <div><Label>Avg Cost (SGD)</Label><Input type="number" prefix="S$" value={f.avgCostPrice} onChange={e=>set("avgCostPrice",+e.target.value)}/></div>
-          <div><Label>Current Price (SGD)</Label><Input type="number" prefix="S$" value={f.currentPrice} onChange={e=>set("currentPrice",+e.target.value)}/></div>
-        </div>
-        {(f.holdingType === "Staked" || f.holdingType === "Lending / DeFi") && (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-            <div><Label>Yield / APY (%)</Label><Input type="number" value={f.stakingYield} onChange={e=>set("stakingYield",+e.target.value)}/></div>
-            <div><Label>Protocol</Label><Input value={f.lendingProtocol} onChange={e=>set("lendingProtocol",e.target.value)} placeholder="Lido, Aave, Marinade"/></div>
-          </div>
-        )}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Acquisition Date</Label><Input type="date" value={f.acquisitionDate} onChange={e=>set("acquisitionDate",e.target.value)}/></div>
-          <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD"]}/></div>
-          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={CRYPTO_STATUS_OPTS}/></div>
+          <div><Label required>Quantity</Label><Input type="number" step="1" placeholder="0" value={f.quantity} onChange={e=>set("quantity",+e.target.value)}/></div>
         </div>
         <div style={{marginBottom:20}}>
-          <Label>Notes</Label>
-          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Strategy, storage notes…"
-            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+          <MoreOptions count={(f.holdingType==="Staked"||f.holdingType==="Lending / DeFi")?10:8} style={{gridColumn:"unset"}}>
+            <div><Label>Wallet Type</Label><Sel value={f.walletType} onChange={e=>set("walletType",e.target.value)} options={CRYPTO_WALLET_TYPES}/></div>
+            <div><Label>Wallet Address</Label><Input value={f.walletAddress} onChange={e=>set("walletAddress",e.target.value)} placeholder="0x... or bc1q..."/></div>
+            <div><Label>Avg Cost (SGD)</Label><Input type="number" prefix="S$" value={f.avgCostPrice} onChange={e=>set("avgCostPrice",+e.target.value)}/></div>
+            <div><Label>Current Price (SGD)</Label><Input type="number" prefix="S$" value={f.currentPrice} onChange={e=>set("currentPrice",+e.target.value)}/></div>
+            {(f.holdingType === "Staked" || f.holdingType === "Lending / DeFi") && (
+              <>
+                <div><Label>Yield / APY (%)</Label><Input type="number" value={f.stakingYield} onChange={e=>set("stakingYield",+e.target.value)}/></div>
+                <div><Label>Protocol</Label><Input value={f.lendingProtocol} onChange={e=>set("lendingProtocol",e.target.value)} placeholder="Lido, Aave, Marinade"/></div>
+              </>
+            )}
+            <div><Label>Acquisition Date</Label><Input type="date" value={f.acquisitionDate} onChange={e=>set("acquisitionDate",e.target.value)}/></div>
+            <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD"]}/></div>
+            <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={CRYPTO_STATUS_OPTS}/></div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <Label>Notes</Label>
+              <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Strategy, storage notes…"
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+            </div>
+          </MoreOptions>
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.symbol||!f.name||!f.wallet}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.symbol||!f.name||!f.wallet)?0.4:1}}>
+          <button onClick={()=>onSave(f)} disabled={!f.symbol||!f.name||!f.wallet||!f.holdingType||!f.chain||!f.quantity}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.symbol||!f.name||!f.wallet||!f.holdingType||!f.chain||!f.quantity)?0.4:1}}>
             {f.id ? "Save Changes" : "Add Holding"}
           </button>
         </div>
@@ -4186,8 +6623,311 @@ function CryptoModal({ crypto, onSave, onClose }) {
 }
 
 // ── Cryptocurrencies Screen ───────────────────────────────────
-function CryptoScreen({ cryptos, setCryptos, showToast }) {
+function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast }) {
+  const TX_TYPES_BY_HOLDING = {
+    "Staked": ["Stake","Unstake","Staking Reward","Transfer In","Transfer Out"],
+    "Lending / DeFi": ["Deposit","Withdraw","Interest"],
+    "Stablecoin": ["Buy","Sell","Transfer In","Transfer Out","Interest"],
+  };
+  const baseTypes = TX_TYPES_BY_HOLDING[crypto.holdingType] || ["Buy","Sell","Transfer In","Transfer Out"];
+  const ALL_TYPES = [...baseTypes, "Update Price"];
+  const ICONS = {Buy:"📥",Sell:"📤","Transfer In":"⬇","Transfer Out":"⬆",Stake:"🔒",Unstake:"🔓","Staking Reward":"🎁",Deposit:"📥",Withdraw:"📤",Interest:"💰",Airdrop:"🎉",Fee:"⚠️","Update Price":"💲"};
+  const colorFor = (t) => t==="Buy"||t==="Deposit"||t==="Stake"?T.up
+    : t==="Sell"||t==="Withdraw"||t==="Unstake"||t==="Fee"?T.down
+    : t==="Staking Reward"||t==="Interest"||t==="Airdrop"?T.warn
+    : t==="Update Price"?T.text : T.accent;
+  const INCREASE_QTY = ["Buy","Transfer In","Staking Reward","Airdrop","Deposit","Stake"];
+  const DECREASE_QTY = ["Sell","Transfer Out","Withdraw","Unstake","Fee"];
+
+  const [txType, setTxType] = useState("Buy");
+  const blankForm = () => ({
+    date: new Date().toISOString().slice(0,10),
+    qty: "", price: String(crypto.currentPrice || ""), amount: "",
+    counterpartyAddress: "", gasFees: "", notes: "",
+  });
+  const [form, setForm] = useState(blankForm());
+  const isUpdatePrice = txType === "Update Price";
+
+  const set = (k, v) => {
+    setForm(p => {
+      const next = { ...p, [k]: v };
+      if (!isUpdatePrice && (k === "qty" || k === "price")) {
+        const q = parseFloat(next.qty) || 0;
+        const pr = parseFloat(next.price) || 0;
+        next.amount = (q * pr).toFixed(2);
+      }
+      return next;
+    });
+  };
+
+  const switchType = (t) => {
+    setTxType(t);
+    if (t === "Update Price") {
+      setForm(f => ({ ...f, price: String(crypto.currentPrice || "") }));
+    } else {
+      setForm(blankForm());
+    }
+  };
+
+  const canSubmit = isUpdatePrice
+    ? !!form.price && parseFloat(form.price) > 0
+    : form.date && form.qty && parseFloat(form.qty) > 0;
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+
+    if (isUpdatePrice) {
+      const newPrice = parseFloat(form.price);
+      const prev = { ...crypto };
+      const next = { ...crypto, currentPrice: newPrice };
+      setCryptos(prevCs => prevCs.map(c => c.id === crypto.id ? { ...c, currentPrice: newPrice } : c));
+      if (logAudit) logAudit("crypto", crypto.id, "update", prev, next, `${crypto.symbol} · price S$${(crypto.currentPrice||0).toFixed(2)} → S$${newPrice.toFixed(2)}`);
+      showToast(`${crypto.symbol} price updated to S$${newPrice.toFixed(2)}`, "success");
+      setForm(f => ({ ...f, price: String(newPrice) }));
+      return;
+    }
+
+    const qty = parseFloat(form.qty);
+    const price = parseFloat(form.price) || crypto.currentPrice || 0;
+    const amount = parseFloat(form.amount) || +(qty * price).toFixed(2);
+    const gasFees = parseFloat(form.gasFees) || 0;
+    const newTx = {
+      id: "CTX" + Date.now(),
+      type: txType, date: form.date,
+      qty, price, amount,
+      gasFees,
+      counterpartyAddress: form.counterpartyAddress || "",
+      method: crypto.wallet || "", ref: "", notes: form.notes,
+      status: "Complete",
+    };
+    setCryptos(prevCs => prevCs.map(c => {
+      if (c.id !== crypto.id) return c;
+      const nextTxs = [...(c.transactions||[]), newTx];
+      let nextQty = +c.quantity || 0;
+      if (INCREASE_QTY.includes(txType)) nextQty += qty;
+      else if (DECREASE_QTY.includes(txType)) nextQty = Math.max(0, nextQty - qty);
+      let nextAvgCost = c.avgCostPrice;
+      if (txType === "Buy" && nextQty > 0) {
+        nextAvgCost = (((+c.avgCostPrice||0) * (+c.quantity||0)) + (price * qty)) / nextQty;
+      }
+      return { ...c, transactions: nextTxs, quantity: nextQty, avgCostPrice: nextAvgCost };
+    }));
+    if (logAudit) logAudit("crypto", crypto.id, "add-transaction", null, newTx, `${txType} · ${qty} ${crypto.symbol}`);
+    showToast(`${txType} recorded — ${qty} ${crypto.symbol}`, "success");
+    setForm(blankForm());
+  };
+
+  const oldPrice = crypto.currentPrice || 0;
+  const qtyHeld = crypto.quantity || 0;
+  const newPriceVal = parseFloat(form.price) || 0;
+  const newValue = newPriceVal * qtyHeld;
+  const cost = (crypto.avgCostPrice || 0) * qtyHeld;
+  const newPnl = newValue - cost;
+  const newPnlPct = cost > 0 ? (newPnl/cost*100) : 0;
+
+  const priceUpdates = (auditLog || [])
+    .filter(e => e.entityType === "crypto" && e.entityId === crypto.id && e.action === "update"
+      && (e.changes||[]).some(c => c.field === "currentPrice"));
+
+  const needsPrice = txType === "Buy" || txType === "Sell" || txType === "Interest";
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* Action pills */}
+      <Card style={{padding:"16px 18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Action</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {ALL_TYPES.map(t => {
+            const active = txType === t;
+            const c = colorFor(t);
+            return (
+              <button key={t} onClick={()=>switchType(t)}
+                style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${active?c:T.border}`,
+                  background:active?`${c}15`:T.inputBg,color:active?c:T.muted,
+                  cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500}}>
+                {ICONS[t]||"💰"} {t}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* Details form */}
+      <Card style={{padding:"18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>{isUpdatePrice ? `Update Market Price — ${crypto.symbol}` : `${txType} — ${crypto.symbol}`}</div>
+        {isUpdatePrice ? (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <div>
+              <Label required>New Market Price (SGD)</Label>
+              <Input type="number" step="0.01" value={form.price} onChange={e=>set("price",e.target.value)} placeholder={String(oldPrice||"0.00")}/>
+            </div>
+            <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                <span>Current Price</span>
+                <span style={{fontWeight:600,color:T.text}}>S${oldPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                <span>New Value</span>
+                <span style={{fontWeight:700,color:T.text}}>S${newValue.toLocaleString(undefined,{maximumFractionDigits:2})}</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                <span>New P/L</span>
+                <span style={{fontWeight:700,color:newPnl>=0?T.up:T.down}}>{newPnl>=0?"+":""}S${newPnl.toLocaleString(undefined,{maximumFractionDigits:2})} ({newPnlPct>=0?"+":""}{newPnlPct.toFixed(2)}%)</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <div><Label required>Date</Label>
+              <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+            </div>
+            <div><Label required>Quantity ({crypto.symbol})</Label>
+              <Input type="number" step="1" value={form.qty} onChange={e=>set("qty",e.target.value)} placeholder="0"/>
+            </div>
+            {needsPrice && (
+              <div><Label required>Price per Unit (SGD)</Label>
+                <Input type="number" value={form.price} onChange={e=>set("price",e.target.value)} placeholder="0.00"/>
+              </div>
+            )}
+            <MoreOptions count={(txType==="Transfer In"||txType==="Transfer Out")?3:2}>
+              <div><Label>Amount (SGD)</Label>
+                <Input type="number" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/>
+              </div>
+              <div><Label>Gas Fees (SGD)</Label>
+                <Input type="number" value={form.gasFees} onChange={e=>set("gasFees",e.target.value)} placeholder="0.00"/>
+              </div>
+              {(txType === "Transfer In" || txType === "Transfer Out") && (
+                <div style={{gridColumn:"1 / -1"}}>
+                  <Label>{txType === "Transfer In" ? "Source Wallet Address" : "Destination Wallet Address"}</Label>
+                  <Input value={form.counterpartyAddress} onChange={e=>set("counterpartyAddress",e.target.value)}
+                    placeholder={txType === "Transfer In" ? "From: 0x... or bc1q..." : "To: 0x... or bc1q..."}/>
+                </div>
+              )}
+              <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. DCA buy, moved to cold storage…"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+              </div>
+            </MoreOptions>
+          </div>
+        )}
+
+        {/* Quick summary for non-Update Price */}
+        {!isUpdatePrice && form.qty && (() => {
+          const q = parseFloat(form.qty) || 0;
+          const amt = parseFloat(form.amount) || 0;
+          const gas = parseFloat(form.gasFees) || 0;
+          const isOut = DECREASE_QTY.includes(txType);
+          return (
+            <div style={{marginTop:14,padding:"10px 12px",background:T.inputBg,borderRadius:8,display:"flex",flexDirection:"column",gap:6,fontSize:12}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <span style={{color:T.muted}}>{isOut ? "Quantity Out" : "Quantity In"} · Amount</span>
+                <span style={{fontWeight:700,color:isOut?T.down:T.up}}>{isOut?"−":"+"}{q} {crypto.symbol} · {isOut?"−":"+"}S${amt.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+              </div>
+              {gas > 0 && (
+                <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px dashed ${T.border}`,paddingTop:6}}>
+                  <span style={{color:T.muted}}>Gas Fees</span>
+                  <span style={{fontWeight:600,color:T.down}}>−S${gas.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Money-flow categorization banner */}
+        {!isUpdatePrice && form.qty && (() => {
+          const amt = parseFloat(form.amount) || 0;
+          const label =
+            txType==="Buy" ? "📤 Capital deployed to crypto"
+            : txType==="Sell" ? "📥 Sale proceeds"
+            : txType==="Fee" ? "📤 Network / protocol fee"
+            : txType==="Staking Reward" ? "🎁 Staking reward"
+            : txType==="Interest" ? "💰 DeFi / lending interest"
+            : txType==="Airdrop" ? "🎉 Airdrop received"
+            : txType==="Transfer In" ? "⬇ Inbound transfer (no cash flow)"
+            : txType==="Transfer Out" ? "⬆ Outbound transfer (no cash flow)"
+            : txType==="Stake" ? "🔒 Staked (no cash flow)"
+            : txType==="Unstake" ? "🔓 Unstaked (no cash flow)"
+            : txType==="Deposit" ? "📥 DeFi deposit (no cash flow)"
+            : txType==="Withdraw" ? "📤 DeFi withdrawal (no cash flow)"
+            : "💰 Transaction";
+          const showAmount = !["Transfer In","Transfer Out","Stake","Unstake","Deposit","Withdraw"].includes(txType);
+          return (
+            <div style={{marginTop:12}}>
+              <FlowBanner type={txType} amount={showAmount ? amt : null} label={label} style={{marginBottom:0}}/>
+            </div>
+          );
+        })()}
+
+        <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+          <button onClick={handleSubmit} disabled={!canSubmit}
+            style={{background:canSubmit?T.selected:T.border,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            {isUpdatePrice ? "Update Price" : `Record ${txType}`}
+          </button>
+        </div>
+      </Card>
+
+      {/* Price history (Update Price mode only) */}
+      {isUpdatePrice && (
+        <Card style={{padding:"16px 18px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:600}}>Price History</div>
+            <div style={{fontSize:11,color:T.muted}}>{priceUpdates.length} {priceUpdates.length === 1 ? "entry" : "entries"}</div>
+          </div>
+          {priceUpdates.length === 0 ? (
+            <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
+              <div style={{fontSize:22,marginBottom:6}}>📈</div>
+              <div style={{fontWeight:600}}>No manual price updates yet</div>
+              <div style={{fontSize:11,marginTop:3,color:T.dim}}>Your price updates will be tracked here.</div>
+            </div>
+          ) : (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead>
+                  <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
+                    <th style={{padding:"8px 10px"}}>Date</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>Old Price</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>New Price</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
+                    <th style={{padding:"8px 10px"}}>By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {priceUpdates.map(e => {
+                    const ch = (e.changes||[]).find(c => c.field === "currentPrice");
+                    const before = parseFloat(ch?.before) || 0;
+                    const after = parseFloat(ch?.after) || 0;
+                    const delta = after - before;
+                    const pct = before > 0 ? (delta/before*100) : 0;
+                    const up = delta >= 0;
+                    return (
+                      <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                        <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>S${before.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>S${after.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{delta.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{pct.toFixed(2)}%</td>
+                        <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransactions, showToast, auditLog, logAudit }) {
   const isMobile = useIsMobile();
+  const [selectedWallet, setSelectedWallet] = useState(null);
+  const [walletDrawerTab, setWalletDrawerTab] = useState("holdings");
+  const [buyCryptoModalWallet, setBuyCryptoModalWallet] = useState(null);
+  const [showWalletPicker, setShowWalletPicker] = useState(false);
+  const [showCryptoTransferModal, setShowCryptoTransferModal] = useState(false);
   const [selectedCrypto, setSelectedCrypto] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editCrypto, setEditCrypto] = useState(null);
@@ -4196,13 +6936,31 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
   const [searchQ, setSearchQ] = useState("");
   const [drawerTab, setDrawerTab] = useState("overview");
   const [showTxModal, setShowTxModal] = useState(false);
-  const crSort = useSortState();
+  const cySort = useSortState();
+  const walSort = useSortState();
 
-  const activeHoldings = cryptos.filter(c => c.status === "Active");
+  const walletAccounts = (accounts || []).filter(a => a.accountType === "Crypto Wallet");
+  const walletList = [...new Set([...walletAccounts.map(a => a.bank), ...cryptos.map(c => c.wallet)])].filter(Boolean);
+
+  // No wallet scoping in flat view
+  const scopedCryptos = cryptos;
+
+  // Aggregate stats per wallet account
+  const walletStats = walletAccounts.map(w => {
+    const coins = cryptos.filter(c => c.walletAccountId === w.id || c.wallet === w.bank || c.wallet === w.accountName);
+    const value = coins.filter(c => c.status === "Active").reduce((s,c) => s + ((c.quantity||0)*(c.currentPrice||0)), 0);
+    const cost  = coins.filter(c => c.status === "Active").reduce((s,c) => s + ((c.quantity||0)*(c.avgCostPrice||0)), 0);
+    const pnl   = value - cost;
+    const pnlPct = cost > 0 ? (pnl/cost*100) : 0;
+    const fiatSGD = acctCashSGD(w);
+    return { wallet: w, coins, holdingsCount: coins.length, value, cost, pnl, pnlPct, fiatSGD };
+  });
+
+  const activeHoldings = scopedCryptos.filter(c => c.status === "Active");
   const totalCurrentValue = activeHoldings.reduce((s,c) => s + ((c.quantity||0)*(c.currentPrice||0)), 0);
   const totalCost = activeHoldings.reduce((s,c) => s + ((c.quantity||0)*(c.avgCostPrice||0)), 0);
   const totalUnrealizedPnL = totalCurrentValue - totalCost;
-  const totalIncome = cryptos.flatMap(c=>(c.transactions||[])).filter(t=>["Staking Reward","Interest","Airdrop"].includes(t.type)&&t.status==="Complete").reduce((s,t)=>s+(t.amount||0),0);
+  const totalIncome = scopedCryptos.flatMap(c=>(c.transactions||[])).filter(t=>["Staking Reward","Interest","Airdrop"].includes(t.type)&&t.status==="Complete").reduce((s,t)=>s+(t.amount||0),0);
   const yieldingHoldings = activeHoldings.filter(c => (c.stakingYield||0) > 0);
   const avgYield = yieldingHoldings.length > 0 ? yieldingHoldings.reduce((s,c)=>s+(c.stakingYield||0),0)/yieldingHoldings.length : 0;
 
@@ -4213,22 +6971,20 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
     typeBreakdown[c.holdingType] = (typeBreakdown[c.holdingType]||0) + val;
   });
 
-  const filtered = cryptos.filter(c => {
-    if (filterType !== "All" && c.holdingType !== filterType) return false;
-    if (filterStatus !== "All" && c.status !== filterStatus) return false;
-    if (searchQ) {
-      const q = searchQ.toLowerCase();
-      if (!(c.symbol||"").toLowerCase().includes(q) && !(c.name||"").toLowerCase().includes(q) && !(c.wallet||"").toLowerCase().includes(q) && !(c.chain||"").toLowerCase().includes(q)) return false;
-    }
-    return true;
-  });
-
   const handleSave = (f) => {
     if (f.id) {
-      setCryptos(prev => prev.map(c => c.id === f.id ? { ...c, ...f } : c));
+      const prev = cryptos.find(c => c.id === f.id);
+      setCryptos(prevCs => prevCs.map(c => c.id === f.id ? { ...c, ...f } : c));
+      if (logAudit) logAudit("crypto", f.id, "update", prev, f, `${f.symbol||""} · ${f.wallet||""}`);
       showToast("Holding updated", "success");
     } else {
-      setCryptos(prev => [...prev, { ...f, id:"CR"+Date.now(), transactions:[] }]);
+      const id = "CR"+Date.now();
+      // Best-effort wallet account link from wallet name
+      const matchWallet = walletAccounts.find(w => w.bank === f.wallet);
+      const stamped = matchWallet ? { ...f, walletAccountId: matchWallet.id } : f;
+      const nc = { ...stamped, id, transactions:[] };
+      setCryptos(prev => [...prev, nc]);
+      if (logAudit) logAudit("crypto", id, "create", null, nc, `${nc.symbol||""} · ${nc.wallet||""}`);
       showToast("Holding added", "success");
     }
     setShowModal(false);
@@ -4237,22 +6993,37 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
+
       {/* Page header */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <div>
           <div style={{fontSize:20,fontWeight:700}}>Crypto Portfolio</div>
-          <div style={{fontSize:13,color:T.muted,marginTop:2}}>{activeHoldings.length} active holding{activeHoldings.length!==1?"s":""} · {cryptos.length} total</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>
+            {activeHoldings.length} active holding{activeHoldings.length!==1?"s":""} across {walletList.length} wallet{walletList.length!==1?"s":""}
+            {cryptos.length!==activeHoldings.length?` · ${cryptos.length} total`:""}
+          </div>
         </div>
-        <button onClick={()=>{setEditCrypto({...EMPTY_CRYPTO,id:""});setShowModal(true);}}
-          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
-          + Add Holding
-        </button>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {walletAccounts.length > 0 && (
+            <button onClick={()=>setShowCryptoTransferModal(true)}
+              style={{background:T.inputBg,color:T.text,border:`1px solid ${T.border}`,borderRadius:9,padding:"9px 14px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              ⇄ Transfer Fiat
+            </button>
+          )}
+          <button onClick={()=>{
+              if (walletAccounts.length === 0) { showToast("Add a crypto wallet first","error"); return; }
+              setShowWalletPicker(true);
+            }}
+            style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+            + Add Holding
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}
       <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:18}}>
         {[
-          {label:"Total Portfolio Value",value:fmtCompact(totalCurrentValue),sub:`Cost basis: ${fmtCompact(totalCost)}`,icon:"💎",color:T.text},
+          {label:"Portfolio Value",value:fmtCompact(totalCurrentValue),sub:`Cost basis: ${fmtCompact(totalCost)}`,icon:"💎",color:T.text},
           {label:"Unrealised P&L",value:(totalUnrealizedPnL>=0?"+":"")+fmtCompact(totalUnrealizedPnL),sub:`${totalCost>0?((totalUnrealizedPnL/totalCost)*100).toFixed(1):0}% return`,icon:"📈",color:totalUnrealizedPnL>=0?T.up:T.down},
           {label:"Yield Earned",value:fmtCompact(totalIncome),sub:"Staking + lending + airdrops",icon:"🎁",color:T.up},
           {label:"Avg Staking/Yield APY",value:`${avgYield.toFixed(2)}%`,sub:`${yieldingHoldings.length} yielding position${yieldingHoldings.length!==1?"s":""}`,icon:"🔒",color:T.accent},
@@ -4293,112 +7064,337 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
         </Card>
       )}
 
-      {/* Filter toolbar */}
+      {/* Filter toolbar — search across wallets */}
       <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
         <div style={{position:"relative",flex:"1 1 200px"}}>
           <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
-          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search symbol, name, wallet, chain…"
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search wallet, chain…"
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
         </div>
-        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-          {["All",...CRYPTO_STATUS_OPTS].map(s=>(
-            <button key={s} onClick={()=>setFilterStatus(s)}
-              style={{background:filterStatus===s?T.selected:T.inputBg,color:filterStatus===s?T.selectedText:T.muted,border:`1px solid ${filterStatus===s?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterStatus===s?600:400}}>
-              {s}
-            </button>
-          ))}
-        </div>
-        <select value={filterType} onChange={e=>setFilterType(e.target.value)}
-          style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 12px",fontSize:12,fontFamily:"inherit",color:T.text,cursor:"pointer",outline:"none"}}>
-          {["All",...CRYPTO_TYPES].map(t=><option key={t} value={t}>{t}</option>)}
-        </select>
-        <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filtered.length} of {cryptos.length}</span>
+        <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{walletStats.length} wallet{walletStats.length!==1?"s":""}</span>
       </div>
 
-      {/* Table / Mobile cards */}
-      {filtered.length === 0 ? (
-        <Card style={{padding:"48px 24px",textAlign:"center"}}>
-          <div style={{fontSize:32,marginBottom:12}}>🪙</div>
-          <div style={{fontSize:14,fontWeight:600}}>No holdings found</div>
-          <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting filters or add a new holding</div>
-        </Card>
-      ) : isMobile ? (
-        <Card style={{padding:0,overflow:"hidden"}}>
-          {filtered.map(c => {
-            const tc = CRYPTO_TYPE_CONFIG[c.holdingType] || {icon:"🪙",color:T.muted,bg:T.inputBg};
-            const value = (c.quantity||0)*(c.currentPrice||0);
-            const cost = (c.quantity||0)*(c.avgCostPrice||0);
-            const pnl = value - cost;
-            return <MobileListItem key={c.id} onClick={()=>{setSelectedCrypto(c);setDrawerTab("overview");}}
-              icon={tc.icon} iconBg={tc.bg} title={`${c.symbol} · ${c.name}`} subtitle={`${c.wallet} · ${c.chain}`}
-              value={fmtCompact(value)} valueColor={T.text} valueSub={`${(+c.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} ${c.symbol}`}
-              badge={c.status} badgeBg={c.status==="Active"?T.upBg:T.inputBg} badgeColor={c.status==="Active"?T.up:T.muted}
-              extra={pnl !== 0 ? <span style={{fontSize:11,fontWeight:600,color:pnl>=0?T.up:T.down}}>{pnl>=0?"+":""}{fmtCompact(pnl)}</span> : null}
-            />;
-          })}
-        </Card>
-      ) : (
-        <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
-          <SortHeader gridCols="2.2fr 1fr 1.2fr 1.1fr 1fr 1fr 0.8fr" sortKey={crSort.sortKey} sortDir={crSort.sortDir} onSort={crSort.onSort}
-            columns={[["Asset / Wallet","left","name"],["Type","left","type"],["Holdings","right","value"],["Avg / Current","right","price"],["APY","right","yield"],["P&L","right","pnl"],["Status","left","status"]]}/>
-          {crSort.sortFn(filtered, (c, k) => {
-            const value = (c.quantity||0)*(c.currentPrice||0);
-            const cost = (c.quantity||0)*(c.avgCostPrice||0);
-            if (k==="name") return (c.symbol||"").toLowerCase();
-            if (k==="type") return (c.holdingType||"").toLowerCase();
-            if (k==="value") return value;
-            if (k==="price") return c.currentPrice||0;
-            if (k==="yield") return c.stakingYield||0;
-            if (k==="pnl") return value - cost;
-            if (k==="status") return c.status;
-            return 0;
-          }).map((c, i) => {
-            const tc = CRYPTO_TYPE_CONFIG[c.holdingType] || {icon:"🪙",color:T.muted,bg:T.inputBg};
-            const value = (c.quantity||0)*(c.currentPrice||0);
-            const cost = (c.quantity||0)*(c.avgCostPrice||0);
-            const pnl = value - cost;
-            const pnlPct = cost > 0 ? (pnl/cost*100) : 0;
-            return (
-              <div key={c.id} onClick={()=>{setSelectedCrypto(c);setDrawerTab("overview");}}
-                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1.1fr 1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:i<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
-                  opacity:c.status!=="Active"?0.55:1,background:c.status!=="Active"?T.sidebar:""}}
-                onMouseEnter={e=>e.currentTarget.style.background=T.hover}
-                onMouseLeave={e=>e.currentTarget.style.background=(c.status!=="Active"?T.sidebar:"")}>
-                <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                  <div style={{width:34,height:34,borderRadius:9,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{tc.icon}</div>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:600}}>{c.symbol} · {c.name}</div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{c.wallet} · {c.chain}</div>
+      {/* Wallet-first table */}
+      {(() => {
+        const filteredWallets = walletStats.filter(s => {
+          if (!searchQ) return true;
+          const q = searchQ.toLowerCase();
+          return (s.wallet.bank||"").toLowerCase().includes(q)
+            || (s.wallet.accountName||"").toLowerCase().includes(q)
+            || (s.wallet.chain||"").toLowerCase().includes(q)
+            || (s.wallet.walletKind||"").toLowerCase().includes(q);
+        });
+        if (filteredWallets.length === 0) return (
+          <Card style={{padding:"48px 24px",textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:12}}>🪙</div>
+            <div style={{fontSize:14,fontWeight:600}}>No wallets found</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting search or add a wallet</div>
+          </Card>
+        );
+        if (isMobile) return (
+          <Card style={{padding:0,overflow:"hidden"}}>
+            {filteredWallets.map(s => {
+              const bc = BANK_COLORS[s.wallet.bank] || { from:"#374151", to:"#1F2937" };
+              const total = s.value + s.fiatSGD;
+              return <MobileListItem key={s.wallet.id} onClick={()=>{setWalletDrawerTab("holdings");setSelectedWallet(s.wallet);}}
+                icon="🪙" iconBg={`linear-gradient(135deg,${bc.from},${bc.to})`}
+                title={s.wallet.bank} subtitle={`${s.wallet.accountName} · ${s.wallet.chain||""}`}
+                value={fmtCompact(total)} valueColor={T.text}
+                valueSub={`${s.holdingsCount} coin${s.holdingsCount!==1?"s":""}`}
+                badge={s.wallet.walletKind} badgeBg={T.inputBg} badgeColor={T.muted}
+              />;
+            })}
+          </Card>
+        );
+        return (
+          <Card style={{padding:0,overflow:"hidden"}}>
+            <SortHeader gridCols="2.2fr 1fr 0.9fr 1fr 1.1fr 1fr 0.9fr" sortKey={walSort.sortKey} sortDir={walSort.sortDir} onSort={walSort.onSort}
+              columns={[["Wallet","left","wallet"],["Chain","left","chain"],["Coins","right","count"],["Cash (SGD)","right","fiat"],["Crypto Value","right","value"],["P&L","right","pnl"],["Return","right","pnlPct"]]}/>
+            {walSort.sortFn(filteredWallets, (s, k) => {
+              if (k==="wallet") return (s.wallet.bank||"").toLowerCase();
+              if (k==="chain") return (s.wallet.chain||"").toLowerCase();
+              if (k==="count") return s.holdingsCount;
+              if (k==="fiat") return s.fiatSGD;
+              if (k==="value") return s.value;
+              if (k==="pnl") return s.pnl;
+              if (k==="pnlPct") return s.pnlPct;
+              return 0;
+            }).map((s, i) => {
+              const bc = BANK_COLORS[s.wallet.bank] || { from:"#374151", to:"#1F2937" };
+              const bals = acctBalances(s.wallet);
+              return (
+                <div key={s.wallet.id} onClick={()=>{setWalletDrawerTab("holdings");setSelectedWallet(s.wallet);}}
+                  style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 0.9fr 1fr 1.1fr 1fr 0.9fr",padding:"13px 20px",borderBottom:i<filteredWallets.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer"}}
+                  onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                  onMouseLeave={e=>e.currentTarget.style.background=""}>
+                  {/* Wallet */}
+                  <div style={{display:"flex",gap:10,alignItems:"center",minWidth:0}}>
+                    <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0,color:"#fff"}}>🪙</div>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600}}>{s.wallet.bank}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.wallet.accountName} · {s.wallet.walletKind}</div>
+                    </div>
+                  </div>
+                  {/* Chain */}
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:12,color:T.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.wallet.chain || "—"}</div>
+                    {s.wallet.walletAddress && <div style={{fontSize:10,color:T.dim,marginTop:1,fontFamily:"monospace"}}>{s.wallet.walletAddress}</div>}
+                  </div>
+                  {/* Coins */}
+                  <div style={{textAlign:"right",fontSize:13,fontWeight:600}}>{s.holdingsCount}</div>
+                  {/* Cash (SGD) */}
+                  <div style={{textAlign:"right",fontSize:12,fontWeight:600}}>{fmtCompact(s.fiatSGD)}</div>
+                  {/* Crypto Value */}
+                  <div style={{textAlign:"right",fontSize:13,fontWeight:700}}>{fmtCompact(s.value)}</div>
+                  {/* P&L */}
+                  <div style={{textAlign:"right",fontSize:12,fontWeight:600,color:s.pnl>=0?T.up:T.down}}>{s.pnl>=0?"+":""}{fmtCompact(s.pnl)}</div>
+                  {/* Return */}
+                  <div style={{textAlign:"right",fontSize:12,fontWeight:600,color:s.pnlPct>=0?T.up:T.down}}>{s.pnlPct>=0?"+":""}{s.pnlPct.toFixed(1)}%</div>
+                </div>
+              );
+            })}
+          </Card>
+        );
+      })()}
+
+      {/* ── Wallet drawer — drill-down into one wallet ── */}
+      {selectedWallet && (() => {
+        const w = walletAccounts.find(a => a.id === selectedWallet.id) || selectedWallet;
+        const coins = cryptos.filter(c => c.walletAccountId === w.id || c.wallet === w.bank || c.wallet === w.accountName);
+        const bc = BANK_COLORS[w.bank] || { from:"#374151", to:"#1F2937" };
+        const bals = acctBalances(w);
+        const fiatSGD = acctCashSGD(w);
+        const cryptoValue = coins.filter(c => c.status === "Active").reduce((s,c) => s + ((c.quantity||0)*(c.currentPrice||0)), 0);
+        const cryptoCost  = coins.filter(c => c.status === "Active").reduce((s,c) => s + ((c.quantity||0)*(c.avgCostPrice||0)), 0);
+        const cryptoPnL = cryptoValue - cryptoCost;
+        const cryptoPnLPct = cryptoCost > 0 ? (cryptoPnL/cryptoCost*100) : 0;
+        return (
+          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+            onClick={e=>{if(e.target===e.currentTarget) setSelectedWallet(null);}}>
+            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              {/* Header — matches Brokerage drawer style */}
+              <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+                    <div style={{width:32,height:32,borderRadius:8,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>🪙</div>
+                    <div style={{minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                        <div style={{fontSize:14,fontWeight:800}}>{w.bank}</div>
+                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.accentBg,color:T.accent}}>{w.walletKind}</span>
+                        {w.chain && <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{w.chain}</span>}
+                      </div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:3,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                        <span>{w.accountName}</span>
+                        {w.walletAddress && <AddressPill address={w.walletAddress}/>}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
+                    <button onClick={()=>setBuyCryptoModalWallet(w)}
+                      style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:7,height:28,padding:"0 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",lineHeight:1}}>
+                      + Add Holding
+                    </button>
+                    <button onClick={()=>setSelectedWallet(null)} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:14,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
                   </div>
                 </div>
-                <div style={{fontSize:12,color:T.muted}}>{c.holdingType}</div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:13,fontWeight:700}}>{fmtCompact(value)}</div>
-                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>{(+c.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} {c.symbol}</div>
+                {/* Stat cards */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:14}}>
+                  {[
+                    { l:"Crypto Value", v:fmtCompact(cryptoValue), c:T.text },
+                    { l:"Cost Basis", v:fmtCompact(cryptoCost), c:T.muted },
+                    { l:"Unrealised P&L", v:(cryptoPnL>=0?"+":"")+fmtCompact(cryptoPnL), c:cryptoPnL>=0?T.up:T.down, sub:`${cryptoPnL>=0?"+":""}${cryptoPnLPct.toFixed(1)}%` },
+                    { l:"Cash Balance", v:fmtCompact(fiatSGD), c:T.text, sub:"SGD" },
+                  ].map(s=>(
+                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
+                      <div style={{fontSize:11,color:T.muted,fontWeight:500}}>{s.l}</div>
+                      <div style={{fontSize:14,fontWeight:700,marginTop:3,color:s.c}}>{s.v}</div>
+                      {s.sub && <div style={{fontSize:10,color:s.c,marginTop:1}}>{s.sub}</div>}
+                    </div>
+                  ))}
                 </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:12,color:T.text}}>S${(+c.currentPrice).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
-                  <div style={{fontSize:10,color:T.dim,marginTop:1}}>Avg S${(+c.avgCostPrice).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  {c.stakingYield > 0 ? <div style={{fontSize:12,fontWeight:600,color:T.accent}}>{c.stakingYield}%</div> : <div style={{fontSize:12,color:T.dim}}>—</div>}
-                  {c.lendingProtocol && <div style={{fontSize:10,color:T.dim,marginTop:1}}>{c.lendingProtocol}</div>}
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:12,fontWeight:600,color:pnl>=0?T.up:T.down}}>{pnl>=0?"+":""}{fmtCompact(pnl)}</div>
-                  <div style={{fontSize:10,color:pnl>=0?T.up:T.down,marginTop:1}}>{pnl>=0?"+":""}{pnlPct.toFixed(1)}%</div>
-                </div>
-                <div>
-                  <Badge bg={c.status==="Active"?T.upBg:T.inputBg}
-                    color={c.status==="Active"?T.up:T.muted}>
-                    {c.status}
-                  </Badge>
+                {/* Pill tabs */}
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {(() => {
+                    const txCount = coins.reduce((s,c) => s + ((c.transactions||[]).length), 0);
+                    return [
+                      { id:"holdings", label:`Holdings (${coins.length})` },
+                      { id:"history",  label:`Transactions${txCount>0?` (${txCount})`:""}` },
+                      { id:"postings", label:"Postings" },
+                    ];
+                  })().map(t => (
+                    <button key={t.id} onClick={()=>setWalletDrawerTab(t.id)}
+                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:walletDrawerTab===t.id?T.selected:T.inputBg,
+                        color:walletDrawerTab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:walletDrawerTab===t.id?700:400}}>
+                      {t.label}
+                    </button>
+                  ))}
                 </div>
               </div>
-            );
-          })}
-        </Card>
-      )}
+
+              {/* Tab content */}
+              <div style={{flex:1,overflowY:"auto",minHeight:0}}>
+                <div style={{padding:"18px 22px 32px"}}>
+                  {walletDrawerTab === "holdings" && (
+                    coins.length === 0 ? (
+                      <div style={{padding:"28px",textAlign:"center",color:T.muted,fontSize:13,border:`1px dashed ${T.border}`,borderRadius:10}}>
+                        No coins in this wallet yet. Use + Add Holding to record a buy or transfer in.
+                      </div>
+                    ) : (
+                      <Card style={{padding:0,overflow:"hidden"}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr 1fr 1fr 1fr 1fr",padding:"9px 14px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:500}}>
+                          <div>Asset</div>
+                          <div style={{textAlign:"right"}}>Quantity</div>
+                          <div style={{textAlign:"right"}}>Avg Cost</div>
+                          <div style={{textAlign:"right"}}>Mkt Price</div>
+                          <div style={{textAlign:"right"}}>Value (SGD)</div>
+                          <div style={{textAlign:"right"}}>P&L</div>
+                        </div>
+                        {coins.map((c, i) => {
+                          const tc = CRYPTO_TYPE_CONFIG[c.holdingType] || {icon:"🪙",color:T.muted,bg:T.inputBg};
+                          const v = (c.quantity||0)*(c.currentPrice||0);
+                          const co = (c.quantity||0)*(c.avgCostPrice||0);
+                          const p = v - co;
+                          const pp = co > 0 ? (p/co*100) : 0;
+                          return (
+                            <div key={c.id} onClick={()=>{setDrawerTab("overview");setSelectedCrypto(c);}}
+                              style={{display:"grid",gridTemplateColumns:"1.6fr 1fr 1fr 1fr 1fr 1fr",padding:"11px 14px",borderBottom:i<coins.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center",cursor:"pointer",opacity:c.status!=="Active"?0.55:1}}
+                              onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+                              onMouseLeave={e=>e.currentTarget.style.background=""}>
+                              <div style={{display:"flex",gap:8,alignItems:"center",minWidth:0}}>
+                                <div style={{width:28,height:28,borderRadius:7,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>{tc.icon}</div>
+                                <div style={{minWidth:0}}>
+                                  <div style={{fontSize:12,fontWeight:600}}>{c.symbol}</div>
+                                  <div style={{fontSize:10,color:T.muted,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</div>
+                                </div>
+                              </div>
+                              <div style={{textAlign:"right"}}>{(+c.quantity).toLocaleString(undefined,{maximumFractionDigits:6})}</div>
+                              <div style={{textAlign:"right",color:T.muted}}>S${(+c.avgCostPrice).toFixed(2)}</div>
+                              <div style={{textAlign:"right"}}>S${(+c.currentPrice).toFixed(2)}</div>
+                              <div style={{textAlign:"right",fontWeight:700}}>{fmtCompact(v)}</div>
+                              <div style={{textAlign:"right"}}>
+                                <div style={{fontWeight:600,color:p>=0?T.up:T.down}}>{p>=0?"+":""}{fmtCompact(p)}</div>
+                                <div style={{fontSize:10,color:p>=0?T.up:T.down,marginTop:1}}>{p>=0?"+":""}{pp.toFixed(1)}%</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </Card>
+                    )
+                  )}
+                  {walletDrawerTab === "history" && (
+                    (() => {
+                      const allTxs = coins.flatMap(c => (c.transactions||[]).map(t => ({ ...t, _sym: c.symbol })));
+                      if (allTxs.length === 0) return (
+                        <div style={{padding:"28px",textAlign:"center",color:T.muted,fontSize:13,border:`1px dashed ${T.border}`,borderRadius:10}}>
+                          No transactions recorded in this wallet yet.
+                        </div>
+                      );
+                      return (
+                        <Card style={{padding:0,overflow:"hidden"}}>
+                          <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr 0.8fr 1fr 1fr",padding:"9px 14px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:500}}>
+                            <div>Date</div>
+                            <div>Type</div>
+                            <div>Asset</div>
+                            <div style={{textAlign:"right"}}>Quantity</div>
+                            <div style={{textAlign:"right"}}>Amount</div>
+                          </div>
+                          {allTxs.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map((t,i) => (
+                            <div key={t.id||i} style={{display:"grid",gridTemplateColumns:"1.2fr 1fr 0.8fr 1fr 1fr",padding:"10px 14px",borderBottom:i<allTxs.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center"}}>
+                              <div>{t.date}</div>
+                              <div>{t.type}</div>
+                              <div style={{fontWeight:600}}>{t._sym}</div>
+                              <div style={{textAlign:"right"}}>{t.qty ? (+t.qty).toLocaleString(undefined,{maximumFractionDigits:6}) : "—"}</div>
+                              <div style={{textAlign:"right",fontWeight:600}}>S${(+t.amount||0).toFixed(2)}</div>
+                            </div>
+                          ))}
+                        </Card>
+                      );
+                    })()
+                  )}
+                  {walletDrawerTab === "postings" && (() => {
+                    const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+                    const mono  = "'Courier New',Courier,monospace";
+                    const fmtA = (v) => "S$" + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+                    const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
+                    const cashAcct = `Assets:Crypto:${(w.bank||"Wallet").replace(/[ .]/g,"")}:Cash`;
+                    const journalRows = [];
+                    let txCount = 0;
+                    coins.forEach(c => {
+                      const cryptoAcct = `Assets:Crypto:${(c.chain||"Other").replace(/ /g,"")}:${c.symbol}`;
+                      const incomeAcct = `Income:Crypto:${c.holdingType==="Staked"?"Staking":c.holdingType==="Lending / DeFi"?"Lending":"Other"}`;
+                      const txs = (c.transactions||[]).filter(t=>t.status==="Complete"&&t.amount>0).slice().sort((a,b)=>a.date.localeCompare(b.date));
+                      txs.forEach(tx => {
+                        txCount++;
+                        if (["Buy","Deposit","Stake"].includes(tx.type)) {
+                          journalRows.push(
+                            {date:tx.date,sym:c.symbol,desc:`${tx.type} — ${tx.notes||c.symbol}`,account:cryptoAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                            {date:null,sym:"",desc:"",account:cashAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                          );
+                        } else if (["Sell","Withdraw","Unstake"].includes(tx.type)) {
+                          journalRows.push(
+                            {date:tx.date,sym:c.symbol,desc:`${tx.type} — ${tx.notes||c.symbol}`,account:cashAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                            {date:null,sym:"",desc:"",account:cryptoAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                          );
+                        } else if (["Staking Reward","Interest","Airdrop"].includes(tx.type)) {
+                          journalRows.push(
+                            {date:tx.date,sym:c.symbol,desc:`${tx.type} — ${tx.notes||c.symbol}`,account:cryptoAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                            {date:null,sym:"",desc:"",account:incomeAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                          );
+                        }
+                      });
+                    });
+                    if (journalRows.length === 0) return (
+                      <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}><div style={{fontSize:32,marginBottom:10}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No entries to post yet</div><div style={{fontSize:11,marginTop:4,color:T.dim}}>Record buys, sells, transfers, or rewards on a coin to see journal postings.</div></div>
+                    );
+                    return (
+                      <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
+                        <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`}}>
+                          <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
+                          <div style={{fontSize:12,color:T.accent,marginTop:3,fontFamily:inter}}>Double-entry bookkeeping · PTA compliant · {txCount} transaction{txCount!==1?"s":""} across {coins.length} coin{coins.length!==1?"s":""}</div>
+                        </div>
+                        <div style={{overflowX:"auto",overflowY:"auto",maxHeight:520}}>
+                          <table style={{width:"100%",borderCollapse:"collapse"}}>
+                            <thead><tr style={{borderBottom:`1px solid ${T.border}`}}>
+                              {["Date","Coin","Account","Description","Debit","Credit"].map((h,hi)=>(
+                                <th key={h} style={{padding:"9px 16px",textAlign:hi>=4?"right":"left",width:hi===0?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
+                              ))}
+                            </tr></thead>
+                            <tbody>
+                              {journalRows.map((row,ri)=>(
+                                <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
+                                  <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
+                                    {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
+                                  </td>
+                                  <td style={{padding:"11px 16px",verticalAlign:"top",fontSize:12,fontWeight:600,color:T.text,fontFamily:inter}}>{row.sym||""}</td>
+                                  <td style={{padding:"11px 16px",verticalAlign:"top"}}><span style={{fontFamily:mono,fontSize:12,color:T.text}}>{row.account}</span></td>
+                                  <td style={{padding:"11px 16px",verticalAlign:"top",fontSize:12,color:T.muted,fontFamily:inter}}>{row.desc}</td>
+                                  <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                    {row.debit?<span style={{fontSize:13,fontWeight:700,color:T.up,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                  </td>
+                                  <td style={{padding:"11px 16px",verticalAlign:"top",textAlign:"right",whiteSpace:"nowrap"}}>
+                                    {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
+                          <div style={{fontSize:12,fontWeight:700,marginBottom:6,fontFamily:inter}}>Double-Entry Accounting</div>
+                          <div style={{fontSize:11,color:T.muted,lineHeight:1.8,fontFamily:inter}}>
+                            <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Buy / Stake / Deposit → increases crypto holdings; Sell / Withdraw → increases cash; Rewards → increase holdings</div>
+                            <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Buy → reduces cash; Sell / Unstake → reduces holdings; Staking Reward / Interest / Airdrop → income recognised</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ══ CRYPTO DETAIL DRAWER ══ */}
       {selectedCrypto && (() => {
@@ -4418,16 +7414,19 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
         const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
 
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
+          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:210,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
             onClick={e=>{if(e.target===e.currentTarget) setSelectedCrypto(null);}}>
-            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
+            <div style={{width:"min(720px, 92vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.25)",display:"flex",flexDirection:"column"}}>
               {/* Header */}
               <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
                 <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
                   <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:16,fontWeight:700}}>{crypto.symbol} · {crypto.name}</div>
-                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{crypto.wallet} · {crypto.chain}{crypto.walletAddress?` · ${crypto.walletAddress}`:""}</div>
+                    <div style={{fontSize:12,color:T.muted,marginTop:2,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      <span>{crypto.wallet} · {crypto.chain}</span>
+                      {crypto.walletAddress && <AddressPill address={crypto.walletAddress}/>}
+                    </div>
                   </div>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <Badge bg={crypto.status==="Active"?T.upBg:T.inputBg} color={crypto.status==="Active"?T.up:T.muted}>{crypto.status}</Badge>
@@ -4448,7 +7447,7 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
                   ))}
                 </div>
                 <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
                     <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
                       style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
                         color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
@@ -4469,15 +7468,15 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
                         ["Chain / Network",crypto.chain],
                         ["Wallet / Venue",crypto.wallet],
                         ["Wallet Type",crypto.walletType],
-                        crypto.walletAddress?["Wallet Address",crypto.walletAddress]:null,
+                        crypto.walletAddress?["Wallet Address",<AddressPill address={crypto.walletAddress} size="md"/>]:null,
                         crypto.lendingProtocol?["Protocol",crypto.lendingProtocol]:null,
                         crypto.stakingYield>0?["Yield / APY",`${crypto.stakingYield}%`]:null,
                         crypto.acquisitionDate?["First Acquired",crypto.acquisitionDate]:null,
                         ["Currency",crypto.currency],
                       ].filter(Boolean).map(([k,v])=>(
-                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`,gap:12}}>
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`,gap:12,alignItems:"center"}}>
                           <span style={{fontSize:12,color:T.muted,flexShrink:0}}>{k}</span>
-                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",fontFamily:k==="Wallet Address"?mono:inter,wordBreak:"break-all"}}>{v}</span>
+                          <span style={{fontSize:12,fontWeight:600,textAlign:"right",fontFamily:inter,wordBreak:"break-all"}}>{v}</span>
                         </div>
                       ))}
                     </div>
@@ -4546,6 +7545,8 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
                                   <span>{tx.date}</span>
                                   {tx.method&&<span style={{fontSize:10,background:T.inputBg,borderRadius:4,padding:"1px 6px"}}>{tx.method}</span>}
                                   {tx.ref&&<span style={{fontSize:10,color:T.dim,fontFamily:"monospace"}}>{tx.ref}</span>}
+                                  {tx.counterpartyAddress && <AddressPill address={tx.counterpartyAddress} prefix={tx.type==="Transfer In"?"from":"to"}/>}
+                                  {tx.gasFees>0&&<span style={{fontSize:10,background:T.downBg,color:T.down,borderRadius:4,padding:"1px 6px"}}>⛽ S${(+tx.gasFees).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>}
                                 </div>
                               </div>
                               <div style={{textAlign:"right",flexShrink:0}}>
@@ -4628,6 +7629,12 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
                     </div>
                   );
                 })()}
+                {drawerTab === "manage" && (
+                  <CryptoActionPanel crypto={crypto} setCryptos={setCryptos} auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+                )}
+                {drawerTab === "history" && (
+                  <AuditLogPanel auditLog={auditLog} entityType="crypto" entityId={crypto.id}/>
+                )}
               </div>
             </div>
           </div>
@@ -4647,6 +7654,7 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
             else if (["Sell","Transfer Out","Withdraw","Unstake","Fee"].includes(tx.type)) nextQty = Math.max(0, (+c.quantity||0) - (+tx.qty||0));
             return { ...c, transactions: nextTxs, quantity: nextQty };
           }));
+          if (logAudit) logAudit("crypto", crypto.id, "add-transaction", null, newTx, `${tx.type} · ${tx.qty||""} ${crypto.symbol}`);
           setShowTxModal(false);
           showToast(`${tx.type} recorded`, "success");
         }} onClose={()=>setShowTxModal(false)}/>;
@@ -4656,6 +7664,179 @@ function CryptoScreen({ cryptos, setCryptos, showToast }) {
       {showModal && editCrypto && (
         <CryptoModal crypto={editCrypto} onSave={handleSave} onClose={()=>{setShowModal(false);setEditCrypto(null);}}/>
       )}
+
+      {/* Wallet picker — page-level + Add Holding flow */}
+      {showWalletPicker && walletAccounts.length > 0 && (
+        <AccountPickerModal accounts={walletAccounts}
+          onPick={(w) => { setShowWalletPicker(false); setBuyCryptoModalWallet(w); }}
+          onClose={()=>setShowWalletPicker(false)}/>
+      )}
+
+      {/* Transfer Fiat modal — cash account ↔ crypto wallet */}
+      {showCryptoTransferModal && walletAccounts.length > 0 && (
+        <StocksTransferModal
+          brokerAccount={selectedWallet || walletAccounts[0]}
+          brokerOptions={walletAccounts}
+          brokerLabel="Wallet"
+          allowedCcys={["SGD"]}
+          cashAccounts={(accounts||[]).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet")}
+          accounts={accounts} setAccounts={setAccounts} setTransactions={setTransactions}
+          onClose={()=>setShowCryptoTransferModal(false)}
+          onComplete={()=>{ setShowCryptoTransferModal(false); showToast("Transfer recorded","success"); }}
+          logAudit={logAudit}/>
+      )}
+
+      {/* Buy Crypto modal — scoped to a wallet, opens from wallet drawer */}
+      {buyCryptoModalWallet && (
+        <BuyCryptoModal
+          wallet={buyCryptoModalWallet}
+          onSave={(payload) => {
+            const id = "CR"+Date.now();
+            const nc = {
+              ...EMPTY_CRYPTO, id, status:"Active",
+              symbol: payload.symbol, name: payload.name,
+              holdingType: payload.holdingType,
+              chain: buyCryptoModalWallet.chain,
+              wallet: buyCryptoModalWallet.bank,
+              walletType: buyCryptoModalWallet.walletKind,
+              walletAddress: buyCryptoModalWallet.walletAddress || "",
+              walletAccountId: buyCryptoModalWallet.id,
+              quantity: payload.quantity,
+              avgCostPrice: payload.unitCost,
+              currentPrice: payload.unitCost,
+              currency: "SGD",
+              acquisitionDate: payload.date,
+              transactions: [{
+                id:"CTX"+Date.now(), date:payload.date, type:payload.txType,
+                qty:payload.quantity, price:payload.unitCost, amount:payload.quantity*payload.unitCost,
+                gasFees: payload.gasFees || 0,
+                counterpartyAddress: payload.counterpartyAddress || "",
+                method: buyCryptoModalWallet.bank || "",
+                notes:payload.notes, status:"Complete",
+              }],
+            };
+            setCryptos(prev => [...prev, nc]);
+            if (logAudit) logAudit("crypto", id, "create", null, nc, `${nc.symbol} · ${nc.wallet}`);
+            showToast(`${payload.txType} recorded — ${payload.quantity} ${payload.symbol}`, "success");
+            setBuyCryptoModalWallet(null);
+          }}
+          onClose={()=>setBuyCryptoModalWallet(null)}/>
+      )}
+    </div>
+  );
+}
+
+// ── Buy Crypto modal — scoped to a wallet (Buy / Transfer In only) ──
+function BuyCryptoModal({ wallet, onSave, onClose }) {
+  const [txType, setTxType] = useState("Buy");
+  const [form, setForm] = useState({
+    symbol:"", name:"", holdingType:"Token",
+    quantity:"", unitCost:"",
+    date: new Date().toISOString().slice(0,10),
+    gasFees:"", counterpartyAddress:"",
+    notes:"",
+  });
+  const set = (k,v) => setForm(f => ({ ...f, [k]:v }));
+  const qty = parseFloat(form.quantity)||0;
+  const unit = parseFloat(form.unitCost)||0;
+  const gas = parseFloat(form.gasFees)||0;
+  const total = qty * unit;
+  const canSubmit = form.symbol && form.quantity && form.unitCost && form.date;
+
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:320,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:T.bg,borderRadius:16,width:"min(620px, 100%)",maxHeight:"90vh",display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,overflow:"hidden"}}>
+        <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <div style={{fontSize:16,fontWeight:800}}>Add Holding</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{padding:"22px 24px",overflowY:"auto",flex:1,minHeight:0,display:"flex",flexDirection:"column",gap:18}}>
+          {/* Type pills — Buy / Transfer In only */}
+          <div>
+            <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Transaction Type</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {["Buy","Transfer In"].map(t => {
+                const active = txType === t;
+                const tColor = t === "Buy" ? T.up : T.accent;
+                return (
+                  <button key={t} onClick={()=>setTxType(t)}
+                    style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${active?tColor:T.border}`,
+                      background:active?`${tColor}15`:T.inputBg,color:active?tColor:T.muted,
+                      cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500}}>
+                    {t === "Buy" ? "📥" : "⬇"} {t}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>Asset Details</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+              <div><Label required>Ticker</Label>
+                <Input value={form.symbol} onChange={e=>set("symbol", e.target.value.toUpperCase())} placeholder="e.g. BTC"/>
+              </div>
+              <div><Label required>Date</Label>
+                <Input type="date" value={form.date} onChange={e=>set("date", e.target.value)}/>
+              </div>
+              <div><Label required>Quantity</Label>
+                <Input type="number" step="1" value={form.quantity} onChange={e=>set("quantity", e.target.value)} placeholder="0"/>
+              </div>
+              <div><Label required>Price per Unit (SGD)</Label>
+                <Input type="number" value={form.unitCost} onChange={e=>set("unitCost", e.target.value)} placeholder="0.00"/>
+              </div>
+              <MoreOptions count={txType==="Transfer In"?5:4}>
+                <div><Label>Name</Label>
+                  <Input value={form.name} onChange={e=>set("name", e.target.value)} placeholder="Bitcoin"/>
+                </div>
+                <div><Label>Holding Type</Label>
+                  <Sel value={form.holdingType} onChange={e=>set("holdingType", e.target.value)} options={CRYPTO_TYPES}/>
+                </div>
+                <div><Label>Gas Fees (SGD)</Label>
+                  <Input type="number" value={form.gasFees} onChange={e=>set("gasFees", e.target.value)} placeholder="0.00"/>
+                </div>
+                {txType === "Transfer In" && (
+                  <div style={{gridColumn:"1 / -1"}}>
+                    <Label>Source Wallet Address</Label>
+                    <Input value={form.counterpartyAddress} onChange={e=>set("counterpartyAddress", e.target.value)}
+                      placeholder="From: 0x... or bc1q..."/>
+                  </div>
+                )}
+                <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                  <textarea value={form.notes} onChange={e=>set("notes", e.target.value)} rows={2} placeholder="Optional notes…"
+                    style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+                </div>
+              </MoreOptions>
+            </div>
+            {(qty > 0 && unit > 0) && (
+              <div style={{marginTop:14,padding:"10px 12px",background:T.inputBg,borderRadius:8,display:"flex",flexDirection:"column",gap:6,fontSize:12}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <span style={{color:T.muted}}>Total ({txType})</span>
+                  <span style={{fontWeight:700}}>S${total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                </div>
+                {gas > 0 && (
+                  <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px dashed ${T.border}`,paddingTop:6}}>
+                    <span style={{color:T.muted}}>Gas Fees</span>
+                    <span style={{fontWeight:600,color:T.down}}>−S${gas.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+            <button onClick={onClose}
+              style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+              Cancel
+            </button>
+            <button onClick={()=>onSave({ ...form, txType, quantity:qty, unitCost:unit, gasFees:gas })} disabled={!canSubmit}
+              style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit",opacity:canSubmit?1:0.4}}>
+              Add Holding
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -4810,13 +7991,15 @@ function PETxModalInner({ inv, onSave, onClose }) {
     amount: 0, method: "Wire Transfer", ref: "", notes: "",
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const isOut = ["Capital Call","Management Fee"].includes(f.type);
   const isValOnly = f.type === "Valuation Update";
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{inv.name} · {inv.manager}</div>
         <div style={{marginBottom:14}}>
           <Label required>Transaction Type</Label>
@@ -4843,12 +8026,15 @@ function PETxModalInner({ inv, onSave, onClose }) {
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Capital call 20% of commitment, portfolio co exit…"
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
         </div>
-        <div style={{background:isValOnly?T.accentBg:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{color:isValOnly?T.accent:isOut?T.down:T.up,fontWeight:600}}>
-            {isValOnly?"📊 NAV marked":isOut?"📤 Capital called / fee paid":"📥 Distribution / income received"}
-          </span>
-          <span style={{fontWeight:700,color:isValOnly?T.accent:isOut?T.down:T.up}}>{isValOnly?"":(isOut?"-":"+")} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
-        </div>
+        <FlowBanner type={f.type} amount={f.amount} label={
+          f.type==="Capital Call" ? "📤 Capital called"
+          : f.type==="Management Fee" ? "⚠️ Management fee paid"
+          : f.type==="Distribution" ? "📥 Distribution received"
+          : f.type==="Income / Gain" ? "🎁 Income / realised gain"
+          : f.type==="Exit / Realisation" ? "🏁 Exit proceeds"
+          : f.type==="Valuation Update" ? "📊 NAV marked (no cash flow)"
+          : "💰 Transaction"
+        }/>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
           <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
@@ -4870,45 +8056,44 @@ function PEModal({ inv, onSave, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:580,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Investment" : "Add VC/PE Investment"}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:800}}>{f.id ? "Edit Investment" : "Add VC/PE Investment"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
           <div><Label required>Investment Type</Label><Sel value={f.investmentType} onChange={e=>set("investmentType",e.target.value)} options={PE_TYPES}/></div>
           <div><Label required>{isFund?"Fund Name":"Company Name"}</Label><Input value={f.name} onChange={e=>set("name",e.target.value)} placeholder={isFund?"e.g. Sequoia Capital SEA VI":"e.g. Carousell Pte Ltd"}/></div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
           <div><Label required>{isFund?"GP / Manager":"Investment Channel"}</Label><Input value={f.manager} onChange={e=>set("manager",e.target.value)} placeholder={isFund?"e.g. Sequoia Capital, KKR":"e.g. Forge Global, Self-directed"}/></div>
-          <div><Label>{isFund?"Vintage Year":"Investment Year"}</Label><Input type="number" value={f.vintageYear} onChange={e=>set("vintageYear",+e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Sector</Label><Sel value={f.sector} onChange={e=>set("sector",e.target.value)} options={PE_SECTORS}/></div>
-          <div><Label>Geography</Label><Input value={f.geography} onChange={e=>set("geography",e.target.value)} placeholder="e.g. SEA, US, Global"/></div>
-          {isDirect && <div><Label>Stage</Label><Sel value={f.stage} onChange={e=>set("stage",e.target.value)} options={PE_STAGES}/></div>}
-          {!isDirect && <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD","EUR"]}/></div>}
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
           <div><Label required>Commitment</Label><Input type="number" prefix="S$" value={f.commitment} onChange={e=>set("commitment",+e.target.value)}/></div>
-          <div><Label>Called Capital</Label><Input type="number" prefix="S$" value={f.calledCapital} onChange={e=>set("calledCapital",+e.target.value)}/></div>
-          <div><Label>Distributions Received</Label><Input type="number" prefix="S$" value={f.distributionsReceived} onChange={e=>set("distributionsReceived",+e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Current NAV</Label><Input type="number" prefix="S$" value={f.nav} onChange={e=>set("nav",+e.target.value)}/></div>
-          <div><Label>IRR (%)</Label><Input type="number" value={f.irr} onChange={e=>set("irr",+e.target.value)}/></div>
-          {isDirect?<div><Label>Ownership (%)</Label><Input type="number" value={f.ownershipPct} onChange={e=>set("ownershipPct",+e.target.value)}/></div>:<div><Label>Fund Size</Label><Input type="number" prefix="S$" value={f.fundSize} onChange={e=>set("fundSize",+e.target.value)}/></div>}
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Investment Date</Label><Input type="date" value={f.investmentDate} onChange={e=>set("investmentDate",e.target.value)}/></div>
-          <div><Label>Exit Date (if any)</Label><Input type="date" value={f.exitDate} onChange={e=>set("exitDate",e.target.value)}/></div>
-          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={PE_STATUS_OPTS}/></div>
         </div>
         <div style={{marginBottom:20}}>
-          <Label>Notes</Label>
-          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Fund terms, thesis, valuation cap, discount…"
-            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+          <MoreOptions count={13} style={{gridColumn:"unset"}}>
+            <div><Label>{isFund?"Vintage Year":"Investment Year"}</Label><Input type="number" value={f.vintageYear} onChange={e=>set("vintageYear",+e.target.value)}/></div>
+            <div><Label>Sector</Label><Sel value={f.sector} onChange={e=>set("sector",e.target.value)} options={PE_SECTORS}/></div>
+            <div><Label>Geography</Label><Input value={f.geography} onChange={e=>set("geography",e.target.value)} placeholder="e.g. SEA, US, Global"/></div>
+            {isDirect && <div><Label>Stage</Label><Sel value={f.stage} onChange={e=>set("stage",e.target.value)} options={PE_STAGES}/></div>}
+            <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD","EUR"]}/></div>
+            <div><Label>Called Capital</Label><Input type="number" prefix="S$" value={f.calledCapital} onChange={e=>set("calledCapital",+e.target.value)}/></div>
+            <div><Label>Distributions Received</Label><Input type="number" prefix="S$" value={f.distributionsReceived} onChange={e=>set("distributionsReceived",+e.target.value)}/></div>
+            <div><Label>Current NAV</Label><Input type="number" prefix="S$" value={f.nav} onChange={e=>set("nav",+e.target.value)}/></div>
+            <div><Label>IRR (%)</Label><Input type="number" value={f.irr} onChange={e=>set("irr",+e.target.value)}/></div>
+            {isDirect?<div><Label>Ownership (%)</Label><Input type="number" value={f.ownershipPct} onChange={e=>set("ownershipPct",+e.target.value)}/></div>:<div><Label>Fund Size</Label><Input type="number" prefix="S$" value={f.fundSize} onChange={e=>set("fundSize",+e.target.value)}/></div>}
+            <div><Label>Investment Date</Label><Input type="date" value={f.investmentDate} onChange={e=>set("investmentDate",e.target.value)}/></div>
+            <div><Label>Exit Date (if any)</Label><Input type="date" value={f.exitDate} onChange={e=>set("exitDate",e.target.value)}/></div>
+            <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={PE_STATUS_OPTS}/></div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <Label>Notes</Label>
+              <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Fund terms, thesis, valuation cap, discount…"
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+            </div>
+          </MoreOptions>
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.name||!f.manager||!f.commitment}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.name||!f.manager||!f.commitment)?0.4:1}}>
+          <button onClick={()=>onSave(f)} disabled={!f.name||!f.manager||!f.commitment||!f.investmentType}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.name||!f.manager||!f.commitment||!f.investmentType)?0.4:1}}>
             {f.id ? "Save Changes" : "Add Investment"}
           </button>
         </div>
@@ -4918,7 +8103,212 @@ function PEModal({ inv, onSave, onClose }) {
 }
 
 // ── VC/PE Investments Screen ──────────────────────────────────
-function PEScreen({ investments, setInvestments, showToast }) {
+// ── PE Action Panel — pills + Update NAV + NAV history ──
+function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
+  const ALL_TYPES = ["Capital Call","Distribution","Income / Gain","Management Fee","Update NAV","Exit / Realisation"];
+  const ICONS = {"Capital Call":"📤","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Update NAV":"📊","Exit / Realisation":"🏁"};
+  const colorFor = (t) => t==="Capital Call"||t==="Management Fee"?T.down
+    : t==="Distribution"||t==="Income / Gain"?T.up
+    : t==="Update NAV"?T.text
+    : t==="Exit / Realisation"?T.warn : T.accent;
+
+  const [txType, setTxType] = useState("Capital Call");
+  const blankForm = () => ({
+    date: new Date().toISOString().slice(0,10),
+    amount: "", method: "Wire Transfer", ref: "", notes: "",
+    nav: String(inv.nav || ""),
+  });
+  const [form, setForm] = useState(blankForm());
+  const isUpdateNav = txType === "Update NAV";
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const switchType = (t) => {
+    setTxType(t);
+    if (t === "Update NAV") setForm(f => ({ ...f, nav: String(inv.nav || "") }));
+    else setForm(blankForm());
+  };
+
+  const canSubmit = isUpdateNav
+    ? !!form.nav && parseFloat(form.nav) >= 0
+    : form.date && parseFloat(form.amount) > 0;
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+
+    if (isUpdateNav) {
+      const newNav = parseFloat(form.nav);
+      const prev = { ...inv };
+      const next = { ...inv, nav: newNav };
+      setInvestments(prevIs => prevIs.map(i => i.id === inv.id ? { ...i, nav: newNav } : i));
+      if (logAudit) logAudit("pe", inv.id, "update", prev, next, `${inv.name} · NAV S$${(inv.nav||0).toLocaleString()} → S$${newNav.toLocaleString()}`);
+      showToast(`${inv.name} NAV updated to S$${newNav.toLocaleString()}`, "success");
+      setForm(f => ({ ...f, nav: String(newNav) }));
+      return;
+    }
+
+    const amt = parseFloat(form.amount);
+    const newTx = {
+      id: "PTX" + Date.now(),
+      type: txType === "Update NAV" ? "Valuation Update" : txType,
+      date: form.date,
+      amount: amt, method: form.method, ref: form.ref, notes: form.notes,
+      status: "Complete",
+    };
+    setInvestments(prevIs => prevIs.map(i => {
+      if (i.id !== inv.id) return i;
+      const nextTxs = [...(i.transactions||[]), newTx];
+      let patch = { transactions: nextTxs };
+      if (txType === "Capital Call") patch.calledCapital = (+i.calledCapital||0) + amt;
+      else if (txType === "Distribution") patch.distributionsReceived = (+i.distributionsReceived||0) + amt;
+      else if (txType === "Exit / Realisation") { patch.distributionsReceived = (+i.distributionsReceived||0) + amt; patch.nav = 0; patch.status = "Realised"; patch.exitDate = form.date; }
+      return { ...i, ...patch };
+    }));
+    if (logAudit) logAudit("pe", inv.id, "add-transaction", null, newTx, `${txType} · S$${amt.toLocaleString()}`);
+    showToast(`${txType} recorded — S$${amt.toLocaleString()}`, "success");
+    setForm(blankForm());
+  };
+
+  const navUpdates = (auditLog || [])
+    .filter(e => e.entityType === "pe" && e.entityId === inv.id && e.action === "update"
+      && (e.changes||[]).some(c => c.field === "nav"));
+
+  const oldNav = inv.nav || 0;
+  const newNavVal = parseFloat(form.nav) || 0;
+  const cost = (inv.calledCapital || 0);
+  const distributions = (inv.distributionsReceived || 0);
+  const totalValue = newNavVal + distributions;
+  const newPnl = totalValue - cost;
+  const newPnlPct = cost > 0 ? (newPnl/cost*100) : 0;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <Card style={{padding:"16px 18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Action</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {ALL_TYPES.map(t => {
+            const active = txType === t;
+            const c = colorFor(t);
+            return (
+              <button key={t} onClick={()=>switchType(t)}
+                style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${active?c:T.border}`,
+                  background:active?`${c}15`:T.inputBg,color:active?c:T.muted,
+                  cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500}}>
+                {ICONS[t]||"💰"} {t}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card style={{padding:"18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>{isUpdateNav ? `Update NAV — ${inv.name}` : `${txType} — ${inv.name}`}</div>
+        {isUpdateNav ? (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <div>
+              <Label required>New NAV (S$)</Label>
+              <Input type="number" step="0.01" value={form.nav} onChange={e=>set("nav",e.target.value)} placeholder={String(oldNav||"0.00")}/>
+            </div>
+            <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                <span>Current NAV</span>
+                <span style={{fontWeight:600,color:T.text}}>S${oldNav.toLocaleString()}</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                <span>Total Value (NAV + Distributions)</span>
+                <span style={{fontWeight:700,color:T.text}}>S${totalValue.toLocaleString()}</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                <span>New P/L vs Called</span>
+                <span style={{fontWeight:700,color:newPnl>=0?T.up:T.down}}>{newPnl>=0?"+":""}S${newPnl.toLocaleString()} ({newPnlPct>=0?"+":""}{newPnlPct.toFixed(2)}%)</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            <div><Label required>Date</Label>
+              <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+            </div>
+            <div><Label required>Amount (S$)</Label>
+              <Input type="number" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/>
+            </div>
+            <MoreOptions count={3}>
+              <div><Label>Method</Label>
+                <Sel value={form.method} onChange={e=>set("method",e.target.value)} options={["Wire Transfer","Bank Transfer","Netting","Cash"]}/>
+              </div>
+              <div><Label>Reference</Label>
+                <Input value={form.ref} onChange={e=>set("ref",e.target.value)} placeholder="Optional"/>
+              </div>
+              <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Initial capital call, GP distribution…"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+              </div>
+            </MoreOptions>
+          </div>
+        )}
+
+        <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+          <button onClick={handleSubmit} disabled={!canSubmit}
+            style={{background:canSubmit?T.selected:T.border,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            {isUpdateNav ? "Update NAV" : `Record ${txType}`}
+          </button>
+        </div>
+      </Card>
+
+      {isUpdateNav && (
+        <Card style={{padding:"16px 18px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:600}}>NAV History</div>
+            <div style={{fontSize:11,color:T.muted}}>{navUpdates.length} {navUpdates.length === 1 ? "entry" : "entries"}</div>
+          </div>
+          {navUpdates.length === 0 ? (
+            <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
+              <div style={{fontSize:22,marginBottom:6}}>📈</div>
+              <div style={{fontWeight:600}}>No NAV updates yet</div>
+              <div style={{fontSize:11,marginTop:3,color:T.dim}}>Quarterly valuations will be tracked here.</div>
+            </div>
+          ) : (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead>
+                  <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
+                    <th style={{padding:"8px 10px"}}>Date</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>Old NAV</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>New NAV</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
+                    <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
+                    <th style={{padding:"8px 10px"}}>By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {navUpdates.map(e => {
+                    const ch = (e.changes||[]).find(c => c.field === "nav");
+                    const before = parseFloat(ch?.before) || 0;
+                    const after = parseFloat(ch?.after) || 0;
+                    const delta = after - before;
+                    const pct = before > 0 ? (delta/before*100) : 0;
+                    const up = delta >= 0;
+                    return (
+                      <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                        <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>S${before.toLocaleString()}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>S${after.toLocaleString()}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{delta.toLocaleString()}</td>
+                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{pct.toFixed(2)}%</td>
+                        <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [selectedInv, setSelectedInv] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -4957,10 +8347,15 @@ function PEScreen({ investments, setInvestments, showToast }) {
 
   const handleSave = (f) => {
     if (f.id) {
-      setInvestments(prev => prev.map(i => i.id === f.id ? { ...i, ...f } : i));
+      const prev = investments.find(i => i.id === f.id);
+      setInvestments(prevIs => prevIs.map(i => i.id === f.id ? { ...i, ...f } : i));
+      if (logAudit) logAudit("pe", f.id, "update", prev, f, `${f.name||""} · ${f.manager||""}`);
       showToast("Investment updated", "success");
     } else {
-      setInvestments(prev => [...prev, { ...f, id:"PE"+Date.now(), transactions:[] }]);
+      const id = "PE"+Date.now();
+      const ni = { ...f, id, transactions:[] };
+      setInvestments(prev => [...prev, ni]);
+      if (logAudit) logAudit("pe", id, "create", null, ni, `${ni.name||""} · ${ni.manager||""}`);
       showToast("Investment added", "success");
     }
     setShowModal(false);
@@ -5189,7 +8584,7 @@ function PEScreen({ investments, setInvestments, showToast }) {
                   ))}
                 </div>
                 <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
                     <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
                       style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
                         color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
@@ -5396,6 +8791,12 @@ function PEScreen({ investments, setInvestments, showToast }) {
                     </div>
                   );
                 })()}
+                {drawerTab === "history" && (
+                  <AuditLogPanel auditLog={auditLog} entityType="pe" entityId={inv.id}/>
+                )}
+                {drawerTab === "manage" && (
+                  <PEActionPanel inv={inv} setInvestments={setInvestments} auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+                )}
               </div>
             </div>
           </div>
@@ -5417,6 +8818,7 @@ function PEScreen({ investments, setInvestments, showToast }) {
             else if (tx.type === "Exit / Realisation") { patch.distributionsReceived = (+i.distributionsReceived||0) + (+tx.amount||0); patch.nav = 0; patch.status = "Realised"; patch.exitDate = tx.date; }
             return { ...i, ...patch };
           }));
+          if (logAudit) logAudit("pe", inv.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount||0}`);
           setShowTxModal(false);
           showToast(`${tx.type} recorded`, "success");
         }} onClose={()=>setShowTxModal(false)}/>;
@@ -5598,13 +9000,15 @@ function BPTxModalInner({ venture, onSave, onClose }) {
     amount: 0, method: "Bank Transfer", ref: "", notes: "",
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const isOut = ["Capital Contribution","Partner Loan"].includes(f.type);
   const isValOnly = f.type === "Valuation Update";
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{venture.businessName} · {venture.partnershipType}</div>
         <div style={{marginBottom:14}}>
           <Label required>Transaction Type</Label>
@@ -5631,12 +9035,18 @@ function BPTxModalInner({ venture, onSave, onClose }) {
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Year-end profit share, renovation loan…"
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
         </div>
-        <div style={{background:isValOnly?T.accentBg:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{color:isValOnly?T.accent:isOut?T.down:T.up,fontWeight:600}}>
-            {isValOnly?"📊 Market value updated":isOut?"📤 Capital deployed to business":"📥 Income received from business"}
-          </span>
-          <span style={{fontWeight:700,color:isValOnly?T.accent:isOut?T.down:T.up}}>{isValOnly?"":(isOut?"-":"+")} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
-        </div>
+        <FlowBanner type={f.type} amount={f.amount} label={
+          f.type==="Capital Contribution" ? "📤 Capital deployed to business"
+          : f.type==="Partner Loan" ? "📤 Loan lent to partner / business"
+          : f.type==="Dividend" ? "💰 Dividend received"
+          : f.type==="Profit Distribution" ? "💰 Profit distribution"
+          : f.type==="Salary / Drawings" ? "💵 Salary / drawings"
+          : f.type==="Loan Repayment" ? "📥 Loan repaid by business"
+          : f.type==="Capital Withdrawal" ? "📥 Capital withdrawn"
+          : f.type==="Exit / Buyout" ? "🏁 Exit / buyout proceeds"
+          : f.type==="Valuation Update" ? "📊 Market value updated (no cash flow)"
+          : "💰 Transaction"
+        }/>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
           <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
@@ -5656,7 +9066,10 @@ function BPModal({ venture, onSave, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:580,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Venture" : "Add Business Partnership"}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:800}}>{f.id ? "Edit Venture" : "Add Business Partnership"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{marginBottom:14}}>
           <Label required>Business Name</Label>
           <Input value={f.businessName} onChange={e=>set("businessName",e.target.value)} placeholder="e.g. Sunset Café LLP"/>
@@ -5665,42 +9078,36 @@ function BPModal({ venture, onSave, onClose }) {
           <div><Label required>Partnership Type</Label><Sel value={f.partnershipType} onChange={e=>set("partnershipType",e.target.value)} options={BP_TYPES}/></div>
           <div><Label required>Industry</Label><Sel value={f.industry} onChange={e=>set("industry",e.target.value)} options={BP_INDUSTRIES}/></div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label required>Your Role</Label><Sel value={f.role} onChange={e=>set("role",e.target.value)} options={BP_ROLES}/></div>
-          <div><Label>Ownership (%)</Label><Input type="number" value={f.ownershipPct} onChange={e=>set("ownershipPct",+e.target.value)}/></div>
-          <div><Label>Total Partners</Label><Input type="number" value={f.totalPartners} onChange={e=>set("totalPartners",+e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Capital Contributed</Label><Input type="number" prefix="S$" value={f.capitalContributed} onChange={e=>set("capitalContributed",+e.target.value)}/></div>
-          <div><Label>Partner Loans Outstanding</Label><Input type="number" prefix="S$" value={f.partnerLoans} onChange={e=>set("partnerLoans",+e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Book Value (your stake)</Label><Input type="number" prefix="S$" value={f.bookValue} onChange={e=>set("bookValue",+e.target.value)}/></div>
-          <div><Label>Estimated Market Value</Label><Input type="number" prefix="S$" value={f.estimatedMarketValue} onChange={e=>set("estimatedMarketValue",+e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Annual Revenue (business)</Label><Input type="number" prefix="S$" value={f.annualRevenue} onChange={e=>set("annualRevenue",+e.target.value)}/></div>
-          <div><Label>Annual Profit (business)</Label><Input type="number" prefix="S$" value={f.annualProfit} onChange={e=>set("annualProfit",+e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Start Date</Label><Input type="date" value={f.startDate} onChange={e=>set("startDate",e.target.value)}/></div>
-          <div><Label>Expiry Date</Label><Input type="date" value={f.expiryDate} onChange={e=>set("expiryDate",e.target.value)}/></div>
-          <div><Label>Registration No.</Label><Input value={f.registrationNo} onChange={e=>set("registrationNo",e.target.value)} placeholder="UEN"/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Country</Label><Input value={f.country} onChange={e=>set("country",e.target.value)}/></div>
-          <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD","EUR","MYR","HKD"]}/></div>
-          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={BP_STATUS_OPTS}/></div>
+        <div style={{marginBottom:14}}>
+          <Label required>Your Role</Label><Sel value={f.role} onChange={e=>set("role",e.target.value)} options={BP_ROLES}/>
         </div>
         <div style={{marginBottom:20}}>
-          <Label>Notes</Label>
-          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Partnership terms, agreements, thesis…"
-            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+          <MoreOptions count={15} style={{gridColumn:"unset"}}>
+            <div><Label>Ownership (%)</Label><Input type="number" value={f.ownershipPct} onChange={e=>set("ownershipPct",+e.target.value)}/></div>
+            <div><Label>Total Partners</Label><Input type="number" value={f.totalPartners} onChange={e=>set("totalPartners",+e.target.value)}/></div>
+            <div><Label>Capital Contributed</Label><Input type="number" prefix="S$" value={f.capitalContributed} onChange={e=>set("capitalContributed",+e.target.value)}/></div>
+            <div><Label>Partner Loans Outstanding</Label><Input type="number" prefix="S$" value={f.partnerLoans} onChange={e=>set("partnerLoans",+e.target.value)}/></div>
+            <div><Label>Book Value (your stake)</Label><Input type="number" prefix="S$" value={f.bookValue} onChange={e=>set("bookValue",+e.target.value)}/></div>
+            <div><Label>Estimated Market Value</Label><Input type="number" prefix="S$" value={f.estimatedMarketValue} onChange={e=>set("estimatedMarketValue",+e.target.value)}/></div>
+            <div><Label>Annual Revenue (business)</Label><Input type="number" prefix="S$" value={f.annualRevenue} onChange={e=>set("annualRevenue",+e.target.value)}/></div>
+            <div><Label>Annual Profit (business)</Label><Input type="number" prefix="S$" value={f.annualProfit} onChange={e=>set("annualProfit",+e.target.value)}/></div>
+            <div><Label>Start Date</Label><Input type="date" value={f.startDate} onChange={e=>set("startDate",e.target.value)}/></div>
+            <div><Label>Expiry Date</Label><Input type="date" value={f.expiryDate} onChange={e=>set("expiryDate",e.target.value)}/></div>
+            <div><Label>Registration No.</Label><Input value={f.registrationNo} onChange={e=>set("registrationNo",e.target.value)} placeholder="UEN"/></div>
+            <div><Label>Country</Label><Input value={f.country} onChange={e=>set("country",e.target.value)}/></div>
+            <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD","EUR","MYR","HKD"]}/></div>
+            <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={BP_STATUS_OPTS}/></div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <Label>Notes</Label>
+              <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Partnership terms, agreements, thesis…"
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+            </div>
+          </MoreOptions>
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.businessName||!f.partnershipType}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.businessName||!f.partnershipType)?0.4:1}}>
+          <button onClick={()=>onSave(f)} disabled={!f.businessName||!f.partnershipType||!f.industry||!f.role}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.businessName||!f.partnershipType||!f.industry||!f.role)?0.4:1}}>
             {f.id ? "Save Changes" : "Add Venture"}
           </button>
         </div>
@@ -5710,7 +9117,7 @@ function BPModal({ venture, onSave, onClose }) {
 }
 
 // ── Business Partnership Ventures Screen ──────────────────────
-function BPScreen({ ventures, setVentures, showToast }) {
+function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [selectedVenture, setSelectedVenture] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -5747,10 +9154,15 @@ function BPScreen({ ventures, setVentures, showToast }) {
 
   const handleSave = (f) => {
     if (f.id) {
-      setVentures(prev => prev.map(v => v.id === f.id ? { ...v, ...f } : v));
+      const prev = ventures.find(v => v.id === f.id);
+      setVentures(prevVs => prevVs.map(v => v.id === f.id ? { ...v, ...f } : v));
+      if (logAudit) logAudit("venture", f.id, "update", prev, f, `${f.businessName||""} · ${f.role||""}`);
       showToast("Venture updated", "success");
     } else {
-      setVentures(prev => [...prev, { ...f, id:"BP"+Date.now(), transactions:[] }]);
+      const id = "BP"+Date.now();
+      const nv = { ...f, id, transactions:[] };
+      setVentures(prev => [...prev, nv]);
+      if (logAudit) logAudit("venture", id, "create", null, nv, `${nv.businessName||""} · ${nv.role||""}`);
       showToast("Venture added", "success");
     }
     setShowModal(false);
@@ -5990,7 +9402,7 @@ function BPScreen({ ventures, setVentures, showToast }) {
                   ))}
                 </div>
                 <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"bookvalue",label:"Book Value"},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
                     <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
                       style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
                         color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
@@ -6123,6 +9535,80 @@ function BPScreen({ ventures, setVentures, showToast }) {
                     )}
                   </div>
                 )}
+                {drawerTab === "bookvalue" && (() => {
+                  const bookUpdates = (auditLog || []).filter(e =>
+                    e.entityType === "venture" && e.entityId === venture.id && e.action === "update"
+                    && (e.changes||[]).some(c => c.field === "bookValue" || c.field === "estimatedMarketValue")
+                  );
+                  const valuationTxs = (venture.transactions||[]).filter(t => t.type === "Valuation Update").slice().sort((a,b)=>b.date.localeCompare(a.date));
+                  const rows = [];
+                  bookUpdates.forEach(e => {
+                    (e.changes||[]).filter(c => c.field === "bookValue" || c.field === "estimatedMarketValue").forEach(c => {
+                      const before = parseFloat(c.before) || 0;
+                      const after = parseFloat(c.after) || 0;
+                      rows.push({ ts: e.ts, field: c.field, before, after, user: e.user, source: "edit" });
+                    });
+                  });
+                  valuationTxs.forEach(tx => {
+                    const after = parseFloat(tx.amount) || 0;
+                    rows.push({ ts: tx.date, field: "estimatedMarketValue", before: null, after, user: "user", source: "transaction", notes: tx.notes });
+                  });
+                  rows.sort((a,b) => String(b.ts).localeCompare(String(a.ts)));
+                  return (
+                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
+                      <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div>
+                          <div style={{fontSize:14,fontWeight:700}}>Book Value History</div>
+                          <div style={{fontSize:11,color:T.muted,marginTop:3}}>Book Value and Estimated Market Value changes</div>
+                        </div>
+                        <div style={{fontSize:11,color:T.muted}}>{rows.length} {rows.length === 1 ? "entry" : "entries"}</div>
+                      </div>
+                      {rows.length === 0 ? (
+                        <div style={{padding:"40px 20px",textAlign:"center",color:T.muted,fontSize:12}}>
+                          <div style={{fontSize:26,marginBottom:8}}>📊</div>
+                          <div style={{fontWeight:600}}>No book value changes yet</div>
+                          <div style={{fontSize:11,marginTop:3,color:T.dim}}>Edits to Book Value / Estimated Market Value and Valuation Update transactions will appear here.</div>
+                        </div>
+                      ) : (
+                        <div style={{overflowX:"auto"}}>
+                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                            <thead>
+                              <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left",background:T.inputBg}}>
+                                <th style={{padding:"9px 14px"}}>Date</th>
+                                <th style={{padding:"9px 14px"}}>Field</th>
+                                <th style={{padding:"9px 14px",textAlign:"right"}}>Old</th>
+                                <th style={{padding:"9px 14px",textAlign:"right"}}>New</th>
+                                <th style={{padding:"9px 14px",textAlign:"right"}}>Change</th>
+                                <th style={{padding:"9px 14px",textAlign:"right"}}>%</th>
+                                <th style={{padding:"9px 14px"}}>Source</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((r, i) => {
+                                const delta = r.before == null ? null : r.after - r.before;
+                                const pct = r.before > 0 ? (delta / r.before * 100) : null;
+                                const up = delta == null ? null : delta >= 0;
+                                const fieldLabel = r.field === "bookValue" ? "Book Value" : "Market Value";
+                                const dateStr = r.source === "edit" ? new Date(r.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"}) : r.ts;
+                                return (
+                                  <tr key={i} style={{borderBottom:`1px solid ${T.border}`}}>
+                                    <td style={{padding:"10px 14px",color:T.text}}>{dateStr}</td>
+                                    <td style={{padding:"10px 14px",color:T.muted}}>{fieldLabel}</td>
+                                    <td style={{padding:"10px 14px",textAlign:"right",color:T.muted}}>{r.before == null ? "—" : "S$" + r.before.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                                    <td style={{padding:"10px 14px",textAlign:"right",fontWeight:600,color:T.text}}>S${r.after.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                                    <td style={{padding:"10px 14px",textAlign:"right",fontWeight:600,color:up == null ? T.muted : up ? T.up : T.down}}>{delta == null ? "—" : (up?"+":"") + delta.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                                    <td style={{padding:"10px 14px",textAlign:"right",fontWeight:600,color:up == null ? T.muted : up ? T.up : T.down}}>{pct == null ? "—" : (up?"+":"") + pct.toFixed(2) + "%"}</td>
+                                    <td style={{padding:"10px 14px",color:T.muted,fontSize:11}}>{r.source === "edit" ? "Edit" : "Valuation Update"}{r.notes ? ` · ${r.notes}` : ""}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {drawerTab === "postings" && (() => {
                   const sortedTxs = (venture.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update").slice().sort((a,b)=>a.date.localeCompare(b.date));
                   const journalRows = [];
@@ -6205,6 +9691,24 @@ function BPScreen({ ventures, setVentures, showToast }) {
                     </div>
                   );
                 })()}
+                {drawerTab === "history" && (
+                  <AuditLogPanel auditLog={auditLog} entityType="venture" entityId={venture.id}/>
+                )}
+                {drawerTab === "manage" && (
+                  <FieldUpdatePanel
+                    entity={venture}
+                    entityType="venture"
+                    entityLabel={venture.businessName}
+                    fields={[
+                      { key:"bookValue",            label:"Book Value",         icon:"📒", prefix:"S$", helper:"Cost basis of your equity stake" },
+                      { key:"estimatedMarketValue", label:"Market Value",       icon:"📊", prefix:"S$", helper:"Estimated fair market value of your stake" },
+                      { key:"ownershipPct",         label:"Ownership %",        icon:"🥧", prefix:"",   suffix:"%", step:"0.1", helper:"Your share of the business" },
+                      { key:"annualRevenue",        label:"Annual Revenue",     icon:"💵", prefix:"S$", helper:"Business top-line revenue" },
+                      { key:"annualProfit",         label:"Annual Profit",      icon:"📈", prefix:"S$", helper:"Business net profit" },
+                    ]}
+                    onUpdate={(next)=>setVentures(prev=>prev.map(x=>x.id===venture.id?next:x))}
+                    auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+                )}
               </div>
             </div>
           </div>
@@ -6230,6 +9734,7 @@ function BPScreen({ ventures, setVentures, showToast }) {
             else if (tx.type === "Exit / Buyout") { patch.status = "Exited"; patch.expiryDate = tx.date; patch.bookValue = 0; patch.estimatedMarketValue = 0; }
             return { ...v, ...patch };
           }));
+          if (logAudit) logAudit("venture", venture.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount||0}`);
           setShowTxModal(false);
           showToast(`${tx.type} recorded`, "success");
         }} onClose={()=>setShowTxModal(false)}/>;
@@ -6437,14 +9942,15 @@ function ColTxModalInner({ item, onSave, onClose }) {
     amount: 0, method: "Credit Card", ref: "", notes: "",
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const isOut = ["Purchase","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration"].includes(f.type);
-  const isIn = f.type === "Sale";
   const isValOnly = f.type === "Valuation Update";
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:6}}>Record Transaction</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{item.name} · {item.category}</div>
         <div style={{marginBottom:14}}>
           <Label required>Transaction Type</Label>
@@ -6471,12 +9977,18 @@ function ColTxModalInner({ item, onSave, onClose }) {
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Annual service, consignment listing, revaluation…"
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
         </div>
-        <div style={{background:isValOnly?T.accentBg:isOut?T.downBg:T.upBg,borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{color:isValOnly?T.accent:isOut?T.down:T.up,fontWeight:600}}>
-            {isValOnly?"📊 Market value updated":isIn?"📥 Proceeds from sale":"📤 Expense / acquisition cost"}
-          </span>
-          <span style={{fontWeight:700,color:isValOnly?T.accent:isOut?T.down:T.up}}>{isValOnly?"":(isOut?"-":"+")} S${(f.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</span>
-        </div>
+        <FlowBanner type={f.type} amount={f.amount} label={
+          f.type==="Purchase" ? "📤 Acquisition cost"
+          : f.type==="Sale" ? "📥 Sale proceeds"
+          : f.type==="Appraisal Fee" ? "🔍 Appraisal fee"
+          : f.type==="Insurance Premium" ? "🛡 Insurance premium"
+          : f.type==="Maintenance" ? "🔧 Maintenance cost"
+          : f.type==="Storage Cost" ? "📦 Storage cost"
+          : f.type==="Consignment Fee" ? "🤝 Consignment fee"
+          : f.type==="Restoration" ? "🎨 Restoration cost"
+          : f.type==="Valuation Update" ? "📊 Market value updated (no cash flow)"
+          : "💰 Transaction"
+        }/>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
           <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
@@ -6496,62 +10008,57 @@ function ColModal({ item, onSave, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:580,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:16,fontWeight:800,marginBottom:20}}>{f.id ? "Edit Item" : "Add Collectible"}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:800}}>{f.id ? "Edit Item" : "Add Collectible"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:14,marginBottom:14}}>
           <div><Label required>Category</Label><Sel value={f.category} onChange={e=>set("category",e.target.value)} options={COL_CATEGORIES}/></div>
           <div><Label required>Item Name</Label><Input value={f.name} onChange={e=>set("name",e.target.value)} placeholder='e.g. Rolex Submariner, "Harbour #3" by X'/></div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Brand / Maker / Artist</Label><Input value={f.brand} onChange={e=>set("brand",e.target.value)}/></div>
-          <div><Label>Model / Ref / Medium</Label><Input value={f.modelRef} onChange={e=>set("modelRef",e.target.value)}/></div>
-          <div><Label>Serial / Edition No.</Label><Input value={f.serialNo} onChange={e=>set("serialNo",e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Year</Label><Input type="number" value={f.year} onChange={e=>set("year",+e.target.value)}/></div>
-          <div><Label>Condition</Label><Sel value={f.condition} onChange={e=>set("condition",e.target.value)} options={COL_CONDITION_OPTS}/></div>
-          <div><Label>Quantity</Label><Input type="number" value={f.quantity} onChange={e=>set("quantity",+e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Acquisition Date</Label><Input type="date" value={f.acquisitionDate} onChange={e=>set("acquisitionDate",e.target.value)}/></div>
-          <div><Label required>Acquisition Price</Label><Input type="number" prefix="S$" value={f.acquisitionPrice} onChange={e=>set("acquisitionPrice",+e.target.value)}/></div>
-          <div><Label>Source</Label><Input value={f.acquisitionSource} onChange={e=>set("acquisitionSource",e.target.value)} placeholder="Dealer, auction, AD…"/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Current Value</Label><Input type="number" prefix="S$" value={f.currentValue} onChange={e=>set("currentValue",+e.target.value)}/></div>
-          <div><Label>Valuation Date</Label><Input type="date" value={f.valuationDate} onChange={e=>set("valuationDate",e.target.value)}/></div>
-          <div><Label>Valuer / Source</Label><Input value={f.valuerSource} onChange={e=>set("valuerSource",e.target.value)} placeholder="e.g. Chrono24, gallery"/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:14,marginBottom:14}}>
-          <div><Label>Storage Location</Label><Sel value={f.storageLocation} onChange={e=>set("storageLocation",e.target.value)} options={COL_STORAGE_OPTS}/></div>
-          <div><Label>Specific Storage</Label><Input value={f.specificStorage} onChange={e=>set("specificStorage",e.target.value)} placeholder="e.g. Study room safe, OCBC box #xxxx"/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Insured Value</Label><Input type="number" prefix="S$" value={f.insuredValue} onChange={e=>set("insuredValue",+e.target.value)}/></div>
-          <div><Label>Insurance Policy Ref</Label><Input value={f.insurancePolicyRef} onChange={e=>set("insurancePolicyRef",e.target.value)}/></div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"auto 1fr",gap:14,marginBottom:14,alignItems:"center"}}>
-          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
-            <input type="checkbox" checked={!!f.authenticated} onChange={e=>set("authenticated",e.target.checked)}/> Authenticated
-          </label>
-          <Input value={f.certificateRef} onChange={e=>set("certificateRef",e.target.value)} placeholder="Certificate / papers reference"/>
-        </div>
         <div style={{marginBottom:14}}>
-          <Label>Provenance</Label>
-          <Input value={f.provenance} onChange={e=>set("provenance",e.target.value)} placeholder="Ownership history, acquisition lineage…"/>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD","EUR","GBP","HKD","JPY"]}/></div>
-          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={COL_STATUS_OPTS}/></div>
+          <Label required>Acquisition Price</Label><Input type="number" prefix="S$" value={f.acquisitionPrice} onChange={e=>set("acquisitionPrice",+e.target.value)}/>
         </div>
         <div style={{marginBottom:20}}>
-          <Label>Notes</Label>
-          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes, stories, sentimental value…"
-            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+          <MoreOptions count={21} style={{gridColumn:"unset"}}>
+            <div><Label>Brand / Maker / Artist</Label><Input value={f.brand} onChange={e=>set("brand",e.target.value)}/></div>
+            <div><Label>Model / Ref / Medium</Label><Input value={f.modelRef} onChange={e=>set("modelRef",e.target.value)}/></div>
+            <div><Label>Serial / Edition No.</Label><Input value={f.serialNo} onChange={e=>set("serialNo",e.target.value)}/></div>
+            <div><Label>Year</Label><Input type="number" value={f.year} onChange={e=>set("year",+e.target.value)}/></div>
+            <div><Label>Condition</Label><Sel value={f.condition} onChange={e=>set("condition",e.target.value)} options={COL_CONDITION_OPTS}/></div>
+            <div><Label>Quantity</Label><Input type="number" step="1" placeholder="0" value={f.quantity} onChange={e=>set("quantity",+e.target.value)}/></div>
+            <div><Label>Acquisition Date</Label><Input type="date" value={f.acquisitionDate} onChange={e=>set("acquisitionDate",e.target.value)}/></div>
+            <div><Label>Source</Label><Input value={f.acquisitionSource} onChange={e=>set("acquisitionSource",e.target.value)} placeholder="Dealer, auction, AD…"/></div>
+            <div><Label>Current Value</Label><Input type="number" prefix="S$" value={f.currentValue} onChange={e=>set("currentValue",+e.target.value)}/></div>
+            <div><Label>Valuation Date</Label><Input type="date" value={f.valuationDate} onChange={e=>set("valuationDate",e.target.value)}/></div>
+            <div><Label>Valuer / Source</Label><Input value={f.valuerSource} onChange={e=>set("valuerSource",e.target.value)} placeholder="e.g. Chrono24, gallery"/></div>
+            <div><Label>Storage Location</Label><Sel value={f.storageLocation} onChange={e=>set("storageLocation",e.target.value)} options={COL_STORAGE_OPTS}/></div>
+            <div><Label>Specific Storage</Label><Input value={f.specificStorage} onChange={e=>set("specificStorage",e.target.value)} placeholder="e.g. Study room safe, OCBC box #xxxx"/></div>
+            <div><Label>Insured Value</Label><Input type="number" prefix="S$" value={f.insuredValue} onChange={e=>set("insuredValue",+e.target.value)}/></div>
+            <div><Label>Insurance Policy Ref</Label><Input value={f.insurancePolicyRef} onChange={e=>set("insurancePolicyRef",e.target.value)}/></div>
+            <div style={{gridColumn:"1 / -1",display:"flex",alignItems:"center",gap:14}}>
+              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,whiteSpace:"nowrap"}}>
+                <input type="checkbox" checked={!!f.authenticated} onChange={e=>set("authenticated",e.target.checked)}/> Authenticated
+              </label>
+              <div style={{flex:1}}><Input value={f.certificateRef} onChange={e=>set("certificateRef",e.target.value)} placeholder="Certificate / papers reference"/></div>
+            </div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <Label>Provenance</Label>
+              <Input value={f.provenance} onChange={e=>set("provenance",e.target.value)} placeholder="Ownership history, acquisition lineage…"/>
+            </div>
+            <div><Label>Currency</Label><Sel value={f.currency} onChange={e=>set("currency",e.target.value)} options={["SGD","USD","EUR","GBP","HKD","JPY"]}/></div>
+            <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={COL_STATUS_OPTS}/></div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <Label>Notes</Label>
+              <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes, stories, sentimental value…"
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+            </div>
+          </MoreOptions>
         </div>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.name||!f.category}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.name||!f.category)?0.4:1}}>
+          <button onClick={()=>onSave(f)} disabled={!f.name||!f.category||!f.acquisitionPrice}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.name||!f.category||!f.acquisitionPrice)?0.4:1}}>
             {f.id ? "Save Changes" : "Add Item"}
           </button>
         </div>
@@ -6561,7 +10068,7 @@ function ColModal({ item, onSave, onClose }) {
 }
 
 // ── Collectibles Screen ───────────────────────────────────────
-function CollectiblesScreen({ items, setItems, showToast }) {
+function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [selectedItem, setSelectedItem] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -6597,10 +10104,15 @@ function CollectiblesScreen({ items, setItems, showToast }) {
 
   const handleSave = (f) => {
     if (f.id) {
-      setItems(prev => prev.map(i => i.id === f.id ? { ...i, ...f } : i));
+      const prev = items.find(i => i.id === f.id);
+      setItems(prevIs => prevIs.map(i => i.id === f.id ? { ...i, ...f } : i));
+      if (logAudit) logAudit("collectible", f.id, "update", prev, f, `${f.name||""} · ${f.category||""}`);
       showToast("Item updated", "success");
     } else {
-      setItems(prev => [...prev, { ...f, id:"CL"+Date.now(), transactions:[] }]);
+      const id = "CL"+Date.now();
+      const ni = { ...f, id, transactions:[] };
+      setItems(prev => [...prev, ni]);
+      if (logAudit) logAudit("collectible", id, "create", null, ni, `${ni.name||""} · ${ni.category||""}`);
       showToast("Item added", "success");
     }
     setShowModal(false);
@@ -6833,7 +10345,7 @@ function CollectiblesScreen({ items, setItems, showToast }) {
                   ))}
                 </div>
                 <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"}].map(dt=>(
+                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"}].map(dt=>(
                     <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
                       style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
                         color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
@@ -7043,6 +10555,9 @@ function CollectiblesScreen({ items, setItems, showToast }) {
                     </div>
                   );
                 })()}
+                {drawerTab === "history" && (
+                  <AuditLogPanel auditLog={auditLog} entityType="collectible" entityId={item.id}/>
+                )}
               </div>
             </div>
           </div>
@@ -7062,6 +10577,7 @@ function CollectiblesScreen({ items, setItems, showToast }) {
             else if (tx.type === "Sale") { patch.status = "Sold"; patch.currentValue = +tx.amount; patch.valuationDate = tx.date; }
             return { ...i, ...patch };
           }));
+          if (logAudit) logAudit("collectible", item.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount||0}`);
           setShowTxModal(false);
           showToast(`${tx.type} recorded`, "success");
         }} onClose={()=>setShowTxModal(false)}/>;
@@ -7080,14 +10596,13 @@ function CollectiblesScreen({ items, setItems, showToast }) {
 ═══════════════════════════════════════════════════════════════ */
 
 const RE_COUNTRIES = {
-  Singapore:   { flag:"🇸🇬", currency:"SGD", symbol:"S$",  stampLabel:"BSD + ABSD",  loanLabel:"HDB / Bank Loan",    taxLabel:"Property Tax (IRAS)",     avgYield:3.5 },
-  Malaysia:    { flag:"🇲🇾", currency:"MYR", symbol:"RM",  stampLabel:"RPGT + Stamp", loanLabel:"Margin of Finance",  taxLabel:"Assessment Tax (Cukai)",   avgYield:4.2 },
-  UK:          { flag:"🇬🇧", currency:"GBP", symbol:"£",   stampLabel:"SDLT",         loanLabel:"Mortgage",           taxLabel:"Council Tax",              avgYield:4.0 },
-  Dubai:       { flag:"🇦🇪", currency:"AED", symbol:"AED", stampLabel:"DLD Fee (4%)", loanLabel:"Mortgage",           taxLabel:"Service Charge",           avgYield:6.5 },
-  US:          { flag:"🇺🇸", currency:"USD", symbol:"$",   stampLabel:"Transfer Tax",  loanLabel:"Mortgage",           taxLabel:"Property Tax",             avgYield:4.5 },
-  Japan:       { flag:"🇯🇵", currency:"JPY", symbol:"¥",   stampLabel:"Registration",  loanLabel:"Housing Loan",       taxLabel:"Fixed Asset Tax",          avgYield:5.5 },
-  Australia:   { flag:"🇦🇺", currency:"AUD", symbol:"A$",  stampLabel:"Stamp Duty",    loanLabel:"Home Loan",          taxLabel:"Council Rates",            avgYield:3.8 },
-  "New Zealand":{ flag:"🇳🇿", currency:"NZD", symbol:"NZ$",stampLabel:"NZLS Fee",      loanLabel:"Home Loan",          taxLabel:"Rates",                    avgYield:3.2 },
+  Singapore:    { flag:"🇸🇬", currency:"SGD", symbol:"S$",  stampLabel:"Stamp Duty (BSD + ABSD)",       loanLabel:"HDB / Bank Loan",     taxLabel:"Property Tax (IRAS)",        maintenanceLabel:"MCST Fee",        avgYield:3.5 },
+  Malaysia:     { flag:"🇲🇾", currency:"MYR", symbol:"RM",  stampLabel:"Stamp Duty + RPGT",             loanLabel:"Margin of Finance",   taxLabel:"Cukai (Assessment Tax)",     maintenanceLabel:"Service Charge",  avgYield:4.2 },
+  UK:           { flag:"🇬🇧", currency:"GBP", symbol:"£",   stampLabel:"SDLT (Stamp Duty Land Tax)",    loanLabel:"Mortgage",            taxLabel:"Council Tax",                maintenanceLabel:"Service Charge",  avgYield:4.0 },
+  Dubai:        { flag:"🇦🇪", currency:"AED", symbol:"AED", stampLabel:"DLD Transfer Fee (4%)",         loanLabel:"Mortgage",            taxLabel:"Service Charge (annual)",    maintenanceLabel:"Service Charge",  avgYield:6.5 },
+  Japan:        { flag:"🇯🇵", currency:"JPY", symbol:"¥",   stampLabel:"Registration + Acquisition Tax",loanLabel:"Housing Loan",        taxLabel:"Fixed Asset Tax",            maintenanceLabel:"Management Fee",  avgYield:5.5 },
+  Australia:    { flag:"🇦🇺", currency:"AUD", symbol:"A$",  stampLabel:"Stamp Duty (state-based)",      loanLabel:"Home Loan",           taxLabel:"Council Rates",              maintenanceLabel:"Strata Levy",     avgYield:3.8 },
+  "New Zealand":{ flag:"🇳🇿", currency:"NZD", symbol:"NZ$", stampLabel:"Conveyancing Fees",             loanLabel:"Home Loan",           taxLabel:"Rates",                      maintenanceLabel:"Body Corp Fee",   avgYield:3.2 },
 };
 
 const RE_PROPERTY_TYPES = {
@@ -7095,7 +10610,6 @@ const RE_PROPERTY_TYPES = {
   Malaysia:     ["Condo / Serviced Apt","Terrace House","Semi-D / Bungalow","Townhouse","SOHO / SOVO","Shop-Office","Industrial"],
   UK:           ["Flat / Apartment","Terraced House","Semi-Detached","Detached House","Maisonette","Commercial"],
   Dubai:        ["Apartment","Villa / Townhouse","Penthouse","Studio","Commercial Unit"],
-  US:           ["Single Family Home","Condo / Apartment","Townhouse","Multi-Family","Commercial"],
   Japan:        ["Mansion (Condo)","Detached House (Ikkodate)","Apartment (Apato)","Commercial"],
   Australia:    ["Apartment / Unit","Terrace / Townhouse","House","Duplex","Rural / Acreage","Commercial"],
   "New Zealand":["House","Unit / Apartment","Townhouse","Section (Land)","Commercial"],
@@ -7106,10 +10620,60 @@ const RE_TENURES = {
   Malaysia:     ["Freehold","99-Year Leasehold","Leasehold (varies)","Malay Reserve"],
   UK:           ["Freehold","Leasehold","Commonhold"],
   Dubai:        ["Freehold","Leasehold (99yr)"],
-  US:           ["Fee Simple (Freehold)","Leasehold","Cooperative"],
   Japan:        ["Freehold","Fixed-Term Leasehold (Teichi)","Borrowing Rights (Shakuya)"],
   Australia:    ["Freehold (Torrens)","Strata Title","Leasehold","Company Title"],
   "New Zealand":["Freehold","Leasehold","Cross Lease","Unit Title","Stratum Estate"],
+};
+
+// Funding vehicles available to buyers in each jurisdiction.
+// Used to inform users of available schemes when purchasing property.
+const RE_PURCHASE_VEHICLES = {
+  Singapore: [
+    { id:"cpf_oa",       name:"CPF Ordinary Account",          note:"Use OA for HDB or private. Valuation/Withdrawal Limit caps usage for private." },
+    { id:"hdb_loan",     name:"HDB Concessionary Loan",        note:"HDB only. 2.6% fixed, max 75% LTV. SC household income ≤ S$14k/mo." },
+    { id:"bank_loan",    name:"Bank Loan",                     note:"Any property. Max 75% LTV (first loan). MSR/TDSR caps apply." },
+    { id:"absd_remit",   name:"ABSD Remission",                note:"Married SC+SC/PR couples can claim remission on first matrimonial home." },
+    { id:"cash",         name:"Cash",                          note:"" },
+  ],
+  Malaysia: [
+    { id:"epf_a2",       name:"EPF Account 2 Withdrawal",      note:"Withdraw for downpayment, reduce loan, or full repayment. No max if for purchase." },
+    { id:"my_first_home",name:"My First Home Scheme",          note:"100% financing for first home ≤ RM500k. Income cap RM5k single / RM10k joint." },
+    { id:"mydeposit",    name:"MyDeposit",                     note:"Govt deposit subsidy up to RM30k for first-time buyers." },
+    { id:"bank_loan",    name:"Bank Mortgage",                 note:"Typically 80–90% LTV for first home." },
+    { id:"cash",         name:"Cash",                          note:"" },
+  ],
+  UK: [
+    { id:"lisa",         name:"Lifetime ISA (LISA)",           note:"£4k/yr. 25% govt bonus. First home ≤ £450k. Penalty on other early withdrawals." },
+    { id:"shared_own",   name:"Shared Ownership",              note:"Buy 25–75% share via housing association; pay rent on remainder." },
+    { id:"first_homes",  name:"First Homes Scheme",            note:"30–50% market discount for first-time buyers (local-authority backed)." },
+    { id:"mortgage",     name:"Mortgage",                      note:"Typically 75–95% LTV residential. Buy-to-let usually 75% max." },
+    { id:"cash",         name:"Cash",                          note:"" },
+  ],
+  Dubai: [
+    { id:"mortgage_res", name:"Mortgage (Resident)",           note:"Up to 80% LTV for properties < AED 5M; 75% above." },
+    { id:"mortgage_nr",  name:"Mortgage (Non-Resident)",       note:"Typically 50–60% LTV. Limited lenders, higher rates." },
+    { id:"off_plan",     name:"Developer Payment Plan",        note:"Off-plan: 20–40% during construction, balance on handover." },
+    { id:"cash",         name:"Cash",                          note:"~60%+ of expat purchases. No equivalent of CPF/EPF." },
+  ],
+  Japan: [
+    { id:"flat35",       name:"Flat 35 (JHF)",                 note:"Long-term fixed-rate loan from Japan Housing Finance Agency. Up to 35 years." },
+    { id:"bank_loan",    name:"Bank Mortgage",                 note:"Foreigners usually need PR or stable Japan-based income/visa." },
+    { id:"company_loan", name:"Employer / Corporate Loan",     note:"Some Japanese employers offer subsidised housing loans." },
+    { id:"cash",         name:"Cash",                          note:"" },
+  ],
+  Australia: [
+    { id:"fhss",         name:"First Home Super Saver (FHSS)", note:"Withdraw up to A$50k voluntary super contributions for first-home deposit." },
+    { id:"fhog",         name:"First Home Owner Grant",        note:"State-based, new builds only in most states. Amount varies." },
+    { id:"fhbas",        name:"First Home Buyer Assistance",   note:"State-based stamp duty concession/exemption. Price caps apply." },
+    { id:"mortgage",     name:"Mortgage",                      note:"80% LTV without LMI; up to 95% with LMI for owner-occupiers." },
+    { id:"cash",         name:"Cash",                          note:"" },
+  ],
+  "New Zealand": [
+    { id:"kiwisaver_fh", name:"KiwiSaver First-Home Withdrawal", note:"After 3+ years of contributions, withdraw all but NZ$1,000 for first home." },
+    { id:"first_home_grant", name:"First Home Grant (Kāinga Ora)", note:"Up to NZ$10k (new build) / NZ$5k (existing). Income & price caps apply." },
+    { id:"mortgage",     name:"Mortgage",                      note:"80% LTV owner-occupier; 60–65% investors (RBNZ LVR rules)." },
+    { id:"cash",         name:"Cash",                          note:"" },
+  ],
 };
 
 const RE_PURPOSE = ["Own Stay","Investment / Rental","Vacant","Under Construction","Holiday / Short-term"];
@@ -7247,7 +10811,7 @@ function REPropCard({ p, selPropId, onSelect, insured }) {
   );
 }
 
-function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab, showToast, onClose }) {
+function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab, showToast, onClose, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [ef, setEFState] = useState(null);
@@ -7287,7 +10851,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
             <div style={{fontSize:11,color:T.muted,marginTop:2}}>
               {_alt.length === 1 ? "Bank loan only for this property type" : "HDB or Bank loan available"}
             </div></div>
-            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
+            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>×</button>
           </div>
           <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -7397,7 +10961,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
           <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
             <div><div style={{fontSize:14,fontWeight:700}}>Record Loan Repayment</div>
             {_cpfOK && <div style={{fontSize:11,color:T.accent,marginTop:2}}>CPF-OA repayment available for this property</div>}</div>
-            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
+            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>×</button>
           </div>
           <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
             {_lc.length > 1 && (
@@ -7435,7 +10999,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
               </div>
             )}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              <div><Label>Payment Date</Label>
+              <div><Label required>Payment Date</Label>
                 <input type="date" value={f.date} onChange={e=>upd("date",e.target.value)} style={iStyle}/></div>
               <div>
                 <Label required>Total Amount ({sym})</Label>
@@ -7525,6 +11089,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                   totalAmount:total, cashAmount:f.useCPF?cashAmt:total, cpfAmount:f.useCPF?cpfAmt:0,
                   fees:parseFloat(f.fees)||0, notes:f.notes, paymentType: f.paymentType||"monthly" };
                 update({ loanRepayments:[...(p.loanRepayments||[]), repay] });
+                if (logAudit) logAudit("property", p.id, "add-transaction", null, repay, `Mortgage repayment · S$${total}${f.useCPF?` (Cash S$${cashAmt} + CPF S$${cpfAmt})`:""}`);
                 onClose(); showToast("Repayment recorded","success");
               }}
               style={{flex:1, background:(!f.totalAmount||!f.date||(f.useCPF&&!splitMatch))?T.inputBg:T.selected,
@@ -7555,7 +11120,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
               <div style={{fontSize:14,fontWeight:700}}>Mark as Sold</div>
               <div style={{fontSize:11,color:T.muted,marginTop:2}}>{p.name}</div>
             </div>
-            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>×</button>
+            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>×</button>
           </div>
           <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
             <div><Label>Sold Price ({sym})</Label>
@@ -7584,10 +11149,11 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
     );
   };
 
-  const TABS = ["overview","financials","rental","costs","insurance","postings"];
-  const tabLabel = {overview:"Overview",financials:"Loan & Finance",rental:"Rental",costs:"Costs & Fees",insurance:"Insurance",postings:"Postings"};
+  const TABS = ["overview","financials","rental","costs","insurance","postings","history","manage"];
+  const tabLabel = {overview:"Overview",financials:"Loan & Finance",rental:"Rental",costs:"Costs & Fees",insurance:"Insurance",postings:"Postings",history:"History",manage:"Manage"};
 
   const handleSave = () => {
+    if (logAudit) logAudit("property", p.id, "update", p, { ...p, ...ef }, `${p.flag||""} ${p.name}`);
     update(ef);
     setEditing(false);
     showToast("Property updated", "success");
@@ -8258,10 +11824,10 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
               <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
                 <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>📊 Monthly Cash Flow</div>
                 {[
-                  ["Rental Income", "in",  p.monthlyRent||0],
-                  ["Mortgage",      "out", monthly],
-                  ["MCST / Strata", "out", p.mcstFee||0],
-                  ["Maintenance",   "out", p.maintenanceFee||0],
+                  ["Rental Income",      "in",  p.monthlyRent||0],
+                  ["Mortgage",           "out", monthly],
+                  [ctry.maintenanceLabel,"out", p.mcstFee||0],
+                  ["Maintenance",        "out", p.maintenanceFee||0],
                 ].filter(r => r[2] > 0).map(([lbl,dir,amt]) => (
                   <div key={lbl} style={{display:"flex",justifyContent:"space-between",padding:"9px 16px",borderTop:`1px solid ${T.border}`}}>
                     <span style={{fontSize:12,color:T.muted}}>{lbl}</span>
@@ -8322,14 +11888,14 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                 <div style={{padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                     <div><Label>{ctry.taxLabel} /yr ({sym})</Label><Input type="number" value={ef.annualTax} onChange={e=>setEF("annualTax",parseFloat(e.target.value)||0)}/></div>
-                    <div><Label>MCST / Strata /mo ({sym})</Label><Input type="number" value={ef.mcstFee} onChange={e=>setEF("mcstFee",parseFloat(e.target.value)||0)}/></div>
+                    <div><Label>{ctry.maintenanceLabel} /mo ({sym})</Label><Input type="number" value={ef.mcstFee} onChange={e=>setEF("mcstFee",parseFloat(e.target.value)||0)}/></div>
                     <div><Label>Maintenance /mo ({sym})</Label><Input type="number" value={ef.maintenanceFee} onChange={e=>setEF("maintenanceFee",parseFloat(e.target.value)||0)}/></div>
                   </div>
                 </div>
               ) : (
                 [
                   [ctry.taxLabel+" (annual)", p.annualTax>0?`${sym}${p.annualTax.toLocaleString()}/yr`:"—"],
-                  ["MCST / Strata Fee",       p.mcstFee>0?`${sym}${p.mcstFee.toLocaleString()}/mo`:"—"],
+                  [ctry.maintenanceLabel,     p.mcstFee>0?`${sym}${p.mcstFee.toLocaleString()}/mo`:"—"],
                   ["Maintenance",             p.maintenanceFee>0?`${sym}${p.maintenanceFee.toLocaleString()}/mo`:"—"],
                   ["Total Annual Ongoing",    `${sym}${((p.annualTax||0)+(p.mcstFee||0)*12+(p.maintenanceFee||0)*12).toLocaleString()}/yr`],
                 ].map(([k,v],i) => (
@@ -8477,6 +12043,23 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
             </div>
           );
         })()}
+        {propTab === "history" && (
+          <AuditLogPanel auditLog={auditLog} entityType="property" entityId={p.id}/>
+        )}
+        {propTab === "manage" && (
+          <FieldUpdatePanel
+            entity={p}
+            entityType="property"
+            entityLabel={`${p.flag||""} ${p.name}`}
+            fields={[
+              { key:"currentValuation", label:"Valuation",      icon:"🏠", prefix:"S$", helper:"Current estimated market value" },
+              { key:"monthlyRent",      label:"Monthly Rent",   icon:"🔑", prefix:"S$", helper:"Gross rent received per month" },
+              { key:"loanAmount",       label:"Outstanding Loan", icon:"🏦", prefix:"S$", helper:"Remaining mortgage principal" },
+              { key:"interestRate",     label:"Interest Rate",  icon:"📈", prefix:"",   suffix:"% p.a.", step:"0.01", helper:"Effective mortgage rate" },
+            ]}
+            onUpdate={(next)=>setProperties(prev=>prev.map(x=>x.id===p.id?next:x))}
+            auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+        )}
       </div></div>
       {showAddContract && <AddContractModal onClose={()=>setShowAddContract(false)}/>}
       {showAddRepay && <AddRepayModal onClose={()=>setShowAddRepay(false)}/>}
@@ -8486,7 +12069,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
 }
 
 /* ── Real Estate Screen ─────────────────────────────────────────── */
-function RealEstateScreen({ properties, setProperties, policies, showToast }) {
+function RealEstateScreen({ properties, setProperties, policies, accounts, setAccounts, showToast, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [selectedProp, setSelectedProp] = useState(null);
   const [propTab,    setPropTab]    = useState("overview");
@@ -8720,6 +12303,8 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
               setPropTab={setPropTab}
               showToast={showToast}
               onClose={()=>setSelectedProp(null)}
+              auditLog={auditLog}
+              logAudit={logAudit}
             />
           </div>
         </div>
@@ -8731,15 +12316,15 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
           onClick={e=>{if(e.target===e.currentTarget)setShowAdd(false);}}>
           <div style={{background:T.bg,borderRadius:16,width:"100%",maxWidth:560,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
 
-            <div style={{padding:"18px 24px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontSize:15,fontWeight:700}}>Add Property {RE_COUNTRIES[addForm.country] && RE_COUNTRIES[addForm.country].flag}</div>
-              <button onClick={()=>setShowAdd(false)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 12px",fontSize:13,cursor:"pointer",color:T.muted}}>Cancel</button>
+            <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontSize:16,fontWeight:800}}>Add Property {RE_COUNTRIES[addForm.country] && RE_COUNTRIES[addForm.country].flag}</div>
+              <button onClick={()=>setShowAdd(false)} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
             </div>
 
             <div style={{padding:"22px 24px",display:"flex",flexDirection:"column",gap:16}}>
 
               <div>
-                <Label>Country</Label>
+                <Label required>Country</Label>
                 <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                   {COUNTRIES_LIST.map(c => (
                     <button key={c} onClick={()=>{setF("country",c);setF("type","");setF("tenure","");}}
@@ -8750,26 +12335,81 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
                 </div>
               </div>
 
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <div style={{gridColumn:"span 2"}}><Label>Property Name / Label</Label><Input placeholder="e.g. Tampines HDB, London Flat" value={addForm.name} onChange={e=>setF("name",e.target.value)}/></div>
-                <div style={{gridColumn:"span 2"}}><Label>Address</Label><Input placeholder="Street address" value={addForm.address} onChange={e=>setF("address",e.target.value)}/></div>
-                <div><Label>Postal / ZIP Code</Label><Input value={addForm.postalCode} onChange={e=>setF("postalCode",e.target.value)}/></div>
+              {RE_PURCHASE_VEHICLES[addForm.country] && (
+                <div style={{background:T.accentBg,border:`1px solid ${T.accent}30`,borderRadius:10,padding:"12px 14px"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:T.accent,marginBottom:8}}>💡 Funding Options in {addForm.country}</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {RE_PURCHASE_VEHICLES[addForm.country].map(v => (
+                      <div key={v.id} style={{fontSize:12,color:T.text,lineHeight:1.5}}>
+                        <span style={{fontWeight:600}}>{v.name}</span>
+                        {v.note && <span style={{color:T.muted}}> — {v.note}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* CPF funding picker — Singapore only */}
+              {addForm.country === "Singapore" && (() => {
+                const cpfOa = (accounts||[]).find(a => a.accountType === "CPF" && a.cpfSubType === "OA");
+                if (!cpfOa) return null;
+                const cpfAmt = parseFloat(addForm.cpfOaAmount) || 0;
+                const over = cpfAmt > (cpfOa.balance || 0);
+                return (
+                  <div style={{background:"#FEF2F2",border:`1px solid #DC262630`,borderRadius:10,padding:"12px 14px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                      <div style={{fontSize:12,fontWeight:700,color:"#DC2626"}}>🇸🇬 CPF Funding (optional)</div>
+                      <div style={{fontSize:11,color:T.muted}}>Available OA: <strong style={{color:T.text}}>S${(cpfOa.balance||0).toLocaleString()}</strong></div>
+                    </div>
+                    <div style={{fontSize:11,color:T.muted,marginBottom:8,lineHeight:1.5}}>
+                      For HDB purchases CPF OA can cover the full purchase. For private property, OA is limited to LTV rules + Valuation Limit.
+                    </div>
+                    <div>
+                      <Label>Amount to fund from CPF OA (S$)</Label>
+                      <Input type="number" prefix="S$" placeholder="0" value={addForm.cpfOaAmount||""} onChange={e=>setF("cpfOaAmount",parseFloat(e.target.value)||0)}/>
+                      {over && <div style={{fontSize:11,color:T.down,marginTop:5,fontWeight:600}}>⚠️ Exceeds available CPF OA balance (S${(cpfOa.balance||0).toLocaleString()})</div>}
+                      {cpfAmt > 0 && !over && <div style={{fontSize:11,color:T.up,marginTop:5}}>✓ S${cpfAmt.toLocaleString()} will be deducted from CPF OA on save. Remaining cash funding: S${Math.max(0,(parseFloat(addForm.purchasePrice)||0) - cpfAmt).toLocaleString()}</div>}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div>
+                <Label required>Property Name / Label</Label>
+                <Input placeholder="e.g. Tampines HDB, London Flat" value={addForm.name} onChange={e=>setF("name",e.target.value)}/>
+              </div>
+
+              <div>
+                <Label required>Purchase Price ({cp.symbol})</Label>
+                <Input type="number" prefix={cp.symbol} placeholder="0" value={addForm.purchasePrice||""} onChange={e=>setF("purchasePrice",parseFloat(e.target.value)||0)}/>
+              </div>
+
+              <div>
+                <Label required>Property Type</Label>
+                <select value={addForm.type} onChange={e=>setF("type",e.target.value)}
+                  style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${addForm.type?T.selected:T.border}`,background:T.inputBg,fontFamily:"inherit",fontSize:13,color:addForm.type?T.text:T.muted,outline:"none"}}>
+                  <option value="" disabled>Select type…</option>
+                  {(RE_PROPERTY_TYPES[addForm.country]||[]).map(t=><option key={t}>{t}</option>)}
+                </select>
+              </div>
+
+              <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:12}}>
+                <div>
+                  <Label required>Address</Label>
+                  <Input placeholder="Street address" value={addForm.address} onChange={e=>setF("address",e.target.value)}/>
+                </div>
+                <div>
+                  <Label>Postal / ZIP Code</Label>
+                  <Input value={addForm.postalCode} onChange={e=>setF("postalCode",e.target.value)}/>
+                </div>
+              </div>
+
+              <MoreOptions count={addForm.purpose === "Investment / Rental" ? 15 : 11} style={{gridColumn:"unset"}}>
                 <div>
                   <Label>Purpose</Label>
                   <select value={addForm.purpose} onChange={e=>{setF("purpose",e.target.value);setF("isRented",e.target.value==="Investment / Rental");}}
                     style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.inputBg,fontFamily:"inherit",fontSize:13,color:T.text,outline:"none"}}>
                     {RE_PURPOSE.map(t=><option key={t}>{t}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <div>
-                  <Label>Property Type</Label>
-                  <select value={addForm.type} onChange={e=>setF("type",e.target.value)}
-                    style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${addForm.type?T.selected:T.border}`,background:T.inputBg,fontFamily:"inherit",fontSize:13,color:addForm.type?T.text:T.muted,outline:"none"}}>
-                    <option value="" disabled>Select type…</option>
-                    {(RE_PROPERTY_TYPES[addForm.country]||[]).map(t=><option key={t}>{t}</option>)}
                   </select>
                 </div>
                 <div>
@@ -8782,70 +12422,73 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
                 </div>
                 <div><Label>Size (sqft)</Label><Input type="number" placeholder="0" value={addForm.sizeSqft||""} onChange={e=>setF("sizeSqft",e.target.value)}/></div>
                 <div><Label>Purchase Date</Label><Input type="date" value={addForm.purchaseDate} onChange={e=>setF("purchaseDate",e.target.value)}/></div>
-              </div>
-
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <div><Label>Purchase Price ({cp.symbol})</Label><Input type="number" prefix={cp.symbol} placeholder="0" value={addForm.purchasePrice||""} onChange={e=>setF("purchasePrice",parseFloat(e.target.value)||0)}/></div>
                 <div><Label>Current Valuation ({cp.symbol})</Label><Input type="number" prefix={cp.symbol} placeholder="Same as purchase" value={addForm.currentValuation||""} onChange={e=>setF("currentValuation",parseFloat(e.target.value)||0)}/></div>
-              </div>
-
-              <div style={{background:T.inputBg,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
-                <div style={{fontSize:12,fontWeight:700,color:T.muted}}>🏦 Loan (optional)</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-                  <div><Label>Loan Amount</Label><Input type="number" placeholder="0" value={addForm.loanAmount||""} onChange={e=>setF("loanAmount",parseFloat(e.target.value)||0)}/></div>
-                  <div><Label>Rate (% p.a.)</Label><Input type="number" step="0.01" placeholder="0.00" value={addForm.interestRate||""} onChange={e=>setF("interestRate",parseFloat(e.target.value)||0)}/></div>
-                  <div><Label>Tenure (yrs)</Label><Input type="number" placeholder="25" value={addForm.loanTenureYears||""} onChange={e=>setF("loanTenureYears",parseInt(e.target.value)||25)}/></div>
-                </div>
+                <div><Label>Loan Amount</Label><Input type="number" placeholder="0" value={addForm.loanAmount||""} onChange={e=>setF("loanAmount",parseFloat(e.target.value)||0)}/></div>
+                <div><Label>Rate (% p.a.)</Label><Input type="number" step="0.01" placeholder="0.00" value={addForm.interestRate||""} onChange={e=>setF("interestRate",parseFloat(e.target.value)||0)}/></div>
+                <div><Label>Loan Tenure (yrs)</Label><Input type="number" placeholder="25" value={addForm.loanTenureYears||""} onChange={e=>setF("loanTenureYears",parseInt(e.target.value)||25)}/></div>
                 {previewMonthly > 0 && (
-                  <div style={{background:T.bg,borderRadius:8,padding:"9px 13px",fontSize:12,color:T.muted}}>
+                  <div style={{gridColumn:"1 / -1",background:T.inputBg,borderRadius:8,padding:"9px 13px",fontSize:12,color:T.muted}}>
                     Est. monthly: <strong style={{color:T.text}}>{cp.symbol}{previewMonthly.toLocaleString()}</strong>
                   </div>
                 )}
-              </div>
-
-              {addForm.purpose === "Investment / Rental" && (
-                <div style={{background:T.inputBg,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
-                  <div style={{fontSize:12,fontWeight:700,color:T.muted}}>🏘 Rental Info</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                {addForm.purpose === "Investment / Rental" && (
+                  <>
                     <div><Label>Monthly Rent ({cp.symbol})</Label><Input type="number" placeholder="0" value={addForm.monthlyRent||""} onChange={e=>setF("monthlyRent",parseFloat(e.target.value)||0)}/></div>
                     <div><Label>Tenant Name</Label><Input placeholder="Tenant or company" value={addForm.tenantName} onChange={e=>setF("tenantName",e.target.value)}/></div>
                     <div><Label>Lease Start</Label><Input type="date" value={addForm.leaseStart} onChange={e=>setF("leaseStart",e.target.value)}/></div>
                     <div><Label>Lease End</Label><Input type="date" value={addForm.leaseEnd} onChange={e=>setF("leaseEnd",e.target.value)}/></div>
-                  </div>
+                  </>
+                )}
+                <div><Label>{cp.stampLabel} ({cp.symbol})</Label><Input type="number" placeholder="0" value={addForm.stampDuty||""} onChange={e=>setF("stampDuty",parseFloat(e.target.value)||0)}/></div>
+                <div><Label>Agent / Legal Fee</Label><Input type="number" placeholder="0" value={addForm.agentFee||""} onChange={e=>setF("agentFee",parseFloat(e.target.value)||0)}/></div>
+                <div><Label>{cp.taxLabel} /yr</Label><Input type="number" placeholder="0" value={addForm.annualTax||""} onChange={e=>setF("annualTax",parseFloat(e.target.value)||0)}/></div>
+                <div><Label>{cp.maintenanceLabel} /mo</Label><Input type="number" placeholder="0" value={addForm.mcstFee||""} onChange={e=>setF("mcstFee",parseFloat(e.target.value)||0)}/></div>
+                <div style={{gridColumn:"1 / -1"}}>
+                  <Label>Notes</Label>
+                  <textarea value={addForm.notes} onChange={e=>setF("notes",e.target.value)} placeholder="Any additional notes…"
+                    style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical",minHeight:64,lineHeight:1.6}}/>
                 </div>
-              )}
+              </MoreOptions>
 
-              <div style={{background:T.inputBg,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
-                <div style={{fontSize:12,fontWeight:700,color:T.muted}}>💸 Costs & Fees (optional)</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                  <div><Label>{cp.stampLabel} ({cp.symbol})</Label><Input type="number" placeholder="0" value={addForm.stampDuty||""} onChange={e=>setF("stampDuty",parseFloat(e.target.value)||0)}/></div>
-                  <div><Label>Agent / Legal Fee</Label><Input type="number" placeholder="0" value={addForm.agentFee||""} onChange={e=>setF("agentFee",parseFloat(e.target.value)||0)}/></div>
-                  <div><Label>{cp.taxLabel} /yr</Label><Input type="number" placeholder="0" value={addForm.annualTax||""} onChange={e=>setF("annualTax",parseFloat(e.target.value)||0)}/></div>
-                  <div><Label>MCST / Strata /mo</Label><Input type="number" placeholder="0" value={addForm.mcstFee||""} onChange={e=>setF("mcstFee",parseFloat(e.target.value)||0)}/></div>
-                </div>
-              </div>
-
-              <div>
-                <Label>Notes</Label>
-                <textarea value={addForm.notes} onChange={e=>setF("notes",e.target.value)} placeholder="Any additional notes…"
-                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical",minHeight:64,lineHeight:1.6}}/>
-              </div>
-
+            </div>
+            <div style={{padding:"0 24px 22px",display:"flex",justifyContent:"flex-end",gap:10}}>
+              <button onClick={()=>setShowAdd(false)}
+                style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
               <button onClick={()=>{
-                if (!addForm.country || !addForm.name || !addForm.purchasePrice) {
-                  showToast("Country, Name and Purchase Price are required","error");
+                if (!addForm.country || !addForm.name || !addForm.purchasePrice || !addForm.type || !addForm.address) {
+                  showToast("Country, Name, Purchase Price, Property Type and Address are required","error");
                   return;
                 }
-                setProperties(prev=>[...prev,{
+                const cpfAmt = parseFloat(addForm.cpfOaAmount) || 0;
+                const cpfOa = (accounts||[]).find(a => a.accountType === "CPF" && a.cpfSubType === "OA");
+                if (cpfAmt > 0 && cpfOa && cpfAmt > (cpfOa.balance||0)) {
+                  showToast(`CPF OA amount exceeds available balance (S$${(cpfOa.balance||0).toLocaleString()})`,"error");
+                  return;
+                }
+                const id = addForm.id || ("P" + Date.now());
+                const np = {
                   ...addForm,
+                  id,
+                  flag: (RE_COUNTRIES[addForm.country] || {}).flag || "",
                   currentValuation: addForm.currentValuation || addForm.purchasePrice,
                   loanTenureYears: parseInt(addForm.loanTenureYears)||25,
                   isRented: addForm.purpose==="Investment / Rental",
-                }]);
+                  cpfOaFunded: cpfAmt > 0 ? cpfAmt : undefined,
+                  cpfSourceAccountId: cpfAmt > 0 && cpfOa ? cpfOa.id : undefined,
+                };
+                setProperties(prev=>[...prev, np]);
+                if (logAudit) logAudit("property", id, "create", null, np, `${np.flag||""} ${np.name}`);
+                // Decrement CPF OA balance + audit
+                if (cpfAmt > 0 && cpfOa && setAccounts) {
+                  const prevBal = cpfOa.balance || 0;
+                  const newBal = Math.max(0, prevBal - cpfAmt);
+                  setAccounts(prev => prev.map(a => a.id === cpfOa.id ? { ...a, balance: newBal } : a));
+                  if (logAudit) logAudit("account", cpfOa.id, "cpf-withdrawal", { balance: prevBal }, { balance: newBal, propertyId: id, amount: cpfAmt }, `CPF OA → ${np.name} · S$${cpfAmt.toLocaleString()}`);
+                }
                 setShowAdd(false);
-                showToast("Property added","success");
+                showToast(cpfAmt > 0 ? `Property added · S$${cpfAmt.toLocaleString()} deducted from CPF OA` : "Property added","success");
               }}
-                style={{padding:"13px",borderRadius:10,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:14,fontWeight:700}}>
+                style={{padding:"9px 22px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>
                 Add Property
               </button>
             </div>
@@ -8856,7 +12499,7 @@ function RealEstateScreen({ properties, setProperties, policies, showToast }) {
   );
 }
 
-function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToast }) {
+function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToast, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [insTab, setInsTab] = useState("overview");
   const [filterType, setFilterType] = useState("All");
@@ -8918,14 +12561,25 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
     return matchType && matchStatus && matchSearch;
   });
 
-  // Add policy submit
+  // Add / Edit policy submit
   const handleAddPolicy = () => {
-    if (!form.type || !form.insurer || !form.policyNo) return;
-    const newP = { ...form, id: Date.now(), riders: form.riders || [], exclusions: form.exclusions || [], claims: [], documents: [], riderInput: undefined, exclusionInput: undefined };
-    setPolicies(prev => [...prev, newP]);
+    if (!form.type || !form.insurer || !form.policyNo || !form.premium || !form.nextPremDue) return;
+    const isEdit = !!form.id && policies.some(p => p.id === form.id);
+    if (isEdit) {
+      const prevP = policies.find(p => p.id === form.id);
+      const updatedP = { ...prevP, ...form, riders: form.riders || [], exclusions: form.exclusions || [], riderInput: undefined, exclusionInput: undefined };
+      setPolicies(prev => prev.map(p => p.id === form.id ? updatedP : p));
+      if (logAudit) logAudit("insurance", form.id, "update", prevP, updatedP, `${updatedP.insurer} · ${updatedP.planName||updatedP.type}`);
+      if (selectedPolicy && selectedPolicy.id === form.id) setSelectedPolicy(updatedP);
+      showToast("Policy updated successfully", "success");
+    } else {
+      const newP = { ...form, id: Date.now(), riders: form.riders || [], exclusions: form.exclusions || [], claims: [], documents: [], riderInput: undefined, exclusionInput: undefined };
+      setPolicies(prev => [...prev, newP]);
+      if (logAudit) logAudit("insurance", newP.id, "create", null, newP, `${newP.insurer} · ${newP.planName||newP.type}`);
+      showToast("Policy added successfully", "success");
+    }
     setForm(EMPTY_POLICY);
     setShowAddModal(false);
-    showToast("Policy added successfully", "success");
   };
 
   // Add claim
@@ -8933,13 +12587,14 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
     if (!claimForm.type || !claimForm.date) return;
     const claim = { id: `C${Date.now()}`, ...claimForm, amount: parseFloat(claimForm.amount) || 0 };
     setPolicies(prev => prev.map(p => p.id === claimTarget.id ? { ...p, claims: [...(p.claims || []), claim] } : p));
+    if (logAudit) logAudit("insurance", claimTarget.id, "add-transaction", null, claim, `Claim · ${claim.type} · S$${claim.amount}`);
     if (selectedPolicy && selectedPolicy.id === claimTarget.id) setSelectedPolicy(prev => ({ ...prev, claims: [...(prev.claims || []), claim] }));
     setClaimForm(EMPTY_CLAIM);
     setShowClaimModal(false);
     showToast("Claim recorded", "success");
   };
 
-  const fmtCcy = (v) => v >= 1e6 ? `S$${(v/1e6).toFixed(2)}M` : `S$${v.toLocaleString()}`;
+  const fmtCcy = (v) => `S$${v.toLocaleString()}`;
   const typeConf = (type) => INS_TYPES[type] || { icon: "📋", color: T.muted, bg: T.inputBg };
 
   // ── Tab groups for type filter
@@ -8966,6 +12621,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         a.id === tx.linkedAccountId ? { ...a, balance: Math.max(0, a.balance - totalDeducted) } : a
       ));
     }
+    if (logAudit) logAudit("insurance", polId, "add-transaction", null, tx, `Premium · S$${tx.amount||0} (${tx.method||""})`);
     setShowAddTxModal(false);
     showToast("Premium payment recorded", "success");
   };
@@ -8994,14 +12650,14 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
       <>
         <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:500}}/>
         <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:501,background:T.bg,border:`1px solid ${T.border}`,borderRadius:16,width:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.22)"}}>
-          <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
-            <div style={{fontSize:15,fontWeight:700}}>Record Premium Payment</div>
-            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted}}>×</button>
+          <div style={{padding:"22px 22px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:16,fontWeight:800}}>Record Premium Payment</div>
+            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
           </div>
-          <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:13}}>
+          <div style={{padding:"18px 22px",display:"flex",flexDirection:"column",gap:13}}>
 
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <div><Label>Payment Date</Label>
+              <div><Label required>Payment Date</Label>
                 <input type="date" value={f.date} onChange={e=>upd("date",e.target.value)} style={iStyle}/></div>
               <div><Label>Status</Label>
                 <select value={f.status} onChange={e=>upd("status",e.target.value)} style={iStyle}>
@@ -9062,8 +12718,21 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 placeholder="e.g. Annual renewal, includes rider premium"
                 style={{...iStyle, resize:"vertical"}}/></div>
 
+            {/* Money-flow categorization */}
+            {f.amount && (
+              <FlowBanner type="Premium" amount={totalCost}
+                flowOverride={f.status === "Paid" ? "out" : f.status === "Waived" ? "info" : "out"}
+                label={
+                  f.status === "Pending" ? "⏳ Premium pending (will be paid)"
+                  : f.status === "Overdue" ? "⚠️ Premium overdue"
+                  : f.status === "Waived" ? "📋 Premium waived (no cash flow)"
+                  : "📤 Premium paid"
+                } style={{marginBottom:0}}/>
+            )}
+
           </div>
-          <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+          <div style={{padding:"0 22px 22px",display:"flex",justifyContent:"flex-end",gap:10}}>
+            <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
             <button
               disabled={!canSubmit}
               onClick={()=>handleAddPremiumTx(polId, {
@@ -9074,12 +12743,11 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 linkedAccountId: useAccount ? f.linkedAccountId : null,
                 ref: f.ref, status: f.status, notes: f.notes,
               })}
-              style={{flex:1, background:canSubmit?T.selected:T.inputBg, color:canSubmit?T.selectedText:T.dim,
-                border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:600,
-                cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+              style={{background:T.selected, color:T.selectedText,
+                border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:700,
+                cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit",opacity:canSubmit?1:0.4}}>
               Record Payment
             </button>
-            <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"11px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
           </div>
         </div>
       </>
@@ -9311,7 +12979,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         const tc = typeConf(pol.type);
         const annualPrem = (parseFloat(pol.premium)||0) * ({ Monthly:12, Quarterly:4, "Half-Yearly":2, Yearly:1, "Single Premium":0, "N/A":0 }[pol.premFreq]||1);
         const cv = (pol.cashValue||0);
-        const DETAIL_TABS = ["overview","coverage","premiums","transactions","claims","exclusions","documents","postings"];
+        const DETAIL_TABS = ["overview","coverage","premiums","transactions","claims","exclusions","documents","postings","history"];
 
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }}
@@ -9328,6 +12996,11 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <StatusChip status={pol.status} />
+                    <button
+                      onClick={() => { setForm({ ...EMPTY_POLICY, ...pol }); setShowAddModal(true); }}
+                      style={{ background: T.inputBg, border:"none", borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: T.text, fontFamily: "inherit" }}>
+                      Edit
+                    </button>
                     {pol.status === "Active" && (
                       <button
                         onClick={() => { setClosureTarget(pol.id); setShowClosureModal(true); }}
@@ -9364,7 +13037,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 <div style={{ marginTop: 14, borderBottom: `1px solid ${T.border}`, overflowX: "auto", scrollbarWidth: "none" }}>
                   <div style={{ display: "flex", gap: 0, minWidth: "max-content" }}>
                     {DETAIL_TABS.map(dt => {
-                      const label = { transactions: "Tx History", claims: "Claims", exclusions: "Exclusions", documents: "Documents", overview: "Overview", coverage: "Coverage", premiums: "Premiums", postings: "Postings" }[dt] || dt;
+                      const label = { transactions: "Tx History", claims: "Claims", exclusions: "Exclusions", documents: "Documents", overview: "Overview", coverage: "Coverage", premiums: "Premiums", postings: "Postings", history: "History" }[dt] || dt;
                       const badge = dt === "claims" && (pol.claims || []).length > 0 ? pol.claims.length
                                   : dt === "transactions" && (pol.premiumTransactions || []).length > 0 ? pol.premiumTransactions.length
                                   : null;
@@ -9908,6 +13581,11 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                     </div>
                   );
                 })()}
+                {detailTab === "history" && (
+                  <div style={{padding:"16px 0"}}>
+                    <AuditLogPanel auditLog={auditLog} entityType="insurance" entityId={pol.id}/>
+                  </div>
+                )}
 
               </div>
             </div>
@@ -9980,9 +13658,9 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
           onClick={e => { if (e.target === e.currentTarget) setShowAddModal(false); }}>
           <div style={{ background: T.bg, borderRadius: 16, width: "100%", maxWidth: 680, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
-            <div style={{ padding: "22px 26px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: T.sidebar, borderRadius: "16px 16px 0 0" }}>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>Add New Policy</div>
-              <button onClick={() => setShowAddModal(false)} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "5px 12px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: T.muted }}>Cancel</button>
+            <div style={{ padding: "22px 26px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 16, fontWeight: 800 }}>{form.id && policies.some(p => p.id === form.id) ? "Edit Policy" : "Add New Policy"}</div>
+              <button onClick={() => { setShowAddModal(false); setForm(EMPTY_POLICY); }} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
             </div>
             <div style={{ padding: "22px 26px", display: "flex", flexDirection: "column", gap: 20 }}>
 
@@ -10563,8 +14241,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 </div>
               </div>
 
-              {/* Dates */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <MoreOptions count={5} style={{gridColumn:"unset"}}>
                 <div>
                   <Label>Policy Start Date</Label>
                   <Input type="date" value={form.startDate} onChange={e => setF("startDate", e.target.value)} />
@@ -10573,65 +14250,59 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                   <Label>Policy End Date</Label>
                   <Input type="date" value={form.endDate} onChange={e => setF("endDate", e.target.value)} />
                 </div>
-              </div>
-
-              {/* Riders */}
-              <div>
-                <Label>Riders</Label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input value={form.riderInput||""} onChange={e => setF("riderInput", e.target.value)}
-                    onKeyDown={e => { if (e.key==="Enter" && form.riderInput && form.riderInput.trim()) { setF("riders", [...(form.riders||[]), form.riderInput.trim()]); setF("riderInput",""); e.preventDefault(); } }}
-                    placeholder="Type rider name and press Enter…"
-                    style={{ flex: 1, background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none" }} />
-                </div>
-                {(form.riders || []).length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                    {form.riders.map((r,i) => (
-                      <span key={i} style={{ display: "flex", alignItems: "center", gap: 5, background: T.upBg, color: T.up, borderRadius: 6, padding: "4px 10px", fontSize: 12 }}>
-                        {r}
-                        <button onClick={() => setF("riders", form.riders.filter((_,j)=>j!==i))} style={{ background:"none",border:"none",cursor:"pointer",color:T.up,fontSize:13,lineHeight:1,padding:"0 0 0 2px" }}>×</button>
-                      </span>
-                    ))}
+                <div style={{gridColumn:"1 / -1"}}>
+                  <Label>Riders</Label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input value={form.riderInput||""} onChange={e => setF("riderInput", e.target.value)}
+                      onKeyDown={e => { if (e.key==="Enter" && form.riderInput && form.riderInput.trim()) { setF("riders", [...(form.riders||[]), form.riderInput.trim()]); setF("riderInput",""); e.preventDefault(); } }}
+                      placeholder="Type rider name and press Enter…"
+                      style={{ flex: 1, background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none" }} />
                   </div>
-                )}
-              </div>
-
-              {/* Exclusions */}
-              <div>
-                <Label>Exclusions</Label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input value={form.exclusionInput||""} onChange={e => setF("exclusionInput", e.target.value)}
-                    onKeyDown={e => { if (e.key==="Enter" && form.exclusionInput && form.exclusionInput.trim()) { setF("exclusions", [...(form.exclusions||[]), form.exclusionInput.trim()]); setF("exclusionInput",""); e.preventDefault(); } }}
-                    placeholder="Type exclusion and press Enter…"
-                    style={{ flex: 1, background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none" }} />
+                  {(form.riders || []).length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                      {form.riders.map((r,i) => (
+                        <span key={i} style={{ display: "flex", alignItems: "center", gap: 5, background: T.upBg, color: T.up, borderRadius: 6, padding: "4px 10px", fontSize: 12 }}>
+                          {r}
+                          <button onClick={() => setF("riders", form.riders.filter((_,j)=>j!==i))} style={{ background:"none",border:"none",cursor:"pointer",color:T.up,fontSize:13,lineHeight:1,padding:"0 0 0 2px" }}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                {(form.exclusions || []).length > 0 && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
-                    {form.exclusions.map((ex,i) => (
-                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: T.downBg, borderRadius: 7, padding: "6px 12px", fontSize: 12 }}>
-                        <span style={{ color: T.down }}>✕</span>
-                        <span style={{ flex: 1, color: T.text }}>{ex}</span>
-                        <button onClick={() => setF("exclusions", form.exclusions.filter((_,j)=>j!==i))} style={{ background:"none",border:"none",cursor:"pointer",color:T.down,fontSize:14 }}>×</button>
-                      </div>
-                    ))}
+                <div style={{gridColumn:"1 / -1"}}>
+                  <Label>Exclusions</Label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input value={form.exclusionInput||""} onChange={e => setF("exclusionInput", e.target.value)}
+                      onKeyDown={e => { if (e.key==="Enter" && form.exclusionInput && form.exclusionInput.trim()) { setF("exclusions", [...(form.exclusions||[]), form.exclusionInput.trim()]); setF("exclusionInput",""); e.preventDefault(); } }}
+                      placeholder="Type exclusion and press Enter…"
+                      style={{ flex: 1, background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none" }} />
                   </div>
-                )}
-              </div>
+                  {(form.exclusions || []).length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
+                      {form.exclusions.map((ex,i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: T.downBg, borderRadius: 7, padding: "6px 12px", fontSize: 12 }}>
+                          <span style={{ color: T.down }}>✕</span>
+                          <span style={{ flex: 1, color: T.text }}>{ex}</span>
+                          <button onClick={() => setF("exclusions", form.exclusions.filter((_,j)=>j!==i))} style={{ background:"none",border:"none",cursor:"pointer",color:T.down,fontSize:14 }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{gridColumn:"1 / -1"}}>
+                  <Label>Notes</Label>
+                  <textarea value={form.notes} onChange={e => setF("notes", e.target.value)} placeholder="Add any notes about this policy…"
+                    style={{ width: "100%", boxSizing: "border-box", background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none", resize: "vertical", minHeight: 70 }} />
+                </div>
+              </MoreOptions>
 
-              {/* Notes */}
-              <div>
-                <Label>Notes</Label>
-                <textarea value={form.notes} onChange={e => setF("notes", e.target.value)} placeholder="Add any notes about this policy…"
-                  style={{ width: "100%", boxSizing: "border-box", background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none", resize: "vertical", minHeight: 70 }} />
-              </div>
-
-              <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={handleAddPolicy} disabled={!form.type || !form.insurer || !form.policyNo}
-                  style={{ flex: 1, background: (!form.type||!form.insurer||!form.policyNo) ? T.inputBg : T.selected, color: (!form.type||!form.insurer||!form.policyNo) ? T.dim : T.selectedText, border: "none", borderRadius: 9, padding: "12px", fontSize: 13, cursor: (!form.type||!form.insurer||!form.policyNo) ? "not-allowed" : "pointer", fontFamily: "inherit", fontWeight: 600 }}>
-                  + Add Policy
-                </button>
-                <button onClick={() => setForm(EMPTY_POLICY)} style={{ background: "transparent", color: T.muted, border: `1px solid ${T.border}`, borderRadius: 9, padding: "12px 20px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>
-              </div>
+            </div>
+            <div style={{ padding: "0 26px 22px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button onClick={() => { setShowAddModal(false); setForm(EMPTY_POLICY); }} style={{ background: "transparent", color: T.muted, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 20px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              <button onClick={handleAddPolicy} disabled={!form.type || !form.insurer || !form.policyNo || !form.premium || !form.nextPremDue}
+                style={{ background: T.selected, color: T.selectedText, border: "none", borderRadius: 8, padding: "9px 22px", fontSize: 13, cursor: (!form.type||!form.insurer||!form.policyNo||!form.premium||!form.nextPremDue) ? "not-allowed" : "pointer", fontFamily: "inherit", fontWeight: 700, opacity:(!form.type||!form.insurer||!form.policyNo||!form.premium||!form.nextPremDue)?0.4:1 }}>
+                {form.id && policies.some(p => p.id === form.id) ? "Save Changes" : "Add Policy"}
+              </button>
             </div>
           </div>
         </div>
@@ -10739,13 +14410,80 @@ const EMPTY_CARD = {
 const EMPTY_ACCOUNT = {
   id:"", bank:"DBS", accountName:"", accountType:"Checking",
   last4:"", balance:0, currency:"SGD", notes:"",
+  accountNumber:"",  // optional, used for Brokerage type
 };
 
 const CC_ACCOUNTS_INIT = [
   { id:"ACC001", bank:"DBS",  accountName:"DBS Multiplier",      accountType:"Savings",  last4:"2341", balance:18450, currency:"SGD" },
   { id:"ACC002", bank:"OCBC", accountName:"OCBC 360 Account",    accountType:"Savings",  last4:"8812", balance:9320,  currency:"SGD" },
   { id:"ACC003", bank:"UOB",  accountName:"UOB One Account",     accountType:"Checking", last4:"5567", balance:6150,  currency:"SGD" },
+  { id:"ACC004", bank:"HSBC", accountName:"HSBC Premier USD",    accountType:"Checking", last4:"7720", balance:4280,  currency:"USD" },
+  // CPF accounts (Singapore Central Provident Fund) — restricted balances, mirror the "CPF Balances" retirement plan
+  { id:"CPF001", bank:"CPF Board", accountName:"CPF Ordinary Account",   accountType:"CPF", cpfSubType:"OA", last4:"567A", balance:98000, currency:"SGD", linkedPlanId:"RT006", restricted:true, notes:"CPF OA — usable for HDB / private property (subject to LTV) and CPFIS-OA investments" },
+  { id:"CPF002", bank:"CPF Board", accountName:"CPF Special Account",    accountType:"CPF", cpfSubType:"SA", last4:"567A", balance:87000, currency:"SGD", linkedPlanId:"RT006", restricted:true, notes:"CPF SA — retirement-only, limited CPFIS-SA investments" },
+  { id:"CPF003", bank:"CPF Board", accountName:"CPF MediSave Account",   accountType:"CPF", cpfSubType:"MA", last4:"567A", balance:52000, currency:"SGD", linkedPlanId:"RT006", restricted:true, notes:"CPF MA — medical expenses and approved insurance only" },
+  // Brokerage accounts (linked manually — no API integration)
+  // currency = primary/display currency; balances[] = multi-currency cash holdings
+  { id:"BR001", bank:"Tiger Brokers",        accountName:"Tiger Brokers (SGD)",         accountType:"Brokerage", accountNumber:"TB-90218", last4:"0218", balance:1850, currency:"SGD",
+    balances:[{ ccy:"SGD", amount:1850 },{ ccy:"USD", amount:240 },{ ccy:"HKD", amount:5400 }] },
+  { id:"BR002", bank:"Interactive Brokers",  accountName:"IBKR (USD Margin)",           accountType:"Brokerage", accountNumber:"U12345678", last4:"5678", balance:3200, currency:"USD",
+    balances:[{ ccy:"USD", amount:3200 },{ ccy:"EUR", amount:820 },{ ccy:"GBP", amount:410 },{ ccy:"JPY", amount:52000 }] },
+  { id:"BR003", bank:"Moomoo",               accountName:"Moomoo (USD)",                accountType:"Brokerage", accountNumber:"MM-77441", last4:"7441", balance:920,  currency:"USD",
+    balances:[{ ccy:"USD", amount:920 },{ ccy:"HKD", amount:1800 }] },
+  // Crypto wallets (linked manually — no API integration)
+  { id:"WL001", bank:"Ledger",     accountName:"Ledger Nano X",          accountType:"Crypto Wallet", walletKind:"Hardware Wallet",   chain:"Multi-chain", walletAddress:"bc1q...4m7x", last4:"4m7x", balance:0,    currency:"SGD",
+    balances:[] },
+  { id:"WL002", bank:"MetaMask",   accountName:"MetaMask Personal",      accountType:"Crypto Wallet", walletKind:"Hot Wallet",        chain:"Ethereum",    walletAddress:"0x742d...38a1", last4:"38a1", balance:2220, currency:"SGD",
+    balances:[{ ccy:"SGD", amount:2220 }] },
+  { id:"WL003", bank:"Binance",    accountName:"Binance Main",           accountType:"Crypto Wallet", walletKind:"Exchange (CEX)",    chain:"Multi-chain", walletAddress:"", last4:"",         balance:6390, currency:"SGD",
+    balances:[{ ccy:"SGD", amount:6390 }] },
+  { id:"WL004", bank:"Crypto.com", accountName:"Crypto.com Earn",        accountType:"Crypto Wallet", walletKind:"DeFi Protocol",     chain:"BNB Chain",   walletAddress:"", last4:"",         balance:1950, currency:"SGD",
+    balances:[{ ccy:"SGD", amount:1950 }] },
+  { id:"WL005", bank:"Lido",       accountName:"Lido stETH Staking",     accountType:"Crypto Wallet", walletKind:"DeFi Protocol",     chain:"Ethereum",    walletAddress:"0x742d...38a1", last4:"38a1", balance:0,    currency:"SGD",
+    balances:[] },
+  { id:"WL006", bank:"Phantom",    accountName:"Phantom Solana",         accountType:"Crypto Wallet", walletKind:"Hot Wallet",        chain:"Solana",      walletAddress:"7xKw...9mP2",  last4:"9mP2",  balance:430,  currency:"SGD",
+    balances:[{ ccy:"SGD", amount:430 }] },
+  { id:"WL007", bank:"Coinbase",   accountName:"Coinbase Spot",          accountType:"Crypto Wallet", walletKind:"Exchange (CEX)",    chain:"Multi-chain", walletAddress:"", last4:"",         balance:1620, currency:"SGD",
+    balances:[{ ccy:"SGD", amount:1620 }] },
 ];
+
+// Brokerage-only metadata. PickerWithOther uses these keys for the broker dropdown.
+const BROKER_COLORS = {
+  "Tiger Brokers":       { from:"#FF6B00", to:"#CC5500", text:"#fff" },
+  "Interactive Brokers": { from:"#D62B1F", to:"#9D1F16", text:"#fff" },
+  "Moomoo":              { from:"#1A5DDA", to:"#0F3F94", text:"#fff" },
+  "Saxo":                { from:"#1D1D1B", to:"#000000", text:"#fff" },
+  "DBS Vickers":         { from:"#E31837", to:"#8B0000", text:"#fff" },
+  "POEMS (Phillip)":     { from:"#003E7E", to:"#001F40", text:"#fff" },
+  "Webull":              { from:"#FFC500", to:"#C99800", text:"#222" },
+  "FSMOne":              { from:"#00A0E3", to:"#006FA0", text:"#fff" },
+};
+
+// Crypto wallet metadata. PickerWithOther uses these keys for the wallet provider dropdown.
+const CRYPTO_WALLET_KINDS = ["Exchange (CEX)","Hot Wallet","Hardware Wallet","Custody","DeFi Protocol"];
+const CRYPTO_WALLET_PROVIDERS = {
+  // Centralised exchanges
+  "Binance":         { from:"#F0B90B", to:"#B98A05", text:"#222", kind:"Exchange (CEX)" },
+  "Coinhako":        { from:"#0093E8", to:"#0067A6", text:"#fff", kind:"Exchange (CEX)" },
+  "KuCoin":          { from:"#01BC8D", to:"#018567", text:"#fff", kind:"Exchange (CEX)" },
+  "Crypto.com":      { from:"#103F68", to:"#0B2A48", text:"#fff", kind:"Exchange (CEX)" },
+  "Coinbase":        { from:"#0052FF", to:"#0033A0", text:"#fff", kind:"Exchange (CEX)" },
+  "Bybit":           { from:"#FFD300", to:"#C09F00", text:"#222", kind:"Exchange (CEX)" },
+  "OKX":             { from:"#1D1D1D", to:"#000000", text:"#fff", kind:"Exchange (CEX)" },
+  "Kraken":          { from:"#5841D6", to:"#3D2B95", text:"#fff", kind:"Exchange (CEX)" },
+  // Standard wallets (hot / hardware)
+  "MetaMask":        { from:"#F6851B", to:"#C4691B", text:"#fff", kind:"Hot Wallet" },
+  "Phantom":         { from:"#AB9FF2", to:"#8B7DDC", text:"#fff", kind:"Hot Wallet" },
+  "Trust Wallet":    { from:"#3375BB", to:"#1F4D80", text:"#fff", kind:"Hot Wallet" },
+  "imToken":         { from:"#11C4D1", to:"#0A7E87", text:"#fff", kind:"Hot Wallet" },
+  "Rainbow":         { from:"#4F4FA5", to:"#3A3A7E", text:"#fff", kind:"Hot Wallet" },
+  "Ledger":          { from:"#000000", to:"#1B1B1B", text:"#fff", kind:"Hardware Wallet" },
+  "Trezor":          { from:"#1B1B1B", to:"#000000", text:"#fff", kind:"Hardware Wallet" },
+  // DeFi protocols
+  "Lido":            { from:"#00A3FF", to:"#0075B8", text:"#fff", kind:"DeFi Protocol" },
+  "Marinade":        { from:"#10D593", to:"#0A8C62", text:"#fff", kind:"DeFi Protocol" },
+  "Aave":            { from:"#B6509E", to:"#7E3970", text:"#fff", kind:"DeFi Protocol" },
+};
 
 const CC_CARDS_INIT = [
   {
@@ -10798,6 +14536,13 @@ const CC_CARDS_INIT = [
     apr:0, annualFee:0, linkedAccountId:"ACC002", isActive:true,
     notes:"Linked to OCBC 360 Account.",
   },
+  {
+    id:"CC008", bank:"HSBC", cardName:"HSBC Premier Debit (USD)", cardType:"Debit",
+    network:"Visa", holderName:"dilwyn", last4:"7720", expiryMM:"03", expiryYY:"28",
+    creditLimit:0, currentBalance:0, minimumPayment:0, dueDayOfMonth:28,
+    apr:0, annualFee:0, linkedAccountId:"ACC004", isActive:true,
+    notes:"Linked to HSBC Premier USD account.",
+  },
 ];
 
 const CC_TRANSACTIONS_INIT = [
@@ -10819,10 +14564,12 @@ const CC_TRANSACTIONS_INIT = [
   { id:"T016", cardId:"CC005", date:"2026-03-11", description:"Kopitiam",          category:"Dining",       amount:6.50,   type:"Debit"  },
   { id:"T017", cardId:"CC005", date:"2026-03-10", description:"MRT Top Up",        category:"Transport",    amount:20.00,  type:"Debit"  },
   { id:"T018", cardId:"CC006", date:"2026-03-09", description:"Giant Hypermart",   category:"Groceries",    amount:55.80,  type:"Debit"  },
+  { id:"T019", cardId:"CC008", date:"2026-03-12", description:"Amazon US",         category:"Online",       amount:48.20,  type:"Debit", currency:"USD"  },
+  { id:"T020", cardId:"CC008", date:"2026-03-10", description:"AWS",               category:"Online",       amount:120.00, type:"Debit", currency:"USD"  },
 ];
 
 // ── Loans mock data ───────────────────────────────────────────
-const LOAN_TYPES = ["Personal Loan","Car Loan","Education Loan","Renovation Loan","Medical Loan","Business Term Loan"];
+const LOAN_TYPES = ["Mortgage","Personal Loan","Car Loan","Education Loan","Renovation Loan","Medical Loan","Business Term Loan"];
 
 const LOAN_STATUS_COLORS = {
   Active:    { bg: T.upBg,   color: T.up },
@@ -10921,6 +14668,7 @@ const LOANS_INIT = [
 ];
 
 const LOAN_TYPE_ICONS = {
+  "Mortgage": "🏠",
   "Personal Loan": "💰",
   "Car Loan": "🚗",
   "Education Loan": "🎓",
@@ -10930,62 +14678,90 @@ const LOAN_TYPE_ICONS = {
 };
 
 // ── Loan Modal ────────────────────────────────────────────────
-function LoanModal({ loan, onSave, onClose }) {
+function LoanModal({ loan, onSave, onClose, properties }) {
   const [f, setF] = useState({ ...loan });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const propList = properties || [];
+  const linkedProp = propList.find(p => p.id === f._linkPropertyId);
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.35)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:999 }}
       onClick={onClose}>
       <div style={{ background:T.bg, borderRadius:16, width:520, maxHeight:"85vh", overflow:"auto", padding:"28px 28px 20px", border:`1px solid ${T.border}` }}
         onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize:16, fontWeight:800, marginBottom:20 }}>{f.id ? "Edit Loan" : "Add Loan"}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{ fontSize:16, fontWeight:800 }}>
+            {f._propertyMortgage ? "Edit Mortgage" : f.id ? "Edit Loan" : "Add Loan"}
+          </div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+
+        {/* Linked Property — if set, this loan is treated as a property mortgage */}
+        {propList.length > 0 && !f._propertyMortgage && (
+          <div style={{ marginBottom:14, padding:"12px 14px", background:T.accentBg, border:`1px solid ${T.accent}30`, borderRadius:10 }}>
+            <Label>🏠 Linked Property (optional)</Label>
+            <select value={f._linkPropertyId || ""} onChange={e=>{
+              const v = e.target.value || null;
+              set("_linkPropertyId", v);
+              if (v) set("loanType", "Mortgage");
+            }}
+              style={{ width:"100%", background:T.bg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none", cursor:"pointer" }}>
+              <option value="">— Standalone loan —</option>
+              {propList.map(p => <option key={p.id} value={p.id}>{p.flag||""} {p.name}</option>)}
+            </select>
+            {linkedProp && (
+              <div style={{ fontSize:11, color:T.muted, marginTop:6, lineHeight:1.5 }}>
+                This loan will be saved as a mortgage on <strong>{linkedProp.name}</strong> and shown in both Loans and Real Estate tabs.
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
           <div><Label required>Loan Type</Label><Sel value={f.loanType} onChange={e=>set("loanType",e.target.value)} options={LOAN_TYPES}/></div>
-          <div><Label required>Lender / Bank</Label><Sel value={f.lender} onChange={e=>set("lender",e.target.value)} options={Object.keys(BANK_COLORS)}/></div>
+          <div><Label required>Lender / Bank</Label><PickerWithOther value={f.lender} onChange={e=>set("lender",e.target.value)} options={Object.keys(BANK_COLORS)}/></div>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
           <div><Label required>Principal Amount</Label><Input type="number" prefix="S$" value={f.principalAmount} onChange={e=>set("principalAmount",+e.target.value)}/></div>
           <div><Label required>Outstanding Balance</Label><Input type="number" prefix="S$" value={f.outstandingBalance} onChange={e=>set("outstandingBalance",+e.target.value)}/></div>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
           <div><Label required>Interest Rate (%)</Label><Input type="number" value={f.interestRate} onChange={e=>set("interestRate",+e.target.value)}/></div>
-          <div><Label>Rate Type</Label><Sel value={f.rateType} onChange={e=>set("rateType",e.target.value)} options={["Fixed","Floating"]}/></div>
           <div><Label required>Tenure (months)</Label><Input type="number" value={f.tenureMonths} onChange={e=>set("tenureMonths",+e.target.value)}/></div>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
           <div><Label required>Monthly Payment</Label><Input type="number" prefix="S$" value={f.monthlyPayment} onChange={e=>set("monthlyPayment",+e.target.value)}/></div>
-          <div><Label>Account Number</Label><Input value={f.accountNumber} onChange={e=>set("accountNumber",e.target.value)}/></div>
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <div><Label required>Start Date</Label><Input type="date" value={f.startDate} onChange={e=>set("startDate",e.target.value)}/></div>
-          <div><Label required>Maturity Date</Label><Input type="date" value={f.maturityDate} onChange={e=>set("maturityDate",e.target.value)}/></div>
-          <div><Label>Disbursed Date</Label><Input type="date" value={f.disbursedDate} onChange={e=>set("disbursedDate",e.target.value)}/></div>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
-          <div>
-            <Label>Next Payment Due</Label>
-            <Input type="date" value={f.nextPaymentDue||""} onChange={e=>set("nextPaymentDue",e.target.value)}/>
-            {f.nextPaymentDue && (() => {
-              const today = new Date();
-              const due = new Date(f.nextPaymentDue);
-              const daysUntil = Math.ceil((due - today) / 86400000);
-              const color = daysUntil < 0 ? T.down : daysUntil <= 14 ? T.warn : T.up;
-              const label = daysUntil < 0 ? `${Math.abs(daysUntil)}d overdue` : daysUntil === 0 ? "Due today" : `${daysUntil}d away`;
-              return <div style={{ fontSize: 11, color, marginTop: 5, fontWeight: 500 }}>● {label}</div>;
-            })()}
-          </div>
-          <div><Label>Purpose</Label><Input value={f.purpose} onChange={e=>set("purpose",e.target.value)} placeholder="What is this loan for?"/></div>
+        <div style={{marginBottom:14}}>
+          <Label required>Maturity Date</Label><Input type="date" value={f.maturityDate} onChange={e=>set("maturityDate",e.target.value)}/>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
-          <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={["Active","Completed","Overdue"]}/></div>
-          <div><Label>Borrower Name</Label><Input value={f.borrowerName} onChange={e=>set("borrowerName",e.target.value)}/></div>
-        </div>
-        <div style={{ marginBottom:14 }}>
-          <Label>Notes</Label>
-          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes..."
-            style={{ width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none", resize:"vertical" }}/>
+        <div style={{marginBottom:14}}>
+          <MoreOptions count={9} style={{gridColumn:"unset"}}>
+            <div><Label>Rate Type</Label><Sel value={f.rateType} onChange={e=>set("rateType",e.target.value)} options={["Fixed","Floating"]}/></div>
+            <div><Label>Account Number</Label><Input value={f.accountNumber} onChange={e=>set("accountNumber",e.target.value)}/></div>
+            <div><Label>Disbursed Date</Label><Input type="date" value={f.disbursedDate} onChange={e=>set("disbursedDate",e.target.value)}/></div>
+            <div>
+              <Label>Next Payment Due</Label>
+              <Input type="date" value={f.nextPaymentDue||""} onChange={e=>set("nextPaymentDue",e.target.value)}/>
+              {f.nextPaymentDue && (() => {
+                const today = new Date();
+                const due = new Date(f.nextPaymentDue);
+                const daysUntil = Math.ceil((due - today) / 86400000);
+                const color = daysUntil < 0 ? T.down : daysUntil <= 14 ? T.warn : T.up;
+                const label = daysUntil < 0 ? `${Math.abs(daysUntil)}d overdue` : daysUntil === 0 ? "Due today" : `${daysUntil}d away`;
+                return <div style={{ fontSize: 11, color, marginTop: 5, fontWeight: 500 }}>● {label}</div>;
+              })()}
+            </div>
+            <div><Label>Purpose</Label><Input value={f.purpose} onChange={e=>set("purpose",e.target.value)} placeholder="What is this loan for?"/></div>
+            <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={["Active","Completed","Overdue"]}/></div>
+            <div><Label>Borrower Name</Label><Input value={f.borrowerName} onChange={e=>set("borrowerName",e.target.value)}/></div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <Label>Notes</Label>
+              <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Additional notes..."
+                style={{ width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none", resize:"vertical" }}/>
+            </div>
+          </MoreOptions>
         </div>
 
         {/* Reminder toggle — matches insurance modal */}
@@ -11021,8 +14797,8 @@ function LoanModal({ loan, onSave, onClose }) {
 
         <div style={{ display:"flex", justifyContent:"flex-end", gap:10 }}>
           <button onClick={onClose} style={{ padding:"9px 20px", borderRadius:8, border:`1px solid ${T.border}`, background:"transparent", color:T.muted, cursor:"pointer", fontFamily:"inherit", fontSize:13 }}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.loanType||!f.lender||!f.principalAmount||!f.startDate||!f.maturityDate}
-            style={{ padding:"9px 20px", borderRadius:8, border:"none", background:T.selected, color:T.selectedText, cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:700, opacity:(!f.loanType||!f.lender||!f.principalAmount||!f.startDate||!f.maturityDate)?0.4:1 }}>
+          <button onClick={()=>onSave(f)} disabled={!f.loanType||!f.lender||!f.principalAmount||!f.outstandingBalance||!f.interestRate||!f.tenureMonths||!f.monthlyPayment||!f.startDate||!f.maturityDate}
+            style={{ padding:"9px 20px", borderRadius:8, border:"none", background:T.selected, color:T.selectedText, cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:700, opacity:(!f.loanType||!f.lender||!f.principalAmount||!f.outstandingBalance||!f.interestRate||!f.tenureMonths||!f.monthlyPayment||!f.startDate||!f.maturityDate)?0.4:1 }}>
             {f.id ? "Save Changes" : "Add Loan"}
           </button>
         </div>
@@ -11060,7 +14836,10 @@ function LoanRepaymentModal({ loan, onSave, onClose }) {
       onClick={onClose}>
       <div style={{ background:T.bg, borderRadius:16, width:460, maxHeight:"85vh", overflow:"auto", padding:"28px 28px 20px", border:`1px solid ${T.border}` }}
         onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize:16, fontWeight:800, marginBottom:6 }}>Record Repayment</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:16,fontWeight:800}}>Record Repayment</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
         <div style={{ fontSize:12, color:T.muted, marginBottom:20 }}>{loan.loanType} · {loan.lender} · Outstanding: S${loan.outstandingBalance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
 
         {/* Repayment type selector */}
@@ -11086,24 +14865,24 @@ function LoanRepaymentModal({ loan, onSave, onClose }) {
           <div><Label required>Payment Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
           <div><Label required>Total Amount</Label><Input type="number" prefix="S$" value={f.amount} onChange={e=>set("amount",+e.target.value)} disabled={f.repaymentType==="Full"}/></div>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
-          <div><Label>Interest Portion</Label><Input type="number" prefix="S$" value={f.interest} onChange={e=>set("interest",+e.target.value)}/></div>
-          <div><Label>Fees</Label><Input type="number" prefix="S$" value={f.fees} onChange={e=>set("fees",+e.target.value)}/></div>
-          <div>
-            <Label>Principal (auto)</Label>
-            <div style={{ background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, color:T.up, fontWeight:600 }}>
-              S${computedPrincipal.toLocaleString(undefined,{minimumFractionDigits:2})}
-            </div>
-          </div>
+        <div style={{ marginBottom:14, padding:"10px 12px", background:T.inputBg, borderRadius:8, display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12 }}>
+          <span style={{color:T.muted}}>Principal (auto)</span>
+          <span style={{fontWeight:700,color:T.up}}>S${computedPrincipal.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
         </div>
         <div style={{ marginBottom:20 }}>
-          <Label>Notes</Label>
-          <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Apr 2026 monthly installment, early partial payment..."
-            style={{ width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none", resize:"vertical" }}/>
+          <MoreOptions count={3} style={{gridColumn:"unset"}}>
+            <div><Label>Interest Portion</Label><Input type="number" prefix="S$" value={f.interest} onChange={e=>set("interest",+e.target.value)}/></div>
+            <div><Label>Fees</Label><Input type="number" prefix="S$" value={f.fees} onChange={e=>set("fees",+e.target.value)}/></div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <Label>Notes</Label>
+              <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Apr 2026 monthly installment, early partial payment..."
+                style={{ width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none", resize:"vertical" }}/>
+            </div>
+          </MoreOptions>
         </div>
 
         {/* Summary */}
-        <div style={{ background:T.inputBg, borderRadius:10, padding:"12px 14px", marginBottom:20, fontSize:12 }}>
+        <div style={{ background:T.inputBg, borderRadius:10, padding:"12px 14px", marginBottom:14, fontSize:12 }}>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
             <span style={{ color:T.muted }}>Payment Amount</span>
             <span style={{ fontWeight:700 }}>S${f.amount.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
@@ -11128,6 +14907,10 @@ function LoanRepaymentModal({ loan, onSave, onClose }) {
           </div>
         </div>
 
+        {/* Money-flow categorization */}
+        <FlowBanner type="Loan Repayment" amount={f.amount} flowOverride="out"
+          label="📤 Loan repayment (cash leaves your account)"/>
+
         <div style={{ display:"flex", justifyContent:"flex-end", gap:10 }}>
           <button onClick={onClose} style={{ padding:"9px 20px", borderRadius:8, border:`1px solid ${T.border}`, background:"transparent", color:T.muted, cursor:"pointer", fontFamily:"inherit", fontSize:13 }}>Cancel</button>
           <button onClick={()=>onSave({ ...f, principal:computedPrincipal })} disabled={!f.date||f.amount<=0}
@@ -11141,7 +14924,7 @@ function LoanRepaymentModal({ loan, onSave, onClose }) {
 }
 
 // ── Loan Drawer (right panel detail) ──────────────────────────
-function LoanDrawer({ loan, setLoans, showToast, onClose }) {
+function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [tab, setTab] = useState("overview");
   const [showRepaymentModal, setShowRepaymentModal] = useState(false);
@@ -11170,7 +14953,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose }) {
   const daysUntilDue = Math.ceil((nextDueDate - today) / (1000*60*60*24));
   const nextDueDateStr = nextDueDate.toLocaleDateString("en-SG",{day:"numeric",month:"short",year:"numeric"});
 
-  const TABS = [{id:"overview",label:"Overview"},{id:"repayments",label:"Repayments"},{id:"postings",label:"Postings"}];
+  const TABS = [{id:"overview",label:"Overview"},{id:"repayments",label:"Repayments"},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}];
 
   const handleAddRepayment = (repayment) => {
     const newRep = { ...repayment, id:"LRP"+Date.now() };
@@ -11182,6 +14965,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose }) {
       outstandingBalance: newOutstanding,
       status: newStatus,
     } : l));
+    if (logAudit) logAudit("loan", loan.id, "add-transaction", null, newRep, `Repayment · S$${repayment.amount} (principal S$${repayment.principal})`);
     setShowRepaymentModal(false);
     showToast(repayment.repaymentType === "Full" ? "Loan fully repaid!" : "Repayment recorded", "success");
   };
@@ -11197,7 +14981,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose }) {
               {loan.status}
             </span>
           </div>
-          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>✕</button>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
         </div>
         {/* Pill tabs — same style as CCDrawer */}
         <div style={{display:"flex",gap:4}}>
@@ -11531,6 +15315,28 @@ function LoanDrawer({ loan, setLoans, showToast, onClose }) {
             );
           })()}
 
+          {tab === "history" && (
+            <div style={{padding:"16px 20px"}}>
+              <AuditLogPanel auditLog={auditLog} entityType="loan" entityId={loan.id}/>
+            </div>
+          )}
+
+          {tab === "manage" && (
+            <div style={{padding:"16px 20px"}}>
+              <FieldUpdatePanel
+                entity={loan}
+                entityType="loan"
+                entityLabel={`${loan.loanType} · ${loan.lender}`}
+                fields={[
+                  { key:"outstandingBalance", label:"Outstanding Balance", icon:"💰", prefix:"S$", helper:"Remaining principal owed" },
+                  { key:"interestRate",       label:"Interest Rate",       icon:"📈", prefix:"",   suffix:"% p.a.", step:"0.01", helper:"Effective rate on the loan" },
+                  { key:"monthlyPayment",     label:"Monthly Payment",     icon:"📅", prefix:"S$", helper:"Scheduled monthly installment" },
+                ]}
+                onUpdate={(next)=>setLoans(prev=>prev.map(x=>x.id===loan.id?next:x))}
+                auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -11543,7 +15349,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose }) {
 }
 
 // ── Loans Screen ──────────────────────────────────────────────
-function LoansScreen({ loans, setLoans, showToast }) {
+function LoansScreen({ loans, setLoans, properties, setProperties, showToast, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -11553,30 +15359,106 @@ function LoansScreen({ loans, setLoans, showToast }) {
   const [searchQ, setSearchQ] = useState("");
   const lnSort = useSortState();
 
-  const activeLoans = loans.filter(l => l.status === "Active");
+  // Synthesise property mortgages into the loans list so they appear here
+  // alongside standalone loans. Source of truth stays in properties[].loanContracts.
+  const mortgagesFromProperties = (properties || []).flatMap(p =>
+    (p.loanContracts || []).map(lc => {
+      const repaid = (p.loanRepayments || [])
+        .filter(r => r.contractId === lc.id)
+        .reduce((s,r) => s + (r.principal || 0), 0);
+      return {
+        id: `_PM_${p.id}_${lc.id}`,
+        _propertyMortgage: true,
+        _propertyId: p.id,
+        _propertyName: p.name,
+        _propertyFlag: p.flag,
+        _contractId: lc.id,
+        loanType: "Mortgage",
+        lender: lc.lender || "",
+        borrowerName: "",
+        principalAmount: lc.loanAmount || 0,
+        outstandingBalance: Math.max(0, (lc.loanAmount || 0) - repaid),
+        interestRate: lc.interestRate || 0,
+        rateType: lc.rateType || "Fixed",
+        tenureMonths: (lc.tenureYears || 0) * 12,
+        monthlyPayment: lc.monthlyPayment || 0,
+        startDate: lc.startDate || "",
+        maturityDate: lc.maturityDate || "",
+        accountNumber: "",
+        disbursedDate: lc.startDate || "",
+        purpose: `Mortgage on ${p.name}`,
+        status: lc.isActive === false ? "Completed" : "Active",
+        notes: lc.notes || "",
+        nextPaymentDue: "",
+        reminderEnabled: false,
+        reminderDays: 14,
+        repayments: (p.loanRepayments || []).filter(r => r.contractId === lc.id).map(r => ({
+          id: r.id, date: r.date, amount: r.totalAmount, principal: r.principal || 0,
+          interest: r.interest || 0, fees: r.fees || 0, repaymentType: "Monthly", notes: r.notes || "",
+        })),
+      };
+    })
+  );
+
+  const allLoans = [...loans, ...mortgagesFromProperties];
+
+  const activeLoans = allLoans.filter(l => l.status === "Active");
   const totalOutstanding = activeLoans.reduce((s, l) => s + l.outstandingBalance, 0);
   const totalMonthly = activeLoans.reduce((s, l) => s + l.monthlyPayment, 0);
-  const totalPrincipal = loans.reduce((s, l) => s + l.principalAmount, 0);
-  const totalPaid = totalPrincipal - loans.reduce((s, l) => s + l.outstandingBalance, 0);
+  const totalPrincipal = allLoans.reduce((s, l) => s + l.principalAmount, 0);
+  const totalPaid = totalPrincipal - allLoans.reduce((s, l) => s + l.outstandingBalance, 0);
   const overallPaidPct = totalPrincipal > 0 ? (totalPaid / totalPrincipal * 100) : 0;
 
-  const filteredLoans = loans.filter(l => {
+  const filteredLoans = allLoans.filter(l => {
     if (filterType !== "All" && l.loanType !== filterType) return false;
     if (filterStatus !== "All" && l.status !== filterStatus) return false;
     if (searchQ) {
       const q = searchQ.toLowerCase();
-      if (!(l.loanType||"").toLowerCase().includes(q) && !(l.lender||"").toLowerCase().includes(q) && !(l.accountNumber||"").toLowerCase().includes(q) && !(l.purpose||"").toLowerCase().includes(q)) return false;
+      if (!(l.loanType||"").toLowerCase().includes(q) && !(l.lender||"").toLowerCase().includes(q) && !(l.accountNumber||"").toLowerCase().includes(q) && !(l.purpose||"").toLowerCase().includes(q) && !(l._propertyName||"").toLowerCase().includes(q)) return false;
     }
     return true;
   });
 
   const handleSave = (f) => {
-    if (f.id) {
-      setLoans(prev => prev.map(l => l.id === f.id ? { ...l, ...f } : l));
+    // If user selected a linked property, route the save to that property's loanContracts.
+    if (f._linkPropertyId) {
+      const propId = f._linkPropertyId;
+      const prop = (properties || []).find(p => p.id === propId);
+      const isExisting = !!f._contractId;
+      const lc = {
+        id: f._contractId || ("LC" + Date.now()),
+        loanType: f.loanType || "Bank Loan",
+        lender: f.lender || "",
+        loanAmount: f.principalAmount || 0,
+        interestRate: f.interestRate || 0,
+        rateType: f.rateType || "Fixed",
+        tenureYears: Math.round((f.tenureMonths || 0) / 12) || 25,
+        monthlyPayment: f.monthlyPayment || 0,
+        startDate: f.startDate || "",
+        maturityDate: f.maturityDate || "",
+        isActive: f.status !== "Completed",
+        notes: f.notes || "",
+      };
+      const prevContract = isExisting && prop ? (prop.loanContracts || []).find(c => c.id === lc.id) : null;
+      setProperties(prev => prev.map(p => {
+        if (p.id !== propId) return p;
+        const existing = (p.loanContracts || []);
+        const idx = existing.findIndex(c => c.id === lc.id);
+        const next = idx >= 0 ? existing.map((c,i) => i===idx ? lc : c) : [...existing, lc];
+        return { ...p, loanContracts: next };
+      }));
+      if (logAudit) logAudit("mortgage", lc.id, isExisting ? "update" : "create", prevContract, lc, `${prop?.name || ""} · ${lc.lender}`);
+      showToast(isExisting ? "Mortgage updated" : "Mortgage added to property", "success");
+    } else if (f.id) {
+      const prev = loans.find(l => l.id === f.id);
+      setLoans(prevLs => prevLs.map(l => l.id === f.id ? { ...l, ...f } : l));
+      if (logAudit) logAudit("loan", f.id, "update", prev, f, `${f.loanType} · ${f.lender}`);
       showToast("Loan updated", "success");
     } else {
-      const nl = { ...f, id: "LN" + Date.now(), repayments: [] };
+      const id = "LN" + Date.now();
+      const nl = { ...f, id, repayments: [] };
       setLoans(prev => [...prev, nl]);
+      if (logAudit) logAudit("loan", id, "create", null, nl, `${nl.loanType} · ${nl.lender}`);
       showToast("Loan added", "success");
     }
     setShowModal(false);
@@ -11603,7 +15485,7 @@ function LoansScreen({ loans, setLoans, showToast }) {
       <div className="wo-page-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
         <div>
           <div style={{ fontSize:20, fontWeight:700 }}>Loan Portfolio</div>
-          <div style={{ fontSize:13, color:T.muted, marginTop:2 }}>{activeLoans.length} active loan{activeLoans.length!==1?"s":""} · {loans.length} total</div>
+          <div style={{ fontSize:13, color:T.muted, marginTop:2 }}>{activeLoans.length} active loan{activeLoans.length!==1?"s":""} · {allLoans.length} total{mortgagesFromProperties.length>0?` · ${mortgagesFromProperties.length} mortgage${mortgagesFromProperties.length!==1?"s":""}`:""}</div>
         </div>
         <button onClick={() => { setEditLoan({ ...EMPTY_LOAN, id:"" }); setShowModal(true); }}
           style={{ background:T.selected, color:T.selectedText, border:"none", borderRadius:9, padding:"9px 18px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:6 }}>
@@ -11722,7 +15604,7 @@ function LoansScreen({ loans, setLoans, showToast }) {
             </button>
           ))}
         </div>
-        <span style={{ fontSize:12, color:T.muted, marginLeft:"auto" }}>{filteredLoans.length} of {loans.length}</span>
+        <span style={{ fontSize:12, color:T.muted, marginLeft:"auto" }}>{filteredLoans.length} of {allLoans.length}</span>
       </div>
 
       {/* ── Loan table / mobile cards ── */}
@@ -11738,10 +15620,15 @@ function LoansScreen({ loans, setLoans, showToast }) {
             const licon = LOAN_TYPE_ICONS[loan.loanType] || "💰";
             const lsc = LOAN_STATUS_COLORS[loan.status] || LOAN_STATUS_COLORS.Active;
             const dUntil = loan.nextPaymentDue ? Math.ceil((new Date(loan.nextPaymentDue) - new Date()) / 86400000) : null;
-            return <MobileListItem key={loan.id} onClick={()=>setSelectedLoan(loan)}
-              icon={licon} iconBg={T.inputBg} title={loan.loanType} subtitle={`${loan.lender} · ${loan.rateType} ${loan.interestRate}%`}
+            return <MobileListItem key={loan.id} onClick={()=>{
+                if (loan._propertyMortgage) { setEditLoan({...loan, _linkPropertyId: loan._propertyId}); setShowModal(true); }
+                else setSelectedLoan(loan);
+              }}
+              icon={licon} iconBg={T.inputBg}
+              title={loan._propertyMortgage ? `${loan.loanType} · ${loan._propertyFlag||""} ${loan._propertyName}` : loan.loanType}
+              subtitle={`${loan.lender} · ${loan.rateType} ${loan.interestRate}%`}
               value={fmtCompact(loan.outstandingBalance)} valueColor={loan.outstandingBalance>0?T.down:T.up} valueSub={`${fmtCompact(loan.monthlyPayment)}/mo`}
-              badge={loan.status} badgeBg={lsc.bg} badgeColor={lsc.color}
+              badge={loan._propertyMortgage ? "🏠 Mortgage" : loan.status} badgeBg={loan._propertyMortgage?T.accentBg:lsc.bg} badgeColor={loan._propertyMortgage?T.accent:lsc.color}
               extra={dUntil!==null && dUntil<0 ? <span style={{fontSize:11,color:T.down,fontWeight:600}}>⚠️ {Math.abs(dUntil)}d overdue</span> : dUntil!==null && dUntil<=7 ? <span style={{fontSize:11,color:T.warn,fontWeight:600}}>🔔 Due in {dUntil}d</span> : null}
             />;
           })}
@@ -11766,7 +15653,14 @@ function LoansScreen({ loans, setLoans, showToast }) {
             const lpct = loan.principalAmount > 0 ? ((loan.principalAmount - loan.outstandingBalance) / loan.principalAmount * 100) : 0;
             const dUntil = loan.nextPaymentDue ? Math.ceil((new Date(loan.nextPaymentDue) - TODAY) / 86400000) : null;
             return (
-              <div key={loan.id} onClick={() => setSelectedLoan(loan)}
+              <div key={loan.id} onClick={() => {
+                  if (loan._propertyMortgage) {
+                    setEditLoan({ ...loan, _linkPropertyId: loan._propertyId });
+                    setShowModal(true);
+                  } else {
+                    setSelectedLoan(loan);
+                  }
+                }}
                 style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.2fr 1fr 1fr 1fr 0.8fr", padding:"13px 20px", borderBottom:i<filteredLoans.length-1?`1px solid ${T.border}`:"none", alignItems:"center", cursor:"pointer",
                   opacity:loan.status==="Completed"?0.55:1, background:loan.status==="Completed"?T.sidebar:"" }}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
@@ -11775,8 +15669,16 @@ function LoansScreen({ loans, setLoans, showToast }) {
                 <div style={{ display:"flex", gap:10, alignItems:"center" }}>
                   <div style={{ width:34, height:34, borderRadius:9, background:`linear-gradient(135deg,${lbc.from},${lbc.to})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0 }}>{licon}</div>
                   <div>
-                    <div style={{ fontSize:13, fontWeight:600 }}>{loan.loanType}</div>
-                    <div style={{ fontSize:11, color:T.muted, marginTop:1 }}>{loan.lender} · {loan.accountNumber || "—"}</div>
+                    <div style={{ fontSize:13, fontWeight:600, display:"flex", gap:6, alignItems:"center" }}>
+                      {loan.loanType}
+                      {loan._propertyMortgage && (
+                        <span style={{ fontSize:9, fontWeight:700, color:T.accent, background:T.accentBg, padding:"1px 6px", borderRadius:4, letterSpacing:0.3 }}>🏠 PROPERTY</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize:11, color:T.muted, marginTop:1 }}>
+                      {loan.lender}
+                      {loan._propertyMortgage ? ` · ${loan._propertyFlag||""} ${loan._propertyName}` : ` · ${loan.accountNumber || "—"}`}
+                    </div>
                   </div>
                 </div>
                 {/* Type */}
@@ -11820,7 +15722,7 @@ function LoansScreen({ loans, setLoans, showToast }) {
           <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:200, display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }}
             onClick={e => { if (e.target === e.currentTarget) setSelectedLoan(null); }}>
             <div style={{ width:"min(960px, 95vw)", height:"100vh", background:T.bg, overflow:"hidden", boxShadow:"-4px 0 32px rgba(0,0,0,0.15)", display:"flex", flexDirection:"column" }}>
-              <LoanDrawer loan={loan} setLoans={setLoans} showToast={showToast} onClose={() => setSelectedLoan(null)} />
+              <LoanDrawer loan={loan} setLoans={setLoans} showToast={showToast} onClose={() => setSelectedLoan(null)} auditLog={auditLog} logAudit={logAudit} />
             </div>
           </div>
         );
@@ -11828,7 +15730,7 @@ function LoansScreen({ loans, setLoans, showToast }) {
 
       {/* Modal */}
       {showModal && editLoan && (
-        <LoanModal loan={editLoan} onSave={handleSave} onClose={() => { setShowModal(false); setEditLoan(null); }} />
+        <LoanModal loan={editLoan} onSave={handleSave} onClose={() => { setShowModal(false); setEditLoan(null); }} properties={properties} />
       )}
     </div>
   );
@@ -11896,50 +15798,58 @@ function CCCardModal({ card, accounts, onSave, onClose }) {
   const [f, setFState] = useState(card);
   const setF = (k, v) => setFState(prev => ({...prev, [k]: v}));
   const isDebit = f.cardType === "Debit";
-  const CIn = ({ label, fkey, type="text", placeholder="" }) => (
+  const CIn = ({ label, fkey, type="text", placeholder="", required }) => (
     <div>
-      <Label>{label}</Label>
+      <Label required={required}>{label}</Label>
       <input value={f[fkey]||""} type={type} placeholder={placeholder}
         onChange={e => setF(fkey, type==="number" ? parseFloat(e.target.value)||0 : e.target.value)}
         style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
     </div>
   );
-  const CSel = ({ label, fkey, options }) => (
+  const CSel = ({ label, fkey, options, required }) => (
     <div>
-      <Label>{label}</Label>
+      <Label required={required}>{label}</Label>
       <select value={f[fkey]||""} onChange={e => setF(fkey, e.target.value)}
         style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
         {options.map(o => <option key={o} value={o}>{o}</option>)}
       </select>
     </div>
   );
+  const isDebitForSave = f.cardType === "Debit";
+  const canSave = !!(
+    f.bank && f.cardType && f.cardName && f.network && f.holderName &&
+    f.last4 && f.expiryMM && f.expiryYY &&
+    (isDebitForSave
+      ? f.linkedAccountId
+      : f.creditLimit > 0 && f.currentBalance !== "" && f.currentBalance !== undefined)
+  );
 
   return (
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:300}}/>
       <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:301,background:T.bg,border:`1px solid ${T.border}`,borderRadius:16,width:540,maxHeight:"88vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.22)"}}>
-        <div style={{padding:"18px 22px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:T.bg,zIndex:1}}>
-          <div style={{fontSize:15,fontWeight:700}}>{card.id ? "Edit Card" : "Add Card"}</div>
-          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted}}>×</button>
+        <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:16,fontWeight:800}}>{card.id ? "Edit Card" : "Add Card"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
-        <div style={{padding:"20px 22px",display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{padding:"22px 24px",display:"flex",flexDirection:"column",gap:14}}>
           {/* Card preview */}
           <div style={{display:"flex",justifyContent:"center",marginBottom:8}}>
             <CreditCardVisual card={f} accounts={accounts}/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <CSel label="Bank" fkey="bank" options={Object.keys(BANK_COLORS)}/>
-            <CSel label="Card Type" fkey="cardType" options={["Credit","Commercial","Debit"]}/>
+            <div><Label required>Bank</Label><PickerWithOther value={f.bank||""} onChange={e=>setF("bank",e.target.value)} options={Object.keys(BANK_COLORS)}/></div>
+            <CSel label="Card Type" fkey="cardType" options={["Credit","Commercial","Debit"]} required/>
           </div>
-          <CIn label="Card Name" fkey="cardName" placeholder="e.g. DBS Live Fresh"/>
+          <CIn label="Card Name" fkey="cardName" placeholder="e.g. DBS Live Fresh" required/>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <CSel label="Network" fkey="network" options={CARD_NETWORKS}/>
-            <CIn label="Card Holder Name" fkey="holderName" placeholder="Full name"/>
+            <CSel label="Network" fkey="network" options={CARD_NETWORKS} required/>
+            <CIn label="Card Holder Name" fkey="holderName" placeholder="Full name" required/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-            <CIn label="Last 4 Digits" fkey="last4" placeholder="4521"/>
-            <CIn label="Expiry Month" fkey="expiryMM" placeholder="08"/>
-            <CIn label="Expiry Year" fkey="expiryYY" placeholder="27"/>
+            <CIn label="Last 4 Digits" fkey="last4" placeholder="4521" required/>
+            <CIn label="Expiry Month" fkey="expiryMM" placeholder="08" required/>
+            <CIn label="Expiry Year" fkey="expiryYY" placeholder="27" required/>
           </div>
           {f.cardType === "Commercial" && (
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
@@ -11949,50 +15859,66 @@ function CCCardModal({ card, accounts, onSave, onClose }) {
           )}
           {f.cardType === "Debit" ? (
             <div>
-              <Label>Linked Account</Label>
+              <Label required>Linked Account</Label>
               <select value={f.linkedAccountId||""} onChange={e=>setF("linkedAccountId",e.target.value||null)}
                 style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
-                <option value="">— No linked account —</option>
+                <option value="">— Select linked account —</option>
                 {accounts.map(a=><option key={a.id} value={a.id}>{a.bank} {a.accountName} (••{a.last4})</option>)}
               </select>
             </div>
           ) : (
-            <>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <CIn label="Credit Limit (S$)" fkey="creditLimit" type="number" placeholder="10000"/>
-                <CIn label="Current Balance (S$)" fkey="currentBalance" type="number" placeholder="0"/>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <CIn label="Min. Payment (S$)" fkey="minimumPayment" type="number" placeholder="50"/>
-                <div>
-                  <Label>Due Day of Month</Label>
-                  <select value={f.dueDayOfMonth||28} onChange={e=>setF("dueDayOfMonth",parseInt(e.target.value))}
-                    style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
-                    {Array.from({length:28},(_,i)=>i+1).map(d=>(
-                      <option key={d} value={d}>Day {d}{d===1?"st":d===2?"nd":d===3?"rd":"th"} of every month</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <CIn label="APR (%)" fkey="apr" type="number" placeholder="26.9"/>
-                <CIn label="Annual Fee (S$)" fkey="annualFee" type="number" placeholder="192.60"/>
-              </div>
-            </>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <CIn label="Credit Limit (S$)" fkey="creditLimit" type="number" placeholder="10000" required/>
+              <CIn label="Current Balance (S$)" fkey="currentBalance" type="number" placeholder="0" required/>
+            </div>
           )}
-          <div>
-            <Label>Notes</Label>
-            <textarea value={f.notes||""} onChange={e=>setF("notes",e.target.value)} rows={2}
-              style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
-          </div>
+          {!isDebit && (
+            <MoreOptions count={5} style={{gridColumn:"unset"}}>
+              <div><Label>Min. Payment (S$)</Label>
+                <input type="number" value={f.minimumPayment||""} onChange={e=>setF("minimumPayment",parseFloat(e.target.value)||0)} placeholder="50"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+              </div>
+              <div>
+                <Label>Due Day of Month</Label>
+                <select value={f.dueDayOfMonth||28} onChange={e=>setF("dueDayOfMonth",parseInt(e.target.value))}
+                  style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                  {Array.from({length:28},(_,i)=>i+1).map(d=>(
+                    <option key={d} value={d}>Day {d}{d===1?"st":d===2?"nd":d===3?"rd":"th"} of every month</option>
+                  ))}
+                </select>
+              </div>
+              <div><Label>APR (%)</Label>
+                <input type="number" value={f.apr||""} onChange={e=>setF("apr",parseFloat(e.target.value)||0)} placeholder="26.9"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+              </div>
+              <div><Label>Annual Fee (S$)</Label>
+                <input type="number" value={f.annualFee||""} onChange={e=>setF("annualFee",parseFloat(e.target.value)||0)} placeholder="192.60"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+              </div>
+              <div style={{gridColumn:"1 / -1"}}>
+                <Label>Notes</Label>
+                <textarea value={f.notes||""} onChange={e=>setF("notes",e.target.value)} rows={2}
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+              </div>
+            </MoreOptions>
+          )}
+          {isDebit && (
+            <MoreOptions count={1} style={{gridColumn:"unset"}}>
+              <div style={{gridColumn:"1 / -1"}}>
+                <Label>Notes</Label>
+                <textarea value={f.notes||""} onChange={e=>setF("notes",e.target.value)} rows={2}
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+              </div>
+            </MoreOptions>
+          )}
         </div>
-        <div style={{padding:"14px 22px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
-          <button onClick={()=>onSave(f)}
-            style={{flex:1,background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"11px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+        <div style={{padding:"0 24px 22px",display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose}
+            style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!canSave}
+            style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:canSave?"pointer":"not-allowed",fontFamily:"inherit",opacity:canSave?1:0.4}}>
             {card.id ? "Save Changes" : "Add Card"}
           </button>
-          <button onClick={onClose}
-            style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"11px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
         </div>
       </div>
     </>
@@ -12000,7 +15926,7 @@ function CCCardModal({ card, accounts, onSave, onClose }) {
 }
 
 // ── Add Transaction Modal ─────────────────────────────────────
-function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, onSave, onClose }) {
+function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, baseCurrency, onSave, onClose }) {
   const [f, setFState] = useState({
     cardId, date: new Date().toISOString().slice(0,10),
     description:"", category:"Dining", amount:"", fees:"",
@@ -12008,6 +15934,14 @@ function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, onSave, onC
   });
   const setF = (k,v) => setFState(prev=>({...prev,[k]:v}));
   const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+
+  // Currency rules:
+  //  - Debit card → uses the linked account's currency (item 11)
+  //  - Credit / Commercial card → always base currency (item 9)
+  const isDebitCard = card && card.cardType === "Debit";
+  const linkedAcc = isDebitCard ? (accounts || []).find(a => a.id === card.linkedAccountId) : null;
+  const txCurrency = isDebitCard && linkedAcc ? linkedAcc.currency : (baseCurrency || BASE_CURRENCY);
+  const symbol = CURRENCY_SYMBOLS[txCurrency] || txCurrency + " ";
 
   const isRepayment = f.type === "Repayment";
   const selectedAcc = isRepayment && accounts ? accounts.find(a => a.id === f.linkedAccountId) : null;
@@ -12041,21 +15975,30 @@ function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, onSave, onC
         id:"T"+Date.now(), cardId, date:f.date,
         description: selectedAcc ? ("Payment from "+selectedAcc.bank+" "+selectedAcc.accountName) : "Card Payment",
         category:"Other", amount:repayAmt, fees:feesAmt, type:"Credit",
+        currency: txCurrency,
       });
     } else {
-      onSave({...f, id:"T"+Date.now(), amount:parseFloat(f.amount), fees:feesAmt});
+      onSave({...f, id:"T"+Date.now(), amount:parseFloat(f.amount), fees:feesAmt, currency: txCurrency});
     }
   };
 
   return (
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:400}}/>
-      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
-        <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,fontSize:14,fontWeight:700,position:"sticky",top:0,background:T.bg,zIndex:1}}>
-          {isRepayment ? "Record Card Repayment" : "Add Transaction"}
-          {isRepayment && card && <div style={{fontSize:11,color:T.muted,fontWeight:400,marginTop:2}}>Outstanding: S${(card.currentBalance||0).toLocaleString(undefined,{minimumFractionDigits:2})}</div>}
+      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:16,width:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{padding:"22px 22px 0",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:800}}>{isRepayment ? "Record Card Repayment" : "Add Transaction"}</div>
+            <div style={{fontSize:11,color:T.muted,fontWeight:400,marginTop:4,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+              <span>Currency: <strong style={{color:T.text}}>{txCurrency}</strong></span>
+              {isDebitCard && linkedAcc && <span style={{color:T.dim}}>· from {linkedAcc.bank} {linkedAcc.accountName}</span>}
+              {!isDebitCard && <span style={{color:T.dim}}>· base currency (locked)</span>}
+            </div>
+            {isRepayment && card && <div style={{fontSize:11,color:T.muted,fontWeight:400,marginTop:2}}>Outstanding: {symbol}{(card.currentBalance||0).toLocaleString(undefined,{minimumFractionDigits:2})}</div>}
+          </div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>×</button>
         </div>
-        <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:12}}>
+        <div style={{padding:"18px 22px",display:"flex",flexDirection:"column",gap:12}}>
 
           {/* Date + Type */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -12080,7 +16023,7 @@ function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, onSave, onC
                     background:parseFloat(f.amount)===q.val?T.selected:"transparent",
                     color:parseFloat(f.amount)===q.val?T.selectedText:T.muted,
                     cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:600,textAlign:"center"}}>
-                  {q.label}<br/><span style={{fontSize:10,opacity:0.8}}>S${q.val.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                  {q.label}<br/><span style={{fontSize:10,opacity:0.8}}>{symbol}{q.val.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
                 </button>
               ))}
             </div>
@@ -12088,15 +16031,15 @@ function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, onSave, onC
 
           {/* Description (hidden for repayments) */}
           {!isRepayment && (
-            <div><Label>Description</Label>
+            <div><Label required>Description</Label>
               <input value={f.description} onChange={e=>setF("description",e.target.value)} placeholder="e.g. Grab Food" style={iStyle}/></div>
           )}
 
           {/* Amount + Fees */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div><Label required>{isRepayment?"Repayment Amount (S$)":"Amount (S$)"}</Label>
+            <div><Label required>{isRepayment?`Repayment Amount (${txCurrency})`:`Amount (${txCurrency})`}</Label>
               <input type="number" value={f.amount} onChange={e=>setF("amount",e.target.value)} placeholder="0.00" style={iStyle}/></div>
-            <div><Label>Fees (optional, S$)</Label>
+            <div><Label>Fees (optional, {txCurrency})</Label>
               <input type="number" value={f.fees} onChange={e=>setF("fees",e.target.value)} placeholder="e.g. 0.50" style={iStyle}/></div>
           </div>
 
@@ -12158,21 +16101,41 @@ function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, onSave, onC
           )}
 
           {/* Reference + Notes */}
-          <div><Label>Reference No. (optional)</Label>
-            <input value={f.ref||""} onChange={e=>setF("ref",e.target.value)} placeholder="e.g. REF-123456"
-              style={iStyle}/></div>
-          <div><Label>Notes (optional)</Label>
-            <textarea value={f.notes||""} onChange={e=>setF("notes",e.target.value)} rows={2}
-              placeholder="e.g. Monthly bill, reimbursement pending"
-              style={{...iStyle, resize:"vertical"}}/></div>
+          <MoreOptions count={2} style={{gridColumn:"unset"}}>
+            <div style={{gridColumn:"1 / -1"}}><Label>Reference No.</Label>
+              <input value={f.ref||""} onChange={e=>setF("ref",e.target.value)} placeholder="e.g. REF-123456"
+                style={iStyle}/></div>
+            <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+              <textarea value={f.notes||""} onChange={e=>setF("notes",e.target.value)} rows={2}
+                placeholder="e.g. Monthly bill, reimbursement pending"
+                style={{...iStyle, resize:"vertical"}}/></div>
+          </MoreOptions>
+
+          {/* Money-flow categorization */}
+          {parseFloat(f.amount) > 0 && (() => {
+            const amt = parseFloat(f.amount) + (parseFloat(f.fees) || 0);
+            const flowOverride =
+              f.type === "Debit"    ? "out"
+              : f.type === "Credit" ? "in"
+              : f.type === "Refund" ? "in"
+              : f.type === "Repayment" ? "info"
+              : "out";
+            const label =
+              f.type === "Debit"    ? (isDebitCard ? "📤 Spend (deducted from linked account)" : "📤 Card spend (adds to balance owed)")
+              : f.type === "Credit" ? "📥 Card credit (reduces balance / refund)"
+              : f.type === "Refund" ? "📥 Refund received"
+              : f.type === "Repayment" ? "🔄 Bank → Card repayment (no net wealth change)"
+              : "💰 Transaction";
+            return <FlowBanner type={f.type} amount={amt} prefix={symbol} flowOverride={flowOverride} label={label} style={{marginBottom:0}}/>;
+          })()}
 
         </div>
-        <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10,position:"sticky",bottom:0}}>
+        <div style={{padding:"0 22px 22px",display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
           <button onClick={handleSubmit} disabled={!canSubmit}
-            style={{flex:1,background:canSubmit?T.selected:T.inputBg,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
+            style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit",opacity:canSubmit?1:0.4}}>
             {isRepayment?"Record Repayment":"Add Transaction"}
           </button>
-          <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
         </div>
       </div>
     </>
@@ -12183,47 +16146,82 @@ function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, onSave, onC
 function CCAccountModal({ account, onSave, onClose }) {
   const [f, setFState] = useState(account);
   const setF = (k,v) => setFState(prev=>({...prev,[k]:v}));
+  const isBroker = f.accountType === "Brokerage";
+  const isWallet = f.accountType === "Crypto Wallet";
+  const title = isBroker?"Brokerage Account" : isWallet?"Crypto Wallet" : "Account";
+  // Picker options + label by account type
+  const pickerLabel = isBroker ? "Broker" : isWallet ? "Wallet / Provider" : "Bank";
+  const pickerOptions = isBroker ? Object.keys(BROKER_COLORS)
+    : isWallet ? Object.keys(CRYPTO_WALLET_PROVIDERS)
+    : Object.keys(BANK_COLORS);
+  // When user picks a known wallet provider, auto-fill walletKind
+  const onPickerChange = (v) => {
+    setF("bank", v);
+    if (isWallet && CRYPTO_WALLET_PROVIDERS[v]) setF("walletKind", CRYPTO_WALLET_PROVIDERS[v].kind);
+  };
   return (
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:400}}/>
-      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:420,boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
-        <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,fontSize:14,fontWeight:700}}>{account.id?"Edit Account":"Add Account"}</div>
-        <div style={{padding:"18px 20px",display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:16,width:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{padding:"22px 22px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:16,fontWeight:800}}>{account.id ? `Edit ${title}` : `Add ${title}`}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{padding:"18px 22px",display:"flex",flexDirection:"column",gap:12}}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div><Label>Bank</Label>
-              <select value={f.bank} onChange={e=>setF("bank",e.target.value)}
-                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
-                {Object.keys(BANK_COLORS).map(b=><option key={b}>{b}</option>)}
-              </select></div>
-            <div><Label>Account Type</Label>
+            <div><Label required>{pickerLabel}</Label>
+              <PickerWithOther value={f.bank} onChange={e=>onPickerChange(e.target.value)} options={pickerOptions}/></div>
+            <div><Label required>Account Type</Label>
               <select value={f.accountType} onChange={e=>setF("accountType",e.target.value)}
                 style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
-                <option>Checking</option><option>Savings</option>
+                <option>Checking</option><option>Savings</option><option>Brokerage</option><option>Crypto Wallet</option>
               </select></div>
           </div>
-          <div><Label>Account Name</Label>
-            <input value={f.accountName} onChange={e=>setF("accountName",e.target.value)} placeholder="e.g. DBS Multiplier"
+          <div><Label required>Account Name</Label>
+            <input value={f.accountName} onChange={e=>setF("accountName",e.target.value)}
+              placeholder={isBroker?"e.g. Tiger Brokers (SGD)":isWallet?"e.g. MetaMask Personal":"e.g. DBS Multiplier"}
               style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-            <div><Label>Last 4 Digits</Label>
-              <input value={f.last4} onChange={e=>setF("last4",e.target.value)} placeholder="2341"
-                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
-            <div><Label>Balance</Label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><Label>{isBroker?"Cash Balance":isWallet?"Fiat Balance":"Balance"}</Label>
               <input type="number" value={f.balance} onChange={e=>setF("balance",parseFloat(e.target.value)||0)}
                 style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
-            <div><Label>Currency</Label>
+            <div><Label>{isBroker?"Base Currency":isWallet?"Fiat Currency":"Currency"}</Label>
               <select value={f.currency} onChange={e=>setF("currency",e.target.value)}
                 style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
-                <option>SGD</option><option>MYR</option><option>USD</option><option>GBP</option>
+                <option>SGD</option><option>MYR</option><option>USD</option><option>GBP</option><option>EUR</option><option>HKD</option><option>AUD</option>
               </select></div>
           </div>
+          <MoreOptions count={isBroker?2:isWallet?4:1} style={{gridColumn:"unset"}}>
+            {isBroker && (
+              <div style={{gridColumn:"1 / -1"}}><Label>Account Number</Label>
+                <input value={f.accountNumber||""} onChange={e=>setF("accountNumber",e.target.value)} placeholder="e.g. U12345678 or TB-90218"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+            )}
+            {isWallet && (
+              <>
+                <div><Label>Wallet Kind</Label>
+                  <select value={f.walletKind||"Hot Wallet"} onChange={e=>setF("walletKind",e.target.value)}
+                    style={{width:"100%",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                    {CRYPTO_WALLET_KINDS.map(k => <option key={k}>{k}</option>)}
+                  </select></div>
+                <div><Label>Primary Chain (free text)</Label>
+                  <PickerWithOther value={f.chain||""} onChange={e=>setF("chain",e.target.value)} options={["Bitcoin","Ethereum","Solana","BNB Chain","Polygon","Arbitrum","Avalanche","Polkadot","Cosmos","Multi-chain"]}/></div>
+                <div style={{gridColumn:"1 / -1"}}><Label>Wallet Address</Label>
+                  <input value={f.walletAddress||""} onChange={e=>setF("walletAddress",e.target.value)} placeholder="0x… / bc1q… / 7xKw…"
+                    style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"ui-monospace, SFMono-Regular, Menlo, monospace",color:T.text,outline:"none"}}/></div>
+              </>
+            )}
+            <div style={{gridColumn:"1 / -1"}}><Label>{isBroker?"Last 4":isWallet?"Address Last 4":"Last 4 Digits"}</Label>
+              <input value={f.last4} onChange={e=>setF("last4",e.target.value)} placeholder={isBroker?"5678":isWallet?"4m7x":"2341"}
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/></div>
+          </MoreOptions>
         </div>
-        <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10}}>
-          <button onClick={()=>onSave(f)}
-            style={{flex:1,background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-            {account.id?"Save Changes":"Add Account"}
+        <div style={{padding:"0 22px 22px",display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!(f.bank && f.accountType && f.accountName)}
+            style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:(f.bank && f.accountType && f.accountName)?"pointer":"not-allowed",fontFamily:"inherit",opacity:(f.bank && f.accountType && f.accountName)?1:0.4}}>
+            {account.id?"Save Changes":`Add ${title}`}
           </button>
-          <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
         </div>
       </div>
     </>
@@ -12231,7 +16229,7 @@ function CCAccountModal({ account, onSave, onClose }) {
 }
 
 // ── Card Detail Drawer ────────────────────────────────────────
-function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, setCards, showToast, onClose }) {
+function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, setCards, baseCurrency, showToast, onClose, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [tab, setTab] = useState("overview");
   const [showTxnModal, setShowTxnModal] = useState(false);
@@ -12240,6 +16238,9 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
 
   const isDebit = card.cardType === "Debit";
   const linkedAcc = accounts.find(a => a.id === card.linkedAccountId);
+  // Currency rule: debit → linked account ccy; credit/commercial → base currency.
+  const cardCurrency = isDebit && linkedAcc ? linkedAcc.currency : (baseCurrency || BASE_CURRENCY);
+  const cardSymbol = CURRENCY_SYMBOLS[cardCurrency] || (cardCurrency + " ");
   const cardTxns = transactions.filter(t => t.cardId === card.id).sort((a,b)=>b.date.localeCompare(a.date));
   const bc = BANK_COLORS[card.bank] || { from:"#374151", to:"#1F2937", text:"#fff" };
 
@@ -12267,6 +16268,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
 
   const handleAddTxn = (txn) => {
     setTransactions(prev => [txn, ...prev]);
+    if (logAudit) logAudit("creditcard", card.id, "add-transaction", null, txn, `${txn.type} · ${txn.currency||"SGD"} ${txn.amount||0}${txn.description?` — ${txn.description}`:""}`);
     setShowTxnModal(false);
     showToast("Transaction added","success");
   };
@@ -12276,7 +16278,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
     showToast("Transaction removed","success");
   };
 
-  const TABS = [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"},{id:"postings",label:"Postings"}];
+  const TABS = [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}];
 
   const nextDueDate = (() => {
     if(!card.dueDayOfMonth) return null;
@@ -12309,7 +16311,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
             </span>
             {!card.isActive && <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.downBg,color:T.down}}>Inactive</span>}
           </div>
-          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted}}>✕</button>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
         </div>
         {/* Tabs */}
         <div style={{display:"flex",gap:4}}>
@@ -12341,7 +16343,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                   <span style={{fontSize:18}}>⚠️</span>
                   <div>
                     <div style={{fontSize:13,fontWeight:700,color:T.warn}}>Payment due in {daysUntilDue} day{daysUntilDue!==1?"s":""}</div>
-                    <div style={{fontSize:12,color:T.warn}}>Min. payment S${card.minimumPayment.toLocaleString()} due {nextDueDateStr}</div>
+                    <div style={{fontSize:12,color:T.warn}}>Min. payment {cardSymbol}{card.minimumPayment.toLocaleString()} due {nextDueDateStr}</div>
                   </div>
                 </div>
               )}
@@ -12350,7 +16352,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                   <span style={{fontSize:18}}>🔁</span>
                   <div>
                     <div style={{fontSize:13,fontWeight:700,color:T.accent}}>Recurring payment — {daysUntilDue} days until due</div>
-                    <div style={{fontSize:12,color:T.accent}}>S${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})} outstanding · next due {nextDueDateStr} (day {card.dueDayOfMonth} monthly)</div>
+                    <div style={{fontSize:12,color:T.accent}}>{cardSymbol}{card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})} outstanding · next due {nextDueDateStr} (day {card.dueDayOfMonth} monthly)</div>
                   </div>
                 </div>
               )}
@@ -12373,9 +16375,9 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                     {[
-                      {label:"Balance",value:`S$${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.down},
-                      {label:"Available",value:`S$${(card.creditLimit-card.currentBalance).toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.up},
-                      {label:"Limit",value:`S$${card.creditLimit.toLocaleString()}`,color:T.text},
+                      {label:"Balance",value:`${cardSymbol}${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.down},
+                      {label:"Available",value:`${cardSymbol}${(card.creditLimit-card.currentBalance).toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.up},
+                      {label:"Limit",value:`${cardSymbol}${card.creditLimit.toLocaleString()}`,color:T.text},
                     ].map(s=>(
                       <div key={s.label} style={{textAlign:"center"}}>
                         <div style={{fontSize:10,color:T.muted,marginBottom:3}}>{s.label}</div>
@@ -12406,8 +16408,8 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
               {/* Spend stats */}
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 {[
-                  {label:"This Month Spend",value:`S$${monthSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,sub:`${monthTxns.length} transactions`},
-                  {label:"Total Spend",value:`S$${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,sub:`${debitTxns.length} transactions`},
+                  {label:"This Month Spend",value:`${cardSymbol}${monthSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,sub:`${monthTxns.length} transactions`},
+                  {label:"Total Spend",value:`${cardSymbol}${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,sub:`${debitTxns.length} transactions`},
                 ].map(s=>(
                   <div key={s.label} style={{background:T.inputBg,borderRadius:10,padding:"14px 16px"}}>
                     <div style={{fontSize:11,color:T.muted,marginBottom:4}}>{s.label}</div>
@@ -12429,7 +16431,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                         <div style={{flex:1}}>
                           <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
                             <span style={{fontSize:12,fontWeight:600}}>{cat}</span>
-                            <span style={{fontSize:12,fontWeight:700}}>S${amt.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+                            <span style={{fontSize:12,fontWeight:700}}>{cardSymbol}{amt.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
                           </div>
                           <div style={{height:4,borderRadius:2,background:T.border,overflow:"hidden"}}>
                             <div style={{width:`${pct}%`,height:"100%",borderRadius:2,background:`#${bc.from}`}}/>
@@ -12507,14 +16509,14 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                         <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.description}</div>
                         <div style={{fontSize:11,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
                           <span>{t.category} · {t.date}</span>
-                          {t.fees > 0 && <span style={{fontSize:10,color:T.warn,background:T.warnBg,borderRadius:4,padding:"1px 6px"}}>+ S${parseFloat(t.fees).toLocaleString(undefined,{minimumFractionDigits:2})} fees</span>}
+                          {t.fees > 0 && <span style={{fontSize:10,color:T.warn,background:T.warnBg,borderRadius:4,padding:"1px 6px"}}>+ {cardSymbol}{parseFloat(t.fees).toLocaleString(undefined,{minimumFractionDigits:2})} fees</span>}
                           {t.ref && <span style={{fontSize:10,color:T.dim,background:T.inputBg,borderRadius:4,padding:"1px 6px",fontFamily:"monospace"}}>{t.ref}</span>}
                         </div>
                         {t.notes && <div style={{fontSize:11,color:T.muted,fontStyle:"italic",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.notes}</div>}
                       </div>
                       <div style={{textAlign:"right",flexShrink:0}}>
                         <div style={{fontSize:13,fontWeight:700,color:t.type==="Debit"?T.down:T.up}}>
-                          {t.type==="Debit"?"-":"+"} S${t.amount.toLocaleString(undefined,{minimumFractionDigits:2})}
+                          {t.type==="Debit"?"-":"+"} {cardSymbol}{t.amount.toLocaleString(undefined,{minimumFractionDigits:2})}
                         </div>
                         <div style={{fontSize:10,color:T.dim,marginTop:1}}>{t.type}</div>
                       </div>
@@ -12531,7 +16533,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
           {tab === "postings" && (() => {
             const inter = "'Inter','Segoe UI',system-ui,sans-serif";
             const mono  = "'Courier New',Courier,monospace";
-            const sym   = card.currency === "USD" ? "US$" : card.currency === "GBP" ? "£" : "S$";
+            const sym   = cardSymbol;
             // Debit cards: money flows directly from bank account. Credit cards: uses liability account.
             const bankAcct = linkedAcc
               ? `Assets:Bank:${(linkedAcc.bankName||linkedAcc.accountName||"Checking").replace(/ /g,"")}`
@@ -12662,17 +16664,43 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
             );
           })()}
 
+          {tab === "history" && (
+            <div style={{padding:"16px 20px"}}>
+              <AuditLogPanel auditLog={auditLog} entityType="creditcard" entityId={card.id}/>
+            </div>
+          )}
+
+          {tab === "manage" && (
+            <div style={{padding:"16px 20px"}}>
+              <FieldUpdatePanel
+                entity={card}
+                entityType="creditcard"
+                entityLabel={`${card.bank} ${card.cardName}`}
+                fields={isDebit ? [
+                  { key:"currentBalance", label:"Current Balance", icon:"💰", prefix:cardSymbol, helper:"Cash balance on the linked account" },
+                ] : [
+                  { key:"creditLimit",    label:"Credit Limit",    icon:"💳", prefix:cardSymbol, helper:"Issuer-set credit limit" },
+                  { key:"currentBalance", label:"Outstanding Balance", icon:"💰", prefix:cardSymbol, helper:"Current statement balance owed" },
+                  { key:"apr",            label:"APR",             icon:"📈", prefix:"",         suffix:"%", step:"0.01", helper:"Interest rate on revolving balance" },
+                  { key:"annualFee",      label:"Annual Fee",      icon:"📅", prefix:cardSymbol, helper:"Yearly card fee" },
+                  { key:"minimumPayment", label:"Min Payment",     icon:"🔻", prefix:cardSymbol, helper:"Minimum monthly payment" },
+                ]}
+                onUpdate={(next)=>setCards(prev=>prev.map(x=>x.id===card.id?next:x))}
+                auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+            </div>
+          )}
+
         </div>
       </div>
 
       {/* Transaction modal */}
-      {showTxnModal && <CCTxnModal cardId={card.id} card={card} accounts={accounts} setAccounts={setAccounts} setCards={setCards} onSave={handleAddTxn} onClose={()=>setShowTxnModal(false)}/>}
+      {showTxnModal && <CCTxnModal cardId={card.id} card={card} accounts={accounts} setAccounts={setAccounts} setCards={setCards} baseCurrency={baseCurrency} onSave={handleAddTxn} onClose={()=>setShowTxnModal(false)}/>}
     </div>
   );
 }
 
 // ── Main Screen ───────────────────────────────────────────────
-function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions, setTransactions, showToast }) {
+function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions, setTransactions, baseCurrency, goToExport, showToast, auditLog, logAudit, lockView }) {
   const isMobile = useIsMobile();
   const [selectedCard, setSelectedCard] = useState(null);
   const [showCardModal, setShowCardModal] = useState(false);
@@ -12680,9 +16708,14 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
   const [showAccModal, setShowAccModal] = useState(false);
   const [editAcc, setEditAcc] = useState(null);
   const [filterType, setFilterType] = useState("All");
-  const [viewTab, setViewTab] = useState("cards");
+  const [filterAccType, setFilterAccType] = useState("All");
+  const [viewTab, setViewTabState] = useState(lockView || "cards");
   const [searchQ, setSearchQ] = useState("");
   const ccSort = useSortState();
+  const setViewTab = lockView ? (() => {}) : setViewTabState;
+  // When the screen is locked to a single view, the toggle is hidden.
+  const isCardsView = lockView ? lockView === "cards" : viewTab === "cards";
+  const isAccountsView = lockView ? lockView === "accounts" : viewTab === "accounts";
 
   const creditCards = cards.filter(c => (c.cardType === "Credit" || c.cardType === "Commercial") && c.isActive);
   const debitCards  = cards.filter(c => c.cardType === "Debit" && c.isActive);
@@ -12694,15 +16727,6 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
   const overallUtil = totalLimit > 0 ? (totalDebt/totalLimit*100) : 0;
   const totalAnnualFees = creditCards.reduce((s,c) => s + (c.annualFee||0), 0);
   const totalTxns = transactions.length;
-
-  const dueThisWeek = creditCards.filter(c => {
-    if(!c.dueDayOfMonth || c.currentBalance <= 0) return false;
-    const today = new Date();
-    let due = new Date(today.getFullYear(), today.getMonth(), c.dueDayOfMonth);
-    if(due <= today) due = new Date(today.getFullYear(), today.getMonth()+1, c.dueDayOfMonth);
-    const d = Math.ceil((due - today)/(1000*60*60*24));
-    return d >= 0 && d <= 7;
-  });
 
   const filteredCards = cards.filter(c => {
     if (filterType !== "All" && c.cardType !== filterType) return false;
@@ -12719,10 +16743,15 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
 
   const handleSaveCard = (f) => {
     if(f.id) {
-      setCards(prev => prev.map(c => c.id===f.id ? f : c));
+      const prev = cards.find(c => c.id === f.id);
+      setCards(prevCs => prevCs.map(c => c.id===f.id ? f : c));
+      if (logAudit) logAudit("creditcard", f.id, "update", prev, f, `${f.bank} · ${f.cardName} ••${f.last4}`);
       showToast("Card updated","success");
     } else {
-      setCards(prev => [...prev, {...f, id:"CC"+Date.now()}]);
+      const id = "CC"+Date.now();
+      const nc = {...f, id};
+      setCards(prev => [...prev, nc]);
+      if (logAudit) logAudit("creditcard", id, "create", null, nc, `${nc.bank} · ${nc.cardName} ••${nc.last4}`);
       showToast("Card added","success");
     }
     setShowCardModal(false);
@@ -12731,10 +16760,15 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
 
   const handleSaveAcc = (f) => {
     if(f.id) {
-      setAccounts(prev => prev.map(a => a.id===f.id ? f : a));
+      const prev = accounts.find(a => a.id === f.id);
+      setAccounts(prevAs => prevAs.map(a => a.id===f.id ? f : a));
+      if (logAudit) logAudit("account", f.id, "update", prev, f, `${f.bank} · ${f.accountName} ••${f.last4}`);
       showToast("Account updated","success");
     } else {
-      setAccounts(prev => [...prev, {...f, id:"ACC"+Date.now()}]);
+      const id = "ACC"+Date.now();
+      const na = {...f, id};
+      setAccounts(prev => [...prev, na]);
+      if (logAudit) logAudit("account", id, "create", null, na, `${na.bank} · ${na.accountName} ••${na.last4}`);
       showToast("Account added","success");
     }
     setShowAccModal(false);
@@ -12753,38 +16787,88 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
       {/* ── Page header ── */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <div>
-          <div style={{fontSize:20,fontWeight:700}}>Cards & Accounts</div>
-          <div style={{fontSize:13,color:T.muted,marginTop:2}}>{creditCards.length} credit · {debitCards.length} debit · {accounts.length} accounts</div>
+          <div style={{fontSize:20,fontWeight:700}}>{isAccountsView ? "Cash Accounts" : "Credit Cards"}</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>
+            {isAccountsView
+              ? `${accounts.length} account${accounts.length!==1?"s":""}`
+              : `${creditCards.length} credit · ${debitCards.length} debit`}
+          </div>
         </div>
         <div style={{display:"flex",gap:8}}>
-          <button onClick={()=>{setEditCard({...EMPTY_CARD,id:""});setShowCardModal(true);}}
-            style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
-            + Add Card
-          </button>
+          {isCardsView && goToExport && (
+            <button onClick={()=>goToExport("creditcards")}
+              style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"9px 14px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+              📤 Export
+            </button>
+          )}
+          {isCardsView && (
+            <button onClick={()=>{setEditCard({...EMPTY_CARD,id:""});setShowCardModal(true);}}
+              style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+              + Add Card
+            </button>
+          )}
+          {isAccountsView && (
+            <button onClick={()=>{setEditAcc({...EMPTY_ACCOUNT,id:""});setShowAccModal(true);}}
+              style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+              + Add Account
+            </button>
+          )}
         </div>
       </div>
 
-      {/* ── Summary cards — 4 col grid ── */}
-      <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:12,marginBottom:18}}>
-        {[
-          {label:"Total Debt",value:fmtCompact(totalDebt),sub:`${creditCards.length} credit cards`,icon:"💳",color:T.down},
-          {label:"Credit Limit",value:fmtCompact(totalLimit),sub:`${overallUtil.toFixed(1)}% utilised`,icon:"🏦",color:T.text},
-          {label:"Available Credit",value:fmtCompact(totalAvail),sub:"Remaining credit across all cards",icon:"📈",color:T.up},
-          {label:"Due This Week",value:String(dueThisWeek.length),sub:dueThisWeek.length>0?`S$${dueThisWeek.reduce((s,c)=>s+c.currentBalance,0).toLocaleString()} outstanding`:"All payments current",icon:"⚠️",color:dueThisWeek.length>0?T.warn:T.muted},
-        ].map((c,i)=>(
-          <Card key={i} style={{padding:"18px 20px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-              <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
-              <span style={{fontSize:20}}>{c.icon}</span>
-            </div>
-            <div style={{fontSize:22,fontWeight:700,marginTop:8,color:T.text}}>{c.value}</div>
-            <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
-          </Card>
-        ))}
-      </div>
+      {/* ── Summary cards ── */}
+      {isCardsView ? (
+        <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:12,marginBottom:18}}>
+          {[
+            {label:"Total Debt",value:fmtCompact(totalDebt),sub:`${creditCards.length} credit cards`,icon:"💳",color:T.down},
+            {label:"Credit Limit",value:fmtCompact(totalLimit),sub:`${overallUtil.toFixed(1)}% utilised`,icon:"🏦",color:T.text},
+            {label:"Available Credit",value:fmtCompact(totalAvail),sub:"Remaining credit across all cards",icon:"📈",color:T.up},
+          ].map((c,i)=>(
+            <Card key={i} style={{padding:"18px 20px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+                <span style={{fontSize:20}}>{c.icon}</span>
+              </div>
+              <div style={{fontSize:22,fontWeight:700,marginTop:8,color:T.text}}>{c.value}</div>
+              <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+            </Card>
+          ))}
+        </div>
+      ) : (() => {
+        // Cash Accounts summary
+        const checkSav = accounts.filter(a => a.accountType === "Checking" || a.accountType === "Savings");
+        const brokerage = accounts.filter(a => a.accountType === "Brokerage");
+        const wallets = accounts.filter(a => a.accountType === "Crypto Wallet");
+        const cpfAccs = accounts.filter(a => a.accountType === "CPF");
+        const totalCashSGD = accounts.reduce((s,a) => s + acctCashSGD(a), 0);
+        const csSGD = checkSav.reduce((s,a) => s + acctCashSGD(a), 0);
+        const brSGD = brokerage.reduce((s,a) => s + acctCashSGD(a), 0);
+        const wlSGD = wallets.reduce((s,a) => s + acctCashSGD(a), 0);
+        const cpfSGD = cpfAccs.reduce((s,a) => s + acctCashSGD(a), 0);
+        return (
+          <div className="wo-summary-grid" style={{display:"grid",gridTemplateColumns:"repeat(5, 1fr)",gap:12,marginBottom:18}}>
+            {[
+              {label:"Total Cash", value:fmtCompact(totalCashSGD), sub:`${accounts.length} account${accounts.length!==1?"s":""}`, icon:"💰"},
+              {label:"Bank Accounts", value:fmtCompact(csSGD), sub:`${checkSav.length} checking / savings`, icon:"🏦"},
+              {label:"CPF (restricted)", value:fmtCompact(cpfSGD), sub:`${cpfAccs.length} CPF account${cpfAccs.length!==1?"s":""}`, icon:"🇸🇬"},
+              {label:"Brokerage Cash", value:fmtCompact(brSGD), sub:`${brokerage.length} brokerage account${brokerage.length!==1?"s":""}`, icon:"📈"},
+              {label:"Wallet Fiat", value:fmtCompact(wlSGD), sub:`${wallets.length} crypto wallet${wallets.length!==1?"s":""}`, icon:"🪙"},
+            ].map((c,i)=>(
+              <Card key={i} style={{padding:"18px 20px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div style={{fontSize:12,color:T.muted,fontWeight:500}}>{c.label}</div>
+                  <span style={{fontSize:20}}>{c.icon}</span>
+                </div>
+                <div style={{fontSize:22,fontWeight:700,marginTop:8,color:T.text}}>{c.value}</div>
+                <div style={{fontSize:11,color:T.dim,marginTop:4}}>{c.sub}</div>
+              </Card>
+            ))}
+          </div>
+        );
+      })()}
 
-      {/* ── Utilisation by bank — like insurance coverage bar ── */}
-      {Object.keys(bankBreakdown).length > 0 && (
+      {/* ── Utilisation by bank — only on Cards view ── */}
+      {isCardsView && Object.keys(bankBreakdown).length > 0 && (
         <Card style={{padding:"16px 20px",marginBottom:18}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
             <div style={{fontSize:13,fontWeight:600}}>Credit Utilisation by Bank</div>
@@ -12812,55 +16896,26 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
         </Card>
       )}
 
-      {/* ── Due alerts — full-width banners like insurance ── */}
-      {dueThisWeek.length > 0 && (
-        <div style={{marginBottom:16,display:"flex",flexDirection:"column",gap:8}}>
-          {dueThisWeek.map((card,i) => {
-            const today = new Date();
-            let due = new Date(today.getFullYear(), today.getMonth(), card.dueDayOfMonth);
-            if(due <= today) due = new Date(today.getFullYear(), today.getMonth()+1, card.dueDayOfMonth);
-            const daysUntil = Math.ceil((due - today)/(1000*60*60*24));
-            const dueStr = due.toLocaleDateString("en-SG",{day:"numeric",month:"short"});
-            return (
-              <div key={i} style={{background:T.warnBg,border:`1px solid ${T.warn}40`,borderRadius:10,padding:"12px 16px",display:"flex",gap:12,alignItems:"center"}}>
-                <span style={{fontSize:18,flexShrink:0}}>🔔</span>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:13,fontWeight:600,color:T.text}}>
-                    Due soon: <span style={{color:T.warn}}>{card.cardName}</span>
-                  </div>
-                  <div style={{fontSize:12,color:T.muted,marginTop:2}}>
-                    {card.bank} · ••{card.last4} · {daysUntil === 0 ? "Due today" : `${daysUntil}d until ${dueStr}`}
-                  </div>
-                </div>
-                <div style={{textAlign:"right",flexShrink:0}}>
-                  <div style={{fontSize:14,fontWeight:700,color:T.warn}}>S${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
-                  <div style={{fontSize:11,color:T.dim}}>Min S${card.minimumPayment.toLocaleString()}</div>
-                </div>
-                <button onClick={()=>setSelectedCard(card)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text,flexShrink:0}}>View</button>
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {/* ── View tabs + Filter toolbar ── */}
       <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
         <div style={{position:"relative",flex:"1 1 200px"}}>
           <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
-          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search card name, bank, last 4…"
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder={isAccountsView ? "Search account name, bank, last 4…" : "Search card name, bank, last 4…"}
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
         </div>
-        <div style={{display:"flex",gap:5}}>
-          {[{id:"cards",label:"Cards"},{id:"accounts",label:"Accounts"}].map(t=>(
-            <button key={t.id} onClick={()=>setViewTab(t.id)}
-              style={{background:viewTab===t.id?T.selected:T.inputBg,color:viewTab===t.id?T.selectedText:T.muted,border:`1px solid ${viewTab===t.id?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:viewTab===t.id?600:400}}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-        {viewTab === "cards" && (
+        {!lockView && (
+          <div style={{display:"flex",gap:5}}>
+            {[{id:"cards",label:"Cards"},{id:"accounts",label:"Accounts"}].map(t=>(
+              <button key={t.id} onClick={()=>setViewTab(t.id)}
+                style={{background:viewTab===t.id?T.selected:T.inputBg,color:viewTab===t.id?T.selectedText:T.muted,border:`1px solid ${viewTab===t.id?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:viewTab===t.id?600:400}}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {isCardsView && (
           <>
-            <div style={{width:1,height:20,background:T.border}}/>
             <div style={{display:"flex",gap:5}}>
               {["All","Credit","Commercial","Debit"].map(f=>(
                 <button key={f} onClick={()=>setFilterType(f)}
@@ -12872,13 +16927,23 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
             <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{filteredCards.length} of {cards.length}</span>
           </>
         )}
-        {viewTab === "accounts" && (
-          <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{accounts.length} accounts</span>
+        {isAccountsView && (
+          <>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+              {["All","Checking","Savings","Brokerage","Crypto Wallet","CPF"].map(f=>(
+                <button key={f} onClick={()=>setFilterAccType(f)}
+                  style={{background:filterAccType===f?T.selected:T.inputBg,color:filterAccType===f?T.selectedText:T.muted,border:`1px solid ${filterAccType===f?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:filterAccType===f?600:400}}>
+                  {f}
+                </button>
+              ))}
+            </div>
+            <span style={{fontSize:12,color:T.muted,marginLeft:"auto"}}>{accounts.length} accounts</span>
+          </>
         )}
       </div>
 
       {/* ── Cards table / mobile cards ── */}
-      {viewTab === "cards" && (
+      {isCardsView && (
         filteredCards.length === 0 ? (
           <Card style={{padding:"48px 24px",textAlign:"center"}}>
             <div style={{fontSize:32,marginBottom:12}}>💳</div>
@@ -12949,7 +17014,7 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
                   <div style={{textAlign:"right"}}>
                     {isDebit ? (
                       linkedAcc ? (
-                        <div style={{fontSize:13,fontWeight:700,color:T.up}}>{fmtCompact(linkedAcc.balance)}</div>
+                        <div style={{fontSize:13,fontWeight:700,color:T.up}}>{fmtCompact(linkedAcc.balance, (CURRENCY_SYMBOLS[linkedAcc.currency]||linkedAcc.currency+" "))}</div>
                       ) : <span style={{fontSize:12,color:T.dim}}>—</span>
                     ) : (
                       <>
@@ -12996,10 +17061,25 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
       )}
 
       {/* ── Accounts table / mobile cards ── */}
-      {viewTab === "accounts" && (
-        isMobile ? (
+      {isAccountsView && (() => {
+        const filteredAccounts = accounts.filter(a => {
+          if (filterAccType !== "All" && a.accountType !== filterAccType) return false;
+          if (searchQ) {
+            const q = searchQ.toLowerCase();
+            if (!(a.accountName||"").toLowerCase().includes(q) && !(a.bank||"").toLowerCase().includes(q) && !(a.last4||"").includes(q) && !(a.accountType||"").toLowerCase().includes(q)) return false;
+          }
+          return true;
+        });
+        if (filteredAccounts.length === 0) return (
+          <Card style={{padding:"48px 24px",textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:12}}>🏦</div>
+            <div style={{fontSize:14,fontWeight:600}}>No accounts found</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting filters or add a new account</div>
+          </Card>
+        );
+        return isMobile ? (
           <Card style={{padding:0,overflow:"hidden"}}>
-            {accounts.map(acc => {
+            {filteredAccounts.map(acc => {
               const bc = BANK_COLORS[acc.bank] || {from:"#374151",to:"#1F2937"};
               const linkedCards = cards.filter(c=>c.linkedAccountId===acc.id);
               return <MobileListItem key={acc.id}
@@ -13016,34 +17096,65 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
               <div key={h} style={{fontSize:11,color:T.muted,fontWeight:500,textAlign:a}}>{h}</div>
             ))}
           </div>
-          {accounts.map((acc,i) => {
-            const bc = BANK_COLORS[acc.bank] || {from:"#374151",to:"#1F2937"};
+          {filteredAccounts.map((acc,i) => {
+            const bc = acc.accountType === "CPF" ? {from:"#DC2626",to:"#991B1B"} : (BANK_COLORS[acc.bank] || {from:"#374151",to:"#1F2937"});
             const linkedCards = cards.filter(c=>c.linkedAccountId===acc.id);
+            const isBrokerage = acc.accountType === "Brokerage";
+            const isWallet = acc.accountType === "Crypto Wallet";
+            const isCpf = acc.accountType === "CPF";
+            const icon = isBrokerage ? "📈" : isWallet ? "🪙" : isCpf ? "🇸🇬" : "🏦";
             return (
-              <div key={acc.id}
-                style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1.5fr",padding:"13px 20px",borderBottom:i<accounts.length-1?`1px solid ${T.border}`:"none",alignItems:"center"}}
+              <div key={acc.id} onClick={()=>{setEditAcc(acc);setShowAccModal(true);}}
+                style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1.5fr",padding:"13px 20px",borderBottom:i<filteredAccounts.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer"}}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                 onMouseLeave={e=>e.currentTarget.style.background=""}>
                 <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                  <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0,color:"#fff"}}>🏦</div>
+                  <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0,color:"#fff"}}>{icon}</div>
                   <div>
                     <div style={{fontSize:13,fontWeight:600}}>{acc.accountName}</div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{acc.bank} · ••{acc.last4}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>
+                      {acc.bank}{acc.last4?` · ••${acc.last4}`:""}{acc.accountNumber?` · ${acc.accountNumber}`:""}
+                      {isWallet && acc.chain ? ` · ${acc.chain}` : ""}
+                    </div>
                   </div>
                 </div>
-                <div style={{fontSize:12,color:T.muted}}>{acc.accountType}</div>
-                <div style={{textAlign:"right",fontSize:15,fontWeight:700,color:T.up}}>{acc.currency} {acc.balance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+                <div style={{fontSize:12,color:T.muted,display:"flex",alignItems:"center",gap:6}}>
+                  {acc.accountType}
+                  {isCpf && acc.cpfSubType && <span style={{fontSize:10,fontWeight:700,background:"#FEF2F2",color:"#DC2626",borderRadius:4,padding:"1px 6px"}}>{acc.cpfSubType}</span>}
+                  {isCpf && <span title={acc.notes||"CPF balance is restricted"} style={{fontSize:10,color:T.warn,cursor:"help"}}>🔒</span>}
+                </div>
+                <div style={{textAlign:"right"}}>
+                  {(() => {
+                    const bals = acctBalances(acc);
+                    const multi = isBrokerage && bals.length > 1;
+                    if (multi) {
+                      return (
+                        <>
+                          <div style={{fontSize:15,fontWeight:700,color:T.up}}>{fmtCompact(acctCashSGD(acc))}</div>
+                          <div style={{fontSize:10,color:T.dim,marginTop:2,display:"flex",gap:4,justifyContent:"flex-end",flexWrap:"wrap"}}>
+                            {bals.map(b => (
+                              <span key={b.ccy} style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:4,padding:"1px 6px"}}>
+                                {b.ccy} {(b.amount||0).toLocaleString(undefined,{maximumFractionDigits:0})}
+                              </span>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    }
+                    return <div style={{fontSize:15,fontWeight:700,color:T.up}}>{acc.currency} {(acc.balance||0).toLocaleString(undefined,{minimumFractionDigits:2})}</div>;
+                  })()}
+                </div>
                 <div>
                   {linkedCards.length > 0 ? linkedCards.map(c=>(
                     <div key={c.id} style={{fontSize:11,fontWeight:600,color:T.accent}}>••{c.last4} {c.cardName}</div>
-                  )) : <span style={{fontSize:12,color:T.dim}}>No linked cards</span>}
+                  )) : <span style={{fontSize:12,color:T.dim}}>{isBrokerage?"Brokerage cash":isWallet?(acc.walletKind||"Wallet"):isCpf?(acc.cpfSubType==="OA"?"HDB / Property / CPFIS-OA":acc.cpfSubType==="SA"?"Retirement (limited CPFIS-SA)":"Medical only"):"No linked cards"}</span>}
                 </div>
               </div>
             );
           })}
         </Card>
-        )
-      )}
+        );
+      })()}
 
       {/* ══ CARD DETAIL DRAWER — slide-in overlay like insurance/loans ══ */}
       {selectedCard && (() => {
@@ -13060,8 +17171,11 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
                 transactions={transactions}
                 setTransactions={setTransactions}
                 setCards={setCards}
+                baseCurrency={baseCurrency}
                 showToast={showToast}
                 onClose={()=>setSelectedCard(null)}
+                auditLog={auditLog}
+                logAudit={logAudit}
               />
             </div>
           </div>
@@ -13079,37 +17193,344 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
   );
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   PTA / CSV EXPORT
+   Aggregates transactions across every asset tab and emits either
+   a Ledger-format journal (double-entry, one txn per posting block)
+   or a flat CSV. Pure functions — no React state.
+═══════════════════════════════════════════════════════════════ */
+
+const EXPORT_TABS = [
+  { id: "stocks",       label: "Stocks" },
+  { id: "bonds",        label: "Bonds & T-Bills" },
+  { id: "crypto",       label: "Cryptocurrencies" },
+  { id: "creditcards",  label: "Credit Cards" },
+  { id: "loans",        label: "Loans" },
+  { id: "privateequity",label: "VC/PE" },
+  { id: "partnerships", label: "Business Ventures" },
+  { id: "collectibles", label: "Collectibles" },
+];
+
+const safeAcct = (s) => String(s||"Unknown").replace(/[\s.]/g, "");
+
+function gatherTransactions({
+  holdings, transactions, ccTransactions, ccCards, bondHoldings,
+  cryptoHoldings, peInvestments, bpVentures, collectibles, loans, tabFilter,
+}) {
+  const rows = [];
+  const want = (id) => !tabFilter || tabFilter.has(id);
+
+  if (want("stocks")) {
+    (transactions||[]).forEach(t => {
+      const h = (holdings||[]).find(x => x.sym === t.sym && x.accountId === t.accountId);
+      const broker = t.broker || (h && h.broker) || "Brokerage";
+      const ccy = t.currency || (h && h.tradeCcy) || "SGD";
+      const qty = parseFloat(t.qty||0); const price = parseFloat(t.price||0); const fees = parseFloat(t.fees||0);
+      const amount = qty * price + fees;
+      rows.push({
+        tab:"stocks", id:t.id, date:t.date, type:t.txType, asset:t.sym, name:t.name||(h&&h.name)||"",
+        venue:broker, qty, price, amount, currency:ccy, fees, notes:t.notes||"",
+        debit:`Assets:Brokerage:${safeAcct(broker)}:${t.sym}`,
+        credit:`Assets:Brokerage:${safeAcct(broker)}:Cash`,
+      });
+    });
+  }
+
+  if (want("bonds")) {
+    (bondHoldings||[]).forEach(b => (b.transactions||[]).forEach(t => {
+      rows.push({
+        tab:"bonds", id:t.id, date:t.date, type:t.type, asset:b.name, name:b.issuer||"",
+        venue:b.issuer||"Bonds", qty:null, price:null, amount:parseFloat(t.amount||0),
+        currency:b.currency||"SGD", fees:0, notes:t.notes||t.ref||"",
+        debit:`Assets:Bonds:${safeAcct(b.issuer)}:${safeAcct(b.name)}`,
+        credit:`Assets:Bank:Cash`,
+      });
+    }));
+  }
+
+  if (want("crypto")) {
+    (cryptoHoldings||[]).forEach(c => (c.transactions||[]).forEach(t => {
+      const wallet = c.wallet || "Wallet";
+      rows.push({
+        tab:"crypto", id:t.id, date:t.date, type:t.type, asset:c.symbol, name:c.name||"",
+        venue:wallet, qty:parseFloat(t.qty||0), price:parseFloat(t.price||0),
+        amount:parseFloat(t.amount||0), currency:c.currency||"SGD",
+        fees:parseFloat(t.gasFees||0), notes:t.notes||t.counterpartyAddress||"",
+        debit:`Assets:Crypto:${safeAcct(wallet)}:${c.symbol}`,
+        credit:`Assets:Crypto:${safeAcct(wallet)}:Cash`,
+      });
+    }));
+  }
+
+  if (want("creditcards")) {
+    (ccTransactions||[]).forEach(t => {
+      const card = (ccCards||[]).find(c => c.id === t.cardId);
+      const bank = card ? card.bank : "Card";
+      rows.push({
+        tab:"creditcards", id:t.id, date:t.date, type:t.type, asset:t.description||t.category,
+        name:card ? `${card.bank} ${card.cardName}` : "",
+        venue:bank, qty:null, price:null, amount:parseFloat(t.amount||0),
+        currency:t.currency||"SGD", fees:parseFloat(t.fees||0), notes:t.notes||t.ref||"",
+        debit:`Expenses:${safeAcct(t.category||"Other")}`,
+        credit:`Liabilities:CreditCard:${safeAcct(bank)}`,
+      });
+    });
+  }
+
+  if (want("loans")) {
+    (loans||[]).forEach(l => (l.repayments||[]).forEach((t,i) => {
+      rows.push({
+        tab:"loans", id:`${l.id}-R${i}`, date:t.date, type:t.repaymentType||"Repayment",
+        asset:l.loanType, name:l.lender, venue:l.lender, qty:null, price:null,
+        amount:parseFloat(t.amount||0), currency:"SGD", fees:parseFloat(t.fees||0),
+        notes:t.notes||"",
+        debit:`Liabilities:Loan:${safeAcct(l.lender)}`,
+        credit:`Assets:Bank:Cash`,
+      });
+    }));
+  }
+
+  if (want("privateequity")) {
+    (peInvestments||[]).forEach(i => (i.transactions||[]).forEach(t => {
+      rows.push({
+        tab:"privateequity", id:t.id, date:t.date, type:t.type, asset:i.name, name:i.manager||"",
+        venue:i.manager||"PE", qty:null, price:null, amount:parseFloat(t.amount||0),
+        currency:i.currency||"SGD", fees:0, notes:t.notes||t.ref||"",
+        debit:`Assets:PE:${safeAcct(i.manager)}:${safeAcct(i.name)}`,
+        credit:`Assets:Bank:Cash`,
+      });
+    }));
+  }
+
+  if (want("partnerships")) {
+    (bpVentures||[]).forEach(v => (v.transactions||[]).forEach(t => {
+      rows.push({
+        tab:"partnerships", id:t.id, date:t.date, type:t.type, asset:v.businessName, name:v.role||"",
+        venue:v.businessName||"BP", qty:null, price:null, amount:parseFloat(t.amount||0),
+        currency:v.currency||"SGD", fees:0, notes:t.notes||"",
+        debit:`Assets:BusinessVenture:${safeAcct(v.businessName)}`,
+        credit:`Assets:Bank:Cash`,
+      });
+    }));
+  }
+
+  if (want("collectibles")) {
+    (collectibles||[]).forEach(c => (c.transactions||[]).forEach(t => {
+      rows.push({
+        tab:"collectibles", id:t.id, date:t.date, type:t.type, asset:c.name, name:c.brand||"",
+        venue:c.brand||"Collectible", qty:null, price:null, amount:parseFloat(t.amount||0),
+        currency:c.currency||"SGD", fees:0, notes:t.notes||"",
+        debit:`Assets:Collectible:${safeAcct(c.category)}:${safeAcct(c.name)}`,
+        credit:`Assets:Bank:Cash`,
+      });
+    }));
+  }
+
+  return rows.sort((a,b) => (a.date||"").localeCompare(b.date||""));
+}
+
+function buildLedgerExport(rows) {
+  const header = [
+    `; WealthOS PTA export — generated ${new Date().toISOString()}`,
+    `; ${rows.length} transactions across ${new Set(rows.map(r=>r.tab)).size} tab(s)`,
+    `; Format: Ledger (https://ledger-cli.org)`,
+    ``,
+  ].join("\n");
+  const body = rows.map(r => {
+    const desc = [r.type, r.asset, r.name].filter(Boolean).join(" · ");
+    const amt = r.amount.toFixed(2);
+    const lines = [`${r.date} * ${desc.replace(/\n/g," ")}`];
+    if (r.notes) lines.push(`    ; ${r.notes.replace(/\n/g," ")}`);
+    if (r.qty != null && r.qty !== 0) {
+      lines.push(`    ${r.debit}          ${r.qty} ${r.asset} @ ${r.currency} ${(r.price||0).toFixed(2)}`);
+    } else {
+      lines.push(`    ${r.debit}          ${r.currency} ${amt}`);
+    }
+    lines.push(`    ${r.credit}          -${r.currency} ${amt}`);
+    if (r.fees > 0) {
+      lines.push(`    Expenses:Fees          ${r.currency} ${r.fees.toFixed(2)}`);
+      lines.push(`    ${r.credit}          -${r.currency} ${r.fees.toFixed(2)}`);
+    }
+    return lines.join("\n");
+  }).join("\n\n");
+  return header + body + "\n";
+}
+
+function buildCSVExport(rows) {
+  const cols = ["tab","date","type","asset","name","venue","qty","price","amount","currency","fees","notes","debit_account","credit_account","id"];
+  const esc = (v) => {
+    if (v == null) return "";
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+  };
+  const head = cols.join(",");
+  const body = rows.map(r => [
+    r.tab, r.date, r.type, r.asset, r.name, r.venue,
+    r.qty ?? "", r.price ?? "", r.amount, r.currency, r.fees,
+    r.notes, r.debit, r.credit, r.id,
+  ].map(esc).join(",")).join("\n");
+  return head + "\n" + body + "\n";
+}
+
+function downloadFile(filename, content, mime="text/plain") {
+  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function ExportScreen({ holdings, transactions, ccTransactions, ccCards, bondHoldings, cryptoHoldings, peInvestments, bpVentures, collectibles, loans, baseCurrency, initialTabFilter, showToast }) {
+  const _ccy = baseCurrency || BASE_CURRENCY;
+  void _ccy;
+  const [selectedTabs, setSelectedTabs] = useState(() =>
+    initialTabFilter ? new Set([initialTabFilter]) : new Set(EXPORT_TABS.map(t=>t.id))
+  );
+  const [format, setFormat] = useState("ledger");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const allRows = gatherTransactions({
+    holdings, transactions, ccTransactions, ccCards, bondHoldings,
+    cryptoHoldings, peInvestments, bpVentures, collectibles, loans,
+    tabFilter: selectedTabs,
+  });
+  const filteredRows = allRows.filter(r => {
+    if (dateFrom && r.date < dateFrom) return false;
+    if (dateTo && r.date > dateTo) return false;
+    return true;
+  });
+
+  const toggleTab = (id) => {
+    setSelectedTabs(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  const byTab = {};
+  filteredRows.forEach(r => { byTab[r.tab] = (byTab[r.tab]||0) + 1; });
+
+  const preview = format === "ledger"
+    ? buildLedgerExport(filteredRows.slice(0, 5))
+    : buildCSVExport(filteredRows.slice(0, 5));
+
+  const handleDownload = () => {
+    if (filteredRows.length === 0) { showToast("No transactions in selected scope", "warn"); return; }
+    const ts = new Date().toISOString().slice(0,10);
+    if (format === "ledger") {
+      downloadFile(`wealthos-${ts}.ledger`, buildLedgerExport(filteredRows), "text/plain");
+    } else {
+      downloadFile(`wealthos-${ts}.csv`, buildCSVExport(filteredRows), "text/csv");
+    }
+    showToast(`Exported ${filteredRows.length} transactions`, "success");
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <Card style={{padding:"18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>1 · Choose tabs to include</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {EXPORT_TABS.map(t => {
+            const active = selectedTabs.has(t.id);
+            const count = allRows.filter(r => r.tab === t.id).length;
+            return (
+              <button key={t.id} onClick={()=>toggleTab(t.id)}
+                style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${active?T.selected:T.border}`,
+                  background:active?`${T.selected}15`:T.inputBg,color:active?T.selected:T.muted,
+                  cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500,
+                  display:"flex",alignItems:"center",gap:6}}>
+                <span style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${active?T.selected:T.dim}`,
+                  background:active?T.selected:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {active && <span style={{color:"#fff",fontSize:10,fontWeight:700,lineHeight:1}}>✓</span>}
+                </span>
+                {t.label} <span style={{color:T.dim,fontWeight:500}}>({count})</span>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card style={{padding:"18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>2 · Filter by date (optional)</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div><Label>From</Label><Input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/></div>
+          <div><Label>To</Label><Input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}/></div>
+        </div>
+      </Card>
+
+      <Card style={{padding:"18px"}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>3 · Choose format</div>
+        <div style={{display:"flex",gap:8}}>
+          {[
+            {id:"ledger", label:"Ledger (PTA)", hint:".ledger — for ledger-cli, hledger, beancount"},
+            {id:"csv", label:"CSV", hint:".csv — Excel, Google Sheets, data tools"},
+          ].map(f => {
+            const active = format === f.id;
+            return (
+              <button key={f.id} onClick={()=>setFormat(f.id)}
+                style={{flex:1,padding:"14px 16px",borderRadius:10,border:`1px solid ${active?T.selected:T.border}`,
+                  background:active?`${T.selected}10`:T.inputBg,color:active?T.text:T.muted,
+                  cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                <div style={{fontSize:13,fontWeight:active?700:600,marginBottom:3}}>{f.label}</div>
+                <div style={{fontSize:11,color:T.muted}}>{f.hint}</div>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card style={{padding:"18px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600}}>Preview</div>
+          <div style={{fontSize:11,color:T.muted}}>
+            {filteredRows.length} transactions · {Object.keys(byTab).length} tab(s)
+            {filteredRows.length > 5 && ` · showing first 5`}
+          </div>
+        </div>
+        <pre style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",
+          fontSize:11,fontFamily:"'SF Mono', Menlo, monospace",color:T.text,overflowX:"auto",
+          maxHeight:280,whiteSpace:"pre",margin:0}}>{preview || "(no transactions match)"}</pre>
+      </Card>
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+        <button onClick={handleDownload} disabled={filteredRows.length===0}
+          style={{background:filteredRows.length>0?T.selected:T.border,color:filteredRows.length>0?T.selectedText:T.dim,
+            border:"none",borderRadius:9,padding:"11px 24px",fontSize:13,fontWeight:700,
+            cursor:filteredRows.length>0?"pointer":"not-allowed",fontFamily:"inherit"}}>
+          📤 Download {format === "ledger" ? ".ledger" : ".csv"} ({filteredRows.length})
+        </button>
+      </div>
+    </div>
+  );
+}
+
 
 const NAV = [
-  { id: "holdings", label: "Holdings", icon: "≡", group: "Stocks & Shares" },
-  { id: "chart", label: "Stock Chart", icon: "↗", group: "Stocks & Shares" },
-  { id: "dividends", label: "Dividends", icon: "◎", group: "Stocks & Shares" },
-  { id: "news", label: "News & Sentiment", icon: "⚡", group: "Stocks & Shares", soon: true },
-  { id: "manage", label: "Manage Stocks", icon: "+", group: "Stocks & Shares" },
+  { id: "stocks", label: "Stocks", icon: "📈", group: "Investments" },
+  { id: "bonds", label: "Bonds & T-Bills", icon: "📊", group: "Investments" },
+  { id: "crypto", label: "Cryptocurrencies", icon: "🪙", group: "Investments" },
+  { id: "cashaccounts", label: "Cash Accounts", icon: "💰", group: "Banking" },
   { id: "creditcards", label: "Credit Cards", icon: "💳", group: "Banking" },
-  { id: "loans", label: "Loans", icon: "🏦", group: "Banking" },
-  { id: "insurance", label: "Insurance", icon: "🛡", group: "Protection" },
+  { id: "loans", label: "Loans", icon: "🏛️", group: "Banking" },
   { id: "realestate", label: "Real Estate", icon: "🏠", group: "Protection" },
+  { id: "insurance", label: "Insurance", icon: "🛡", group: "Protection" },
   { id: "retirement", label: "Retirement", icon: "🏛️", group: "Protection" },
-  { id: "bonds", label: "Bonds & T-Bills", icon: "📊", group: "Protection" },
-  { id: "crypto", label: "Cryptocurrencies", icon: "🪙", group: "Crypto Wallet" },
   { id: "privateequity", label: "VC/PE Investments", icon: "💼", group: "Private Assets" },
   { id: "partnerships", label: "Business Ventures", icon: "🤝", group: "Private Assets" },
   { id: "collectibles", label: "Collectibles", icon: "💎", group: "Private Assets" },
-  { id: "ai", label: "AI Agent", icon: "✦", group: "Tools", soon: true },
-  { id: "import", label: "Import Data", icon: "⇄", group: "Tools", soon: true },
+  { id: "workflows", label: "Workflows", icon: "⚡", group: "Automation" },
+  { id: "export", label: "Export", icon: "📤", group: "Automation" },
 ];
 
 const subtitles = {
-  holdings: "All positions across your linked accounts",
-  chart: "Live price chart and technical analysis",
-  dividends: "Dividend calendar, income history and projections",
-  news: "Latest news and insider activity for your holdings",
-  manage: "Add, sell or remove stock positions manually",
-  ai: "Ask your AI agent anything about your portfolio",
-  import: "Connect your broker or upload CSV data",
-  creditcards: "Credit & debit cards, limits and transactions",
-  loans: "Personal, car, education and business loans overview",
+  stocks: "Stock holdings, dividends and transactions across brokerages",
+  creditcards: "Credit, commercial and debit cards",
+  cashaccounts: "Bank, brokerage and crypto wallet accounts",
+  loans: "Personal, car, education, business and mortgage loans",
   insurance: "Policies, premiums, claims and coverage overview",
   realestate: "Properties, valuations, rental income and insurance",
   retirement: "CPF LIFE, SRS, retirement income plans and cash reserves",
@@ -13118,10 +17539,26 @@ const subtitles = {
   privateequity: "VC funds, PE funds, direct equity, SAFEs and secondary investments",
   partnerships: "Partnerships, joint ventures, Pte Ltd shareholdings and co-owned businesses",
   collectibles: "Watches, art, wine, classic cars, jewellery and other tangible assets",
+  workflows: "Automate reminders, alerts and actions across your accounts",
+  export: "Export transactions across all asset tabs to PTA (Ledger) journal or CSV",
 };
 
 export default function App() {
-  const [page, setPage] = useState("holdings");
+  const [page, setPage] = useState("stocks");
+  const [baseCurrency, setBaseCurrency] = useState(() => {
+    try { return localStorage.getItem("wealthos.baseCurrency") || BASE_CURRENCY; }
+    catch { return BASE_CURRENCY; }
+  });
+  const [showSettings, setShowSettings] = useState(false);
+  const [exportTabFilter, setExportTabFilter] = useState(null);  // null = all tabs preselected
+  const changeBaseCurrency = (v) => {
+    setBaseCurrency(v);
+    try { localStorage.setItem("wealthos.baseCurrency", v); } catch (e) { void e; }
+  };
+  const goToExport = (tabId=null) => {
+    setExportTabFilter(tabId);
+    setPage("export");
+  };
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [holdings, setHoldings] = useState(HOLDINGS_INIT);
   const [divModalOpen, setDivModalOpen] = useState(false);
@@ -13168,7 +17605,209 @@ export default function App() {
   const [peInvestments, setPEInvestments] = useState(PE_INIT);
   const [bpVentures, setBPVentures] = useState(BP_INIT);
   const [collectibles, setCollectibles] = useState(COL_INIT);
-  const [transactions, setTransactions] = useState([
+  const [workflows, setWorkflows] = useState(WORKFLOWS_INIT);
+  const [auditLog, setAuditLog] = useState(() => {
+    // Seed audit history for each stock holding so the History tab shows something out of the box.
+    const dayMs = 86400000;
+    const now = Date.now();
+    const entries = [];
+    HOLDINGS_INIT.forEach((h, i) => {
+      // Create entry
+      entries.push({
+        id: `AL_SEED_${h.id}_C`,
+        ts: new Date(now - (180 + i*3) * dayMs).toISOString(),
+        entityType: "stock", entityId: h.id,
+        entityLabel: `${h.sym} · ${h.broker}`,
+        action: "create", changes: [], user: "You",
+      });
+      // Initial buy transaction
+      entries.push({
+        id: `AL_SEED_${h.id}_TX1`,
+        ts: new Date(now - (179 + i*3) * dayMs).toISOString(),
+        entityType: "stock", entityId: h.id,
+        entityLabel: `${h.sym} · ${h.broker}`,
+        action: "add-transaction", changes: [],
+        user: "You",
+      });
+      // Price update midway
+      entries.push({
+        id: `AL_SEED_${h.id}_U1`,
+        ts: new Date(now - (90 + i*2) * dayMs).toISOString(),
+        entityType: "stock", entityId: h.id,
+        entityLabel: `${h.sym} · ${h.broker}`,
+        action: "update",
+        changes: [{ field:"marketPrice", before:(h.cost*1.05).toFixed(2), after:String(h.marketPrice||h.price) }],
+        user: "You",
+      });
+      // Quantity update (for the +AAPL/MSFT/JNJ pattern)
+      if (i % 3 === 0) {
+        entries.push({
+          id: `AL_SEED_${h.id}_U2`,
+          ts: new Date(now - (45 + i) * dayMs).toISOString(),
+          entityType: "stock", entityId: h.id,
+          entityLabel: `${h.sym} · ${h.broker}`,
+          action: "update",
+          changes: [{ field:"qty", before:String(Math.max(1, h.qty-5)), after:String(h.qty) }],
+          user: "You",
+        });
+      }
+    });
+    // Seed audit history for each crypto holding too
+    CRYPTO_INIT.forEach((c, i) => {
+      const label = `${c.symbol} · ${c.wallet}`;
+      // Create
+      entries.push({
+        id: `AL_SEED_${c.id}_C`,
+        ts: new Date(now - (200 + i*4) * dayMs).toISOString(),
+        entityType: "crypto", entityId: c.id,
+        entityLabel: label,
+        action: "create", changes: [], user: "You",
+      });
+      // First transaction
+      entries.push({
+        id: `AL_SEED_${c.id}_TX1`,
+        ts: new Date(now - (198 + i*4) * dayMs).toISOString(),
+        entityType: "crypto", entityId: c.id,
+        entityLabel: label,
+        action: "add-transaction", changes: [], user: "You",
+      });
+      // Price update
+      entries.push({
+        id: `AL_SEED_${c.id}_U1`,
+        ts: new Date(now - (110 + i*3) * dayMs).toISOString(),
+        entityType: "crypto", entityId: c.id,
+        entityLabel: label,
+        action: "update",
+        changes: [{ field:"currentPrice", before:(c.avgCostPrice*1.08).toFixed(2), after:String(c.currentPrice) }],
+        user: "You",
+      });
+      // Second transaction for some coins
+      if (i % 2 === 0) {
+        entries.push({
+          id: `AL_SEED_${c.id}_TX2`,
+          ts: new Date(now - (60 + i*2) * dayMs).toISOString(),
+          entityType: "crypto", entityId: c.id,
+          entityLabel: label,
+          action: "add-transaction", changes: [], user: "You",
+        });
+      }
+      // Yield/quantity tweak for staked/lending positions
+      if (c.holdingType === "Staked" || c.holdingType === "Lending / DeFi") {
+        entries.push({
+          id: `AL_SEED_${c.id}_U2`,
+          ts: new Date(now - (30 + i) * dayMs).toISOString(),
+          entityType: "crypto", entityId: c.id,
+          entityLabel: label,
+          action: "update",
+          changes: [{ field:"stakingYield", before:String((c.stakingYield||0)*0.9), after:String(c.stakingYield||0) }],
+          user: "You",
+        });
+      }
+    });
+    // Seed audit history for bonds
+    BONDS_INIT.forEach((b, i) => {
+      const label = `${b.issuer||""} · ${b.name||b.productType||""}`;
+      entries.push({ id:`AL_SEED_${b.id}_C`, ts:new Date(now - (160+i*5)*dayMs).toISOString(), entityType:"bond", entityId:b.id, entityLabel:label, action:"create", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${b.id}_TX1`, ts:new Date(now - (158+i*5)*dayMs).toISOString(), entityType:"bond", entityId:b.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      if (i % 2 === 0) {
+        entries.push({ id:`AL_SEED_${b.id}_U1`, ts:new Date(now - (40+i*3)*dayMs).toISOString(), entityType:"bond", entityId:b.id, entityLabel:label, action:"update",
+          changes:[{ field:"currentValue", before:String((b.currentValue||b.faceValue||0)*0.97), after:String(b.currentValue||b.faceValue||0) }], user:"You" });
+      }
+    });
+    // Seed audit history for retirement plans
+    RETIREMENT_INIT.forEach((p, i) => {
+      const label = `${p.provider||""} · ${p.planName||p.planType||""}`;
+      entries.push({ id:`AL_SEED_${p.id}_C`, ts:new Date(now - (240+i*7)*dayMs).toISOString(), entityType:"retirement", entityId:p.id, entityLabel:label, action:"create", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${p.id}_TX1`, ts:new Date(now - (210+i*7)*dayMs).toISOString(), entityType:"retirement", entityId:p.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${p.id}_TX2`, ts:new Date(now - (90+i*4)*dayMs).toISOString(), entityType:"retirement", entityId:p.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      if (i % 2 === 1) {
+        entries.push({ id:`AL_SEED_${p.id}_U1`, ts:new Date(now - (35+i*2)*dayMs).toISOString(), entityType:"retirement", entityId:p.id, entityLabel:label, action:"update",
+          changes:[{ field:"balance", before:String((p.balance||0)*0.95), after:String(p.balance||0) }], user:"You" });
+      }
+    });
+    // Seed audit history for VC/PE investments
+    PE_INIT.forEach((inv, i) => {
+      const label = `${inv.name||""} · ${inv.manager||""}`;
+      entries.push({ id:`AL_SEED_${inv.id}_C`, ts:new Date(now - (300+i*10)*dayMs).toISOString(), entityType:"pe", entityId:inv.id, entityLabel:label, action:"create", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${inv.id}_TX1`, ts:new Date(now - (290+i*10)*dayMs).toISOString(), entityType:"pe", entityId:inv.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      if (inv.nav > 0) {
+        entries.push({ id:`AL_SEED_${inv.id}_U1`, ts:new Date(now - (60+i*5)*dayMs).toISOString(), entityType:"pe", entityId:inv.id, entityLabel:label, action:"update",
+          changes:[{ field:"nav", before:String(inv.nav*0.9), after:String(inv.nav) }], user:"You" });
+      }
+    });
+    // Seed audit history for business ventures
+    BP_INIT.forEach((v, i) => {
+      const label = `${v.businessName||""} · ${v.role||""}`;
+      entries.push({ id:`AL_SEED_${v.id}_C`, ts:new Date(now - (400+i*15)*dayMs).toISOString(), entityType:"venture", entityId:v.id, entityLabel:label, action:"create", changes:[], user:"You" });
+      if ((v.transactions||[]).length > 0) {
+        entries.push({ id:`AL_SEED_${v.id}_TX1`, ts:new Date(now - (380+i*15)*dayMs).toISOString(), entityType:"venture", entityId:v.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      }
+      if (v.bookValue > 0 && i % 2 === 0) {
+        entries.push({ id:`AL_SEED_${v.id}_U1`, ts:new Date(now - (75+i*6)*dayMs).toISOString(), entityType:"venture", entityId:v.id, entityLabel:label, action:"update",
+          changes:[{ field:"bookValue", before:String(v.bookValue*0.92), after:String(v.bookValue) }], user:"You" });
+      }
+      if (v.estimatedMarketValue > 0 && i % 2 === 1) {
+        entries.push({ id:`AL_SEED_${v.id}_U2`, ts:new Date(now - (40+i*3)*dayMs).toISOString(), entityType:"venture", entityId:v.id, entityLabel:label, action:"update",
+          changes:[{ field:"estimatedMarketValue", before:String(v.estimatedMarketValue*0.88), after:String(v.estimatedMarketValue) }], user:"You" });
+      }
+    });
+    // Seed audit history for collectibles
+    COL_INIT.forEach((it, i) => {
+      const label = `${it.name||""} · ${it.category||""}`;
+      entries.push({ id:`AL_SEED_${it.id}_C`, ts:new Date(now - (220+i*8)*dayMs).toISOString(), entityType:"collectible", entityId:it.id, entityLabel:label, action:"create", changes:[], user:"You" });
+      if (it.currentValue > 0 && it.currentValue !== it.acquisitionPrice) {
+        entries.push({ id:`AL_SEED_${it.id}_U1`, ts:new Date(now - (55+i*4)*dayMs).toISOString(), entityType:"collectible", entityId:it.id, entityLabel:label, action:"update",
+          changes:[{ field:"currentValue", before:String(it.acquisitionPrice||0), after:String(it.currentValue) }], user:"You" });
+      }
+    });
+    // Seed audit history for insurance policies
+    POLICIES_INIT.forEach((pol, i) => {
+      const label = `${pol.insurer||""} · ${pol.planName||pol.type||""}`;
+      entries.push({ id:`AL_SEED_${pol.id}_C`, ts:new Date(now - (500+i*20)*dayMs).toISOString(), entityType:"insurance", entityId:pol.id, entityLabel:label, action:"create", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${pol.id}_TX1`, ts:new Date(now - (380+i*20)*dayMs).toISOString(), entityType:"insurance", entityId:pol.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${pol.id}_TX2`, ts:new Date(now - (200+i*15)*dayMs).toISOString(), entityType:"insurance", entityId:pol.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${pol.id}_TX3`, ts:new Date(now - (80+i*8)*dayMs).toISOString(), entityType:"insurance", entityId:pol.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+    });
+    // Seed audit history for loans
+    LOANS_INIT.forEach((ln, i) => {
+      const label = `${ln.loanType||""} · ${ln.lender||""}`;
+      entries.push({ id:`AL_SEED_${ln.id}_C`, ts:new Date(now - (700+i*30)*dayMs).toISOString(), entityType:"loan", entityId:ln.id, entityLabel:label, action:"create", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${ln.id}_TX1`, ts:new Date(now - (400+i*20)*dayMs).toISOString(), entityType:"loan", entityId:ln.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${ln.id}_TX2`, ts:new Date(now - (200+i*10)*dayMs).toISOString(), entityType:"loan", entityId:ln.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${ln.id}_TX3`, ts:new Date(now - (60+i*5)*dayMs).toISOString(), entityType:"loan", entityId:ln.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
+      if (i % 3 === 0) {
+        entries.push({ id:`AL_SEED_${ln.id}_U1`, ts:new Date(now - (30+i*2)*dayMs).toISOString(), entityType:"loan", entityId:ln.id, entityLabel:label, action:"update",
+          changes:[{ field:"outstandingBalance", before:String((ln.outstandingBalance||0)*1.05), after:String(ln.outstandingBalance||0) }], user:"You" });
+      }
+    });
+    // Seed audit history for credit cards
+    CC_CARDS_INIT.forEach((card, i) => {
+      const label = `${card.bank||""} · ${card.cardName||""} ••${card.last4||""}`;
+      entries.push({ id:`AL_SEED_${card.id}_C`, ts:new Date(now - (380+i*12)*dayMs).toISOString(), entityType:"creditcard", entityId:card.id, entityLabel:label, action:"create", changes:[], user:"You" });
+      if (i % 2 === 0) {
+        entries.push({ id:`AL_SEED_${card.id}_U1`, ts:new Date(now - (90+i*5)*dayMs).toISOString(), entityType:"creditcard", entityId:card.id, entityLabel:label, action:"update",
+          changes:[{ field:"creditLimit", before:String((card.creditLimit||0)*0.85), after:String(card.creditLimit||0) }], user:"You" });
+      }
+    });
+    // Seed audit history for real estate properties
+    [
+      { id:"P001", label:"🇸🇬 Tampines HDB", valBefore:420000, valAfter:490000 },
+      { id:"P002", label:"🇸🇬 One North Condo", valBefore:1180000, valAfter:1280000 },
+      { id:"P003", label:"🇲🇾 KL Mont Kiara Condo", valBefore:870000, valAfter:920000 },
+    ].forEach((p, i) => {
+      entries.push({ id:`AL_SEED_${p.id}_C`, ts:new Date(now - (900+i*40)*dayMs).toISOString(), entityType:"property", entityId:p.id, entityLabel:p.label, action:"create", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${p.id}_TX1`, ts:new Date(now - (60+i*3)*dayMs).toISOString(), entityType:"property", entityId:p.id, entityLabel:p.label, action:"add-transaction", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${p.id}_TX2`, ts:new Date(now - (30+i*2)*dayMs).toISOString(), entityType:"property", entityId:p.id, entityLabel:p.label, action:"add-transaction", changes:[], user:"You" });
+      entries.push({ id:`AL_SEED_${p.id}_U1`, ts:new Date(now - (180+i*10)*dayMs).toISOString(), entityType:"property", entityId:p.id, entityLabel:p.label, action:"update",
+        changes:[{ field:"currentValuation", before:String(p.valBefore), after:String(p.valAfter) }], user:"You" });
+    });
+    return entries;
+  });
+  const logAudit = useMemo(() => makeAuditLogger(setAuditLog), []);
+  const [transactions, setTransactions] = useState((() => {
+    // Map legacy broker labels to brokerage account IDs (matches CC_ACCOUNTS_INIT).
+    const brokerToAcct = { "Tiger Brokers":"BR001", "IBKR":"BR002", "Interactive Brokers":"BR002", "Moomoo":"BR003" };
+    return [
     { id: 1,  sym: "AAPL",  txType: "Buy",      date: "2025-01-12", qty: "45",  price: "152.30", fees: "1.50", currency: "SGD", broker: "Tiger Brokers", notes: "" },
     { id: 2,  sym: "MSFT",  txType: "Buy",      date: "2025-02-03", qty: "22",  price: "310.40", fees: "1.20", currency: "SGD", broker: "IBKR",          notes: "" },
     { id: 3,  sym: "VOO",   txType: "Buy",      date: "2025-02-20", qty: "18",  price: "380.10", fees: "0.00", currency: "SGD", broker: "Tiger Brokers", notes: "Long-term ETF position" },
@@ -13189,7 +17828,8 @@ export default function App() {
     { id: 18, sym: "JNJ",   txType: "Dividend", date: "2026-03-07", qty: "30",  price: "1.24",   fees: "0.00", currency: "SGD", broker: "IBKR",          notes: "Q1 2026 dividend" },
     { id: 19, sym: "AAPL",  txType: "Dividend", date: "2026-03-10", qty: "55",  price: "0.25",   fees: "0.00", currency: "SGD", broker: "Tiger Brokers", notes: "Q1 2026 dividend" },
     { id: 20, sym: "GOOGL", txType: "Buy",      date: "2026-02-14", qty: "5",   price: "158.20", fees: "1.00", currency: "SGD", broker: "IBKR",          notes: "Added to position" },
-  ]);
+    ].map(t => ({ ...t, accountId: brokerToAcct[t.broker] || null }));
+  })());
   const [toast, setToast] = useState({ msg: "", type: "" });
 
   const showToast = (msg, type = "success") => {
@@ -13201,23 +17841,33 @@ export default function App() {
   const activeNav = NAV.find(n => n.id === page);
 
   const renderScreen = () => {
-    if (page === "holdings") return <HoldingsScreen />;
-    if (page === "chart") return <ChartScreen holdings={holdings} />;
-    if (page === "dividends") return <DividendsScreen manualDivs={manualDivs} />;
-    if (page === "news") return <NewsScreen />;
-    if (page === "ai") return <AIScreen />;
-    if (page === "manage") return <ManageScreen holdings={holdings} setHoldings={setHoldings} transactions={transactions} setTransactions={setTransactions} showToast={showToast} />;
-    if (page === "import") return <ImportDataScreen />;
-    if (page === "creditcards") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} showToast={showToast} />;
-    if (page === "loans") return <LoansScreen loans={loans} setLoans={setLoans} showToast={showToast} />;
-    if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} />;
-    if (page === "realestate") return <RealEstateScreen properties={properties} setProperties={setProperties} policies={policies} showToast={showToast} />;
-    if (page === "retirement") return <RetirementScreen plans={retPlans} setPlans={setRetPlans} showToast={showToast} />;
-    if (page === "bonds") return <BondsScreen bonds={bondHoldings} setBonds={setBondHoldings} showToast={showToast} />;
-    if (page === "crypto") return <CryptoScreen cryptos={cryptoHoldings} setCryptos={setCryptoHoldings} showToast={showToast} />;
-    if (page === "privateequity") return <PEScreen investments={peInvestments} setInvestments={setPEInvestments} showToast={showToast} />;
-    if (page === "partnerships") return <BPScreen ventures={bpVentures} setVentures={setBPVentures} showToast={showToast} />;
-    if (page === "collectibles") return <CollectiblesScreen items={collectibles} setItems={setCollectibles} showToast={showToast} />;
+    if (page === "stocks") return <StocksScreen
+        holdings={holdings} setHoldings={setHoldings}
+        transactions={transactions} setTransactions={setTransactions}
+        manualDivs={manualDivs} setManualDivs={setManualDivs}
+        accounts={ccAccounts} setAccounts={setCCAccounts}
+        showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "creditcards") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} baseCurrency={baseCurrency} goToExport={goToExport} showToast={showToast} auditLog={auditLog} logAudit={logAudit} lockView="cards" />;
+    if (page === "cashaccounts") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} baseCurrency={baseCurrency} goToExport={goToExport} showToast={showToast} auditLog={auditLog} logAudit={logAudit} lockView="accounts" />;
+    if (page === "loans") return <LoansScreen loans={loans} setLoans={setLoans} properties={properties} setProperties={setProperties} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "realestate") return <RealEstateScreen properties={properties} setProperties={setProperties} policies={policies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "retirement") return <RetirementScreen plans={retPlans} setPlans={setRetPlans} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "bonds") return <BondsScreen bonds={bondHoldings} setBonds={setBondHoldings} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "crypto") return <CryptoScreen cryptos={cryptoHoldings} setCryptos={setCryptoHoldings} accounts={ccAccounts} setAccounts={setCCAccounts} setTransactions={setTransactions} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "privateequity") return <PEScreen investments={peInvestments} setInvestments={setPEInvestments} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "partnerships") return <BPScreen ventures={bpVentures} setVentures={setBPVentures} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "collectibles") return <CollectiblesScreen items={collectibles} setItems={setCollectibles} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "workflows") return <WorkflowsScreen workflows={workflows} setWorkflows={setWorkflows} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "export") return <ExportScreen
+        holdings={holdings} transactions={transactions}
+        ccTransactions={ccTransactions} ccCards={ccCards}
+        bondHoldings={bondHoldings} cryptoHoldings={cryptoHoldings}
+        peInvestments={peInvestments} bpVentures={bpVentures}
+        collectibles={collectibles} loans={loans}
+        baseCurrency={baseCurrency}
+        initialTabFilter={exportTabFilter}
+        showToast={showToast} />;
     return <div style={{ color: T.muted, fontSize: 13 }}>Coming soon.</div>;
   };
 
@@ -13271,13 +17921,45 @@ export default function App() {
           ))}
         </div>
 
-        {/* User */}
-        <div style={{ borderTop: `1px solid ${T.sidebarBorder}`, padding: "11px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+        {/* User — click to open settings */}
+        <div onClick={()=>setShowSettings(true)}
+          style={{ borderTop: `1px solid ${T.sidebarBorder}`, padding: "11px 14px", display: "flex", alignItems: "center", gap: 8, cursor:"pointer" }}
+          onMouseEnter={e=>e.currentTarget.style.background=T.hover}
+          onMouseLeave={e=>e.currentTarget.style.background=""}>
           <div style={{ width: 26, height: 26, borderRadius: "50%", background: T.selected, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: T.selectedText, fontWeight: 700 }}>DI</div>
           <span style={{ fontSize: 12, color: T.muted }}>dilwyn</span>
-          <span style={{ marginLeft: "auto", fontSize: 13, color: T.dim }}>∧</span>
+          <span style={{ marginLeft: "auto", fontSize: 11, color: T.dim, display:"flex",alignItems:"center",gap:4 }}>⚙</span>
         </div>
       </div>
+
+      {/* ── Settings modal ── */}
+      {showSettings && (
+        <>
+          <div onClick={()=>setShowSettings(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:500}}/>
+          <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:501,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:440,boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+            <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontSize:14,fontWeight:700}}>Settings</div>
+              <button onClick={()=>setShowSettings(false)} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:14,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
+            </div>
+            <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:16}}>
+              <div>
+                <Label>Base Currency</Label>
+                <Sel value={baseCurrency} onChange={e=>changeBaseCurrency(e.target.value)} options={CURRENCY_OPTIONS}/>
+                <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.5}}>
+                  Used for credit & commercial card transactions, default currency for new entries, and dashboard totals. Debit cards continue to follow their linked account's currency.
+                </div>
+              </div>
+              <div style={{padding:"10px 12px",background:T.inputBg,borderRadius:8,fontSize:11,color:T.muted,display:"flex",justifyContent:"space-between"}}>
+                <span>Current symbol</span>
+                <span style={{color:T.text,fontWeight:600}}>{CURRENCY_SYMBOLS[baseCurrency] || baseCurrency}</span>
+              </div>
+            </div>
+            <div style={{padding:"14px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",justifyContent:"flex-end"}}>
+              <button onClick={()=>setShowSettings(false)} style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 22px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Done</button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── Main area ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -13301,7 +17983,7 @@ export default function App() {
         </div>
 
         {/* Page content */}
-        {page === "realestate" || page === "creditcards" || page === "insurance" || page === "loans" || page === "retirement" || page === "bonds" || page === "crypto" || page === "privateequity" || page === "partnerships" || page === "collectibles" ? (
+        {page === "stocks" || page === "realestate" || page === "creditcards" || page === "cashaccounts" || page === "insurance" || page === "loans" || page === "retirement" || page === "bonds" || page === "crypto" || page === "privateequity" || page === "partnerships" || page === "collectibles" || page === "workflows" || page === "export" ? (
           <div style={{ flex: 1, overflowY: "auto", minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
               <h1 className="wo-main-title" style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
