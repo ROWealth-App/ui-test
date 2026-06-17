@@ -66,3 +66,20 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+/* Shared row hover — transactions, postings, audit tables across the prototype */
+.hov-row {
+  transition: background-color 0.12s ease;
+}
+.hov-row:hover {
+  background-color: #F4F4F5 !important;
+}
+
+/* Posting entries are double-entry (Dr + Cr legs in one journal entry).
+   Each entry is its own <tbody class="hov-group"> so hover highlights both legs together. */
+.hov-group td {
+  transition: background-color 0.12s ease;
+}
+.hov-group:hover td {
+  background-color: #F4F4F5 !important;
+}

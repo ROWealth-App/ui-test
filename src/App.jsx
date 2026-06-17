@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment } from "react";
 
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
@@ -101,7 +101,7 @@ const Card = ({ children, style = {}, className, onClick }) => (
   </div>
 );
 const Badge = ({ children, bg, color }) => (
-  <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 5, background: bg || T.inputBg, color: color || T.muted, fontWeight: 600 }}>
+  <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 5, background: bg || T.inputBg, color: color || T.muted, fontWeight: 600, whiteSpace: "nowrap" }}>
     {children}
   </span>
 );
@@ -114,13 +114,15 @@ const Input = ({ placeholder, value, onChange, type = "text", prefix, disabled, 
   <div style={{ position: "relative" }}>
     {prefix && <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: T.dim, pointerEvents: "none" }}>{prefix}</span>}
     <input type={type} placeholder={placeholder} value={value} onChange={onChange} disabled={disabled} step={step}
-      style={{ width: "100%", boxSizing: "border-box", background: disabled ? T.hover : T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: prefix ? "9px 12px 9px 26px" : "9px 12px", fontSize: 13, fontFamily: "inherit", color: disabled ? T.dim : T.text, outline: "none" }} />
+      style={{ width: "100%", boxSizing: "border-box", height: 38, background: disabled ? T.hover : T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: prefix ? "9px 12px 9px 26px" : "9px 12px", fontSize: 13, fontFamily: "inherit", color: disabled ? T.dim : T.text, outline: "none" }} />
   </div>
 );
 const Sel = ({ value, onChange, options, placeholder }) => (
   <select value={value} onChange={onChange} style={{ width: "100%", background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: value ? T.text : T.dim, outline: "none", cursor: "pointer" }}>
     {placeholder && <option value="">{placeholder}</option>}
-    {options.map(o => <option key={o} value={o}>{o}</option>)}
+    {options.map(o => (typeof o === "object" && o !== null)
+      ? <option key={o.value} value={o.value}>{o.label}</option>
+      : <option key={o} value={o}>{o}</option>)}
   </select>
 );
 
@@ -184,6 +186,26 @@ const FlowBanner = ({ type, amount, label, prefix = "S$", flowOverride, style = 
   );
 };
 
+/* Explicit "Record only — no cash flow" toggle. Shared across every
+   Record-Transaction panel that can log a non-cash / in-kind event
+   (share splits, in-kind transfers, PIK interest, NAV revaluation,
+   employer-match vesting). When ticked, the FlowBanner is overridden
+   to NO CASH FLOW and the saved tx is tagged recordOnly:true. */
+function RecordOnlyToggle({ recordOnly, setRecordOnly, style = {} }) {
+  return (
+    <div onClick={() => setRecordOnly(v => !v)}
+      style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: recordOnly ? T.accentBg : T.inputBg, border: `1px solid ${recordOnly ? T.accent + "55" : T.border}`, borderRadius: 9, cursor: "pointer", userSelect: "none", ...style }}>
+      <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${recordOnly ? T.accent : T.dim}`, background: recordOnly ? T.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        {recordOnly && <span style={{ color: "#fff", fontSize: 12, fontWeight: 700, lineHeight: 1 }}>✓</span>}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: recordOnly ? T.accent : T.text }}>Record only — no cash flow</div>
+        <div style={{ fontSize: 11, color: T.muted, marginTop: 1 }}>Log this entry for the books without classifying it as money IN or OUT.</div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Picker with "Other…" custom-value fallback ──────────────
    Use for bank/institution dropdowns where users may need to enter
    a value not in the predefined list. */
@@ -216,6 +238,57 @@ function PickerWithOther({ value, onChange, options, placeholder }) {
           onChange={e => { setCustomVal(e.target.value); onChange({ target:{ value:e.target.value } }); }}
           placeholder="Enter custom name…" autoFocus
           style={{ marginTop:6, width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none" }}/>
+      )}
+    </div>
+  );
+}
+
+/* ─── Transaction row actions (edit / delete) ─────────────────
+   Shared affordance appended to every transaction row across all
+   modules so recorded transactions are editable & deletable with
+   a consistent look. Stops propagation so row-level handlers (if
+   any) don't also fire. */
+function TxRowActions({ onEdit, onDelete }) {
+  const btn = {
+    width:26, height:26, borderRadius:6, border:`1px solid ${T.border}`,
+    background:T.bg, cursor:"pointer", fontSize:12, lineHeight:1, padding:0,
+    display:"flex", alignItems:"center", justifyContent:"center", color:T.muted,
+  };
+  return (
+    <div style={{display:"flex",gap:5,flexShrink:0,marginLeft:4}} onClick={e=>e.stopPropagation()}>
+      <button title="Edit transaction" onClick={(e)=>{e.stopPropagation();onEdit();}}
+        style={btn}
+        onMouseEnter={e=>{e.currentTarget.style.background=T.hover;e.currentTarget.style.color=T.text;}}
+        onMouseLeave={e=>{e.currentTarget.style.background=T.bg;e.currentTarget.style.color=T.muted;}}>✏️</button>
+      <button title="Delete transaction" onClick={(e)=>{e.stopPropagation();onDelete();}}
+        style={btn}
+        onMouseEnter={e=>{e.currentTarget.style.background=T.downBg;e.currentTarget.style.color=T.down;e.currentTarget.style.borderColor=T.down;}}
+        onMouseLeave={e=>{e.currentTarget.style.background=T.bg;e.currentTarget.style.color=T.muted;e.currentTarget.style.borderColor=T.border;}}>🗑</button>
+    </div>
+  );
+}
+
+/* Shared search + filter toolbar for every detail-page Transactions tab.
+   `filters` is an array of chip labels (first is usually "All"); pass an
+   optional trailing `action` node (e.g. a "+ Record" button) rendered on the
+   search row's right. Filter chips are hidden when there's only one option. */
+function TxToolbar({ search, setSearch, filter, setFilter, filters, placeholder = "Search transactions…", action }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder={placeholder}
+          style={{ flex: 1, boxSizing: "border-box", background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none" }} />
+        {action}
+      </div>
+      {filters && filters.length > 1 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {filters.map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              style={{ padding: "4px 12px", borderRadius: 20, border: `1px solid ${filter === f ? T.selected : T.border}`, background: filter === f ? T.selected : "transparent", color: filter === f ? T.selectedText : T.muted, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: filter === f ? 700 : 400 }}>
+              {f}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -254,8 +327,41 @@ function makeAuditLogger(setAuditLog) {
   };
 }
 
+// Group flat double-entry posting rows into journal entries.
+// A row starts a new entry if it has _first:true, or (when _first is absent) a truthy date —
+// some tables (e.g. Real Estate) mark the first leg with a date instead of a _first flag.
+function groupByFirst(rows) {
+  const groups = [];
+  (rows || []).forEach(r => {
+    const isStart = r._first === true || (r._first === undefined && !!r.date);
+    if (isStart || groups.length === 0) groups.push([r]);
+    else groups[groups.length - 1].push(r);
+  });
+  return groups;
+}
+
+// Lightweight inline metric strip for SECONDARY stats inside detail tabs.
+// Keeps boxed stat cards reserved for primary KPIs (the header) and avoids
+// stacking multiple bands of heavy cards — divider-separated text instead.
+function StatStrip({ stats }) {
+  const items = (stats || []).filter(Boolean);
+  if (!items.length) return null;
+  return (
+    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", rowGap: 6, padding: "2px 2px 6px" }}>
+      {items.map((s, i) => (
+        <div key={s.l} style={{ padding: "0 20px", borderLeft: i > 0 ? `1px solid ${T.border}` : "none", display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={{ fontSize: 11, color: T.muted }}>{s.l}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: s.c || T.text }}>{s.v}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AuditLogPanel({ auditLog, entityType, entityId }) {
-  const entries = (auditLog || []).filter(e => e.entityType === entityType && e.entityId === entityId);
+  // Newest first (latest at top, oldest at bottom)
+  const entries = (auditLog || []).filter(e => e.entityType === entityType && e.entityId === entityId)
+    .slice().sort((a, b) => new Date(b.ts) - new Date(a.ts));
   if (entries.length === 0) {
     return (
       <div style={{padding:"36px 16px",textAlign:"center",color:T.muted,fontSize:13}}>
@@ -271,7 +377,7 @@ function AuditLogPanel({ auditLog, entityType, entityId }) {
         const actionColor = e.action === "create" ? T.up : e.action === "delete" ? T.down : e.action === "add-transaction" ? T.warn : T.accent;
         const actionLabel = e.action === "create" ? "Created" : e.action === "delete" ? "Deleted" : e.action === "add-transaction" ? "Transaction" : "Updated";
         return (
-          <div key={e.id} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",background:T.bg}}>
+          <div key={e.id} className="hov-row" style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",background:T.bg}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:10,fontWeight:700,color:actionColor,background:`${actionColor}15`,padding:"3px 8px",borderRadius:4,letterSpacing:0.3}}>{actionLabel.toUpperCase()}</span>
@@ -279,6 +385,9 @@ function AuditLogPanel({ auditLog, entityType, entityId }) {
               </div>
               <span style={{fontSize:11,color:T.dim}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</span>
             </div>
+            {(e.action === "add-transaction" || e.action === "edit-transaction" || e.action === "delete-transaction") && e.entityLabel && (
+              <div style={{marginTop:7,fontSize:12,color:T.text,fontWeight:500}}>{e.entityLabel}</div>
+            )}
             {e.changes.length > 0 && (
               <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4,fontSize:12,lineHeight:1.5}}>
                 {e.changes.map((c,i)=>(
@@ -394,11 +503,34 @@ const MobilePostingsList = ({ journalRows, entryCount, entryLabel }) => {
 };
 
 /* ─── Sortable table header ────────────────────────────────── */
+// Convert an fr-based grid template into content-capped columns. Equal `fr`
+// units stretch a sparse table edge-to-edge and dump leftover width *between*
+// columns ("rivers" of whitespace); capping each column lets that slack pool
+// harmlessly at the right margin instead.
+//
+// The caps are COLUMN-COUNT-AWARE: every table is budgeted toward the same
+// natural width (CAP_TARGET) distributed across columns by their fr weight, so
+// a 7-column table and a 4-column table hug content and leave a margin at the
+// same viewport width — consistent across the whole portal. Below CAP_TARGET
+// the grid just fills the available space (minmax min keeps columns readable).
+const CAP_TARGET = 1080; // px — natural table width tables hug toward on wide screens
+const CAP_GAP = 24;      // must match the columnGap used on every header + row
+const capCols = (fr) => {
+  const ws = fr.trim().split(/\s+/).map(t => parseFloat(t) || 1);
+  const sumW = ws.reduce((a, b) => a + b, 0);
+  const budget = CAP_TARGET - (ws.length - 1) * CAP_GAP; // width available to tracks
+  return ws.map((w, i) => {
+    const max = Math.round(budget * w / sumW);
+    const min = Math.max(i === 0 ? 200 : 80, Math.round(max * 0.72));
+    return `minmax(${min}px,${max}px)`;
+  }).join(" ");
+};
+
 const SortHeader = ({ columns, sortKey, sortDir, onSort, gridCols, style }) => (
-  <div style={{display:"grid",gridTemplateColumns:gridCols,padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,minWidth:700,...style}}>
+  <div style={{display:"grid",gridTemplateColumns:gridCols,columnGap:24,padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,minWidth:700,...style}}>
     {columns.map(([label, align, key, colStyle])=>(
       <div key={label} onClick={key ? ()=>onSort(key) : undefined}
-        style={{fontSize:11,color:sortKey===key?T.text:T.muted,fontWeight:sortKey===key?700:500,textAlign:align,cursor:key?"pointer":"default",userSelect:"none",display:"flex",alignItems:"center",gap:3,justifyContent:align==="right"?"flex-end":"flex-start",...(colStyle||{})}}>
+        style={{fontSize:11,color:sortKey===key?T.text:T.muted,fontWeight:sortKey===key?700:500,textAlign:align,cursor:key?"pointer":"default",userSelect:"none",display:"flex",alignItems:"center",gap:3,justifyContent:align==="right"?"flex-end":align==="center"?"center":"flex-start",...(colStyle||{})}}>
         {label}
         {key && <span style={{fontSize:9,color:sortKey===key?T.text:T.dim}}>{sortKey===key?(sortDir==="asc"?"▲":"▼"):"⇅"}</span>}
       </div>
@@ -454,15 +586,9 @@ const incomeData = [
 // Map legacy broker labels to brokerage account IDs. "IBKR" → BR002 (Interactive Brokers).
 const HOLDINGS_INIT = [
   { id: 1, sym: "AAPL", name: "Apple Inc.", qty: 45, price: 189.84, cost: 152.30, changeP: +0.66, value: 8542.80, weight: 22.1, sector: "Technology", broker: "Tiger Brokers", accountId:"BR001", addedDate: "Jan 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 189.84, priceDate: "2026-03-16" },
-  { id: 2, sym: "MSFT", name: "Microsoft Corp.", qty: 22, price: 415.60, cost: 310.40, changeP: -0.51, value: 9143.20, weight: 23.7, sector: "Technology", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Feb 3, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 415.60, priceDate: "2026-03-16" },
   { id: 3, sym: "VOO", name: "Vanguard S&P 500 ETF", qty: 18, price: 498.25, cost: 380.10, changeP: +0.69, value: 8968.50, weight: 23.2, sector: "ETF", broker: "Tiger Brokers", accountId:"BR001", addedDate: "Feb 20, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 498.25, priceDate: "2026-03-16" },
   { id: 4, sym: "NVDA", name: "NVIDIA Corp.", qty: 12, price: 875.40, cost: 420.00, changeP: +1.77, value: 10504.80, weight: 27.2, sector: "Technology", broker: "Moomoo", accountId:"BR003", addedDate: "Mar 1, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 875.40, priceDate: "2026-03-16" },
   { id: 5, sym: "JNJ", name: "Johnson & Johnson", qty: 30, price: 152.30, cost: 161.80, changeP: -0.30, value: 4569.00, weight: 11.8, sector: "Healthcare", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Mar 8, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 152.30, priceDate: "2026-03-16" },
-  { id: 6, sym: "AMZN", name: "Amazon.com Inc.", qty: 8, price: 182.50, cost: 140.20, changeP: +0.92, value: 1460.00, weight: 3.8, sector: "Technology", broker: "Tiger Brokers", accountId:"BR001", addedDate: "Mar 10, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 182.50, priceDate: "2026-03-16" },
-  { id: 7, sym: "GOOGL", name: "Alphabet Inc.", qty: 15, price: 165.30, cost: 130.80, changeP: -0.44, value: 2479.50, weight: 6.4, sector: "Technology", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Mar 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 165.30, priceDate: "2026-03-16" },
-  { id: 8, sym: "META", name: "Meta Platforms Inc.", qty: 10, price: 512.40, cost: 320.00, changeP: +1.21, value: 5124.00, weight: 13.3, sector: "Technology", broker: "Moomoo", accountId:"BR003", addedDate: "Mar 15, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 512.40, priceDate: "2026-03-16" },
-  { id: 9, sym: "BRK.B", name: "Berkshire Hathaway B", qty: 20, price: 410.10, cost: 360.50, changeP: +0.18, value: 8202.00, weight: 21.2, sector: "Financials", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Mar 18, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 410.10, priceDate: "2026-03-16" },
-  { id: 10, sym: "VTI", name: "Vanguard Total Market ETF", qty: 25, price: 240.80, cost: 210.40, changeP: +0.55, value: 6020.00, weight: 15.6, sector: "ETF", broker: "Tiger Brokers", accountId:"BR001", addedDate: "Mar 20, 2025", tradeCcy: "USD", exchange: "NYSE", marketPrice: 240.80, priceDate: "2026-03-16" },
   // Same symbol (AAPL) in a different brokerage account → must show separately, not merged
   { id: 11, sym: "AAPL", name: "Apple Inc.", qty: 20, price: 189.84, cost: 175.00, changeP: +0.66, value: 3796.80, weight: 4.8, sector: "Technology", broker: "Interactive Brokers", accountId:"BR002", addedDate: "Apr 12, 2025", tradeCcy: "USD", exchange: "NASDAQ", marketPrice: 189.84, priceDate: "2026-03-16" },
 ];
@@ -558,6 +684,108 @@ function TickerSearch({ value, onChange, onSelect }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   HASH ROUTER (no library) + shared full-page detail shell
+   Route shape: { screen, parentId, entityId, tab }
+   URLs: #/bonds  ·  #/bonds/BD002  ·  #/bonds/BD002/postings
+         two-level: #/crypto/<walletId>/<coinId>/<tab>
+═══════════════════════════════════════════════════════════════ */
+const KNOWN_TABS = new Set(["overview","transactions","postings","history","audit","manage","chart","dividends","holdings","repayments","mortgage"]);
+const TWO_LEVEL = new Set(["stocks","crypto"]);
+const DEFAULT_SCREEN = "stocks";
+
+function parseHash(hash) {
+  const raw = (hash || "").replace(/^#\/?/, "");
+  const parts = raw.split("/").filter(Boolean).map(p => { try { return decodeURIComponent(p); } catch { return p; } });
+  const screen = parts[0] || DEFAULT_SCREEN;
+  if (TWO_LEVEL.has(screen)) {
+    const p1 = parts[1], p2 = parts[2], p3 = parts[3];
+    if (p1 == null) return { screen, parentId: null, entityId: null, tab: null };
+    // #/screen/<parentId>/<tab>  → parent-level detail with a tab
+    if (p2 && KNOWN_TABS.has(p2) && p3 == null) return { screen, parentId: p1, entityId: null, tab: p2 };
+    // #/screen/<parentId>/<childId>/<tab?>
+    return { screen, parentId: p1, entityId: p2 || null, tab: p3 || null };
+  }
+  return { screen, parentId: null, entityId: parts[1] || null, tab: parts[2] || null };
+}
+
+function buildHash(r) {
+  const enc = encodeURIComponent;
+  const seg = [r.screen];
+  if (TWO_LEVEL.has(r.screen)) {
+    if (r.parentId) seg.push(enc(r.parentId));
+    if (r.entityId) seg.push(enc(r.entityId));
+    if (r.tab) seg.push(r.tab);
+  } else {
+    if (r.entityId) seg.push(enc(r.entityId));
+    if (r.tab) seg.push(r.tab);
+  }
+  return "#/" + seg.join("/");
+}
+
+/* Empty-state shown when a deep link points at a missing entity */
+function NotFound({ message = "This item could not be found.", onBack }) {
+  return (
+    <div style={{ padding: "48px 24px", textAlign: "center", border: `1px dashed ${T.border}`, borderRadius: 14, background: T.bg }}>
+      <div style={{ fontSize: 32, marginBottom: 10 }}>🔍</div>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>Not found</div>
+      <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>{message}</div>
+      {onBack && (
+        <button onClick={onBack} style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: T.selected, color: T.selectedText, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600 }}>← Back</button>
+      )}
+    </div>
+  );
+}
+
+/* Shared full-page detail shell — header (icon/title/badges/stats) + pill tabs + content.
+   Header markup mirrors the legacy drawer header so visual parity is preserved. */
+function DetailPage({ icon, iconBg, title, subtitle, badges, stats, tabs, activeTab, onTab, onBack, headerActions, children }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+      {onBack && (
+        // Step back through history (walks back through tabs, then to the list).
+        // Falls back to onBack (go to list) when there's no in-app history to pop.
+        <button onClick={() => { if (window.history.length > 1) window.history.back(); else onBack(); }} style={{ alignSelf: "flex-start", background: "transparent", border: "none", color: T.muted, cursor: "pointer", fontSize: 12, fontFamily: "inherit", padding: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>← Back</button>
+      )}
+      <div style={{ padding: "18px 22px 14px", border: `1px solid ${T.border}`, borderRadius: 14, background: T.sidebar, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: stats ? 14 : 4, gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+            {icon != null && <div style={{ width: 32, height: 32, borderRadius: 8, background: iconBg || T.selected, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }}>{icon}</div>}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 14, fontWeight: 800 }}>{title}</div>{badges}
+              </div>
+              {subtitle && <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>{subtitle}</div>}
+            </div>
+          </div>
+          {headerActions}
+        </div>
+        {stats && (
+          <div className="wo-detail-stats" style={{ display: "grid", gridTemplateColumns: `repeat(${stats.length},1fr)`, gap: 12, marginBottom: 14 }}>
+            {stats.map(s => (
+              <div key={s.l} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9, padding: "10px 12px" }}>
+                <div style={{ fontSize: 11, color: T.muted, fontWeight: 500 }}>{s.l}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, marginTop: 3, color: s.c || T.text }}>{s.v}</div>
+                {s.sub && <div style={{ fontSize: 10, color: s.subC || s.c, marginTop: 1, fontWeight: 600 }}>{s.sub}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => onTab(t.id)}
+              style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: activeTab === t.id ? T.selected : T.inputBg, color: activeTab === t.id ? T.selectedText : T.muted, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: activeTab === t.id ? 700 : 400 }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Content shares the header's horizontal inset so stat cards and content align on both edges */}
+      <div style={{ padding: "0 22px" }}>{children}</div>
     </div>
   );
 }
@@ -782,9 +1010,6 @@ const CASH_ACCOUNTS_INIT = [
   { id: 1, name: "POSB Everyday", type: "Checking", currency: "SGD", balance: 8300.00, flag: "🇸🇬", color: "#DC2626" },
   { id: 2, name: "DBS Endowment", type: "Savings", currency: "SGD", balance: 1200.00, flag: "🇸🇬", color: "#DC2626" },
   { id: 3, name: "Tiger Brokers", type: "Brokerage Cash", currency: "USD", balance: 4250.80, flag: "🇺🇸", color: "#3B82F6" },
-  { id: 4, name: "IBKR Cash", type: "Brokerage Cash", currency: "USD", balance: 1820.50, flag: "🇺🇸", color: "#3B82F6" },
-  { id: 5, name: "Revolut", type: "Multi-currency", currency: "GBP", balance: 620.00, flag: "🇬🇧", color: "#6366F1" },
-  { id: 6, name: "Wise", type: "Multi-currency", currency: "EUR", balance: 340.00, flag: "🇪🇺", color: "#0EA5E9" },
 ];
 const FX = { SGD: 1, USD: 1.345, GBP: 1.705, EUR: 1.455, HKD: 0.172, AUD: 0.875, MYR: 0.30, NZD: 0.81, JPY: 0.0089, AED: 0.366, CAD: 0.985,
   // Major stablecoins — pegged to USD for FX conversion
@@ -799,25 +1024,46 @@ const acctBalances = (a) => (a && a.balances && a.balances.length) ? a.balances 
 // Total cash balance for an account, converted to SGD
 const acctCashSGD = (a) => acctBalances(a).reduce((s, b) => s + toSGD(b.amount || 0, b.ccy), 0);
 
+// Whether a crypto wallet / exchange can hold & transfer fiat.
+// Explicit per-account flag wins; otherwise inferred from wallet kind
+// (exchanges & hot wallets accept fiat; hardware wallets & DeFi protocols do not).
+const walletFiatCapable = (w) => {
+  if (!w) return false;
+  if (typeof w.fiatCapable === "boolean") return w.fiatCapable;
+  const k = (w.walletKind || "").toLowerCase();
+  return k.includes("exchange") || k.includes("cex") || k.includes("hot");
+};
+
 /* ═══════════════════════════════════════════════════════════════
    STOCKS — Account-first drill-down (item 13 redesign)
    ═══════════════════════════════════════════════════════════════ */
-function StocksScreen({ holdings, setHoldings, transactions, setTransactions, manualDivs, setManualDivs, accounts, setAccounts, showToast, auditLog, logAudit }) {
+function StocksScreen({ holdings, setHoldings, transactions, setTransactions, manualDivs, setManualDivs, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
   const isMobile = useIsMobile();
-  const [selectedAccount, setSelectedAccount] = useState(null);
-  const [drawerTab, setDrawerTab] = useState("holdings");
-  const [selectedHolding, setSelectedHolding] = useState(null);
-  const [holdingTab, setHoldingTab] = useState("overview");
   const [holdingDefaultTxType, setHoldingDefaultTxType] = useState(null);
+  const [recordTx, setRecordTx] = useState(null); // null=closed, else default txType ("Buy"/"Sell"/"Dividend") for the record-transaction modal
   const [showHoldingModal, setShowHoldingModal] = useState(false);
   const [buyModalAccount, setBuyModalAccount] = useState(null);
   const [editHolding, setEditHolding] = useState(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
+  const [editStockTx, setEditStockTx] = useState(null);
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
   const [filterCurrency, setFilterCurrency] = useState("All");
   const [searchQ, setSearchQ] = useState("");
   const stkSort = useSortState();
 
   const brokerAccounts = accounts.filter(a => a.accountType === "Brokerage");
+
+  // Two-level routing: parentId = brokerage account, entityId = holding
+  const detailAcctId = route.parentId;
+  const detailHoldingId = route.entityId;
+  const detailHolding = detailHoldingId ? holdings.find(h => String(h.id) === String(detailHoldingId)) : null;
+  const drawerTab = route.tab || "holdings";   // account-view tab
+  const holdingTab = route.tab || "overview";  // holding-view tab
+  const setDrawerTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const setHoldingTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goStocksList = () => navigate({ screen: "stocks" });
+  const goAccount = () => navigate({ screen: "stocks", parentId: detailAcctId || (detailHolding && detailHolding.accountId) });
   const cashAccounts = accounts.filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
 
   // Aggregate stats per brokerage account
@@ -884,11 +1130,12 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
     setHoldings(prev => prev.filter(x => x.id !== h.id));
     if (logAudit) logAudit("stock", h.id, "delete", h, null, `${h.sym} · ${h.broker}`);
     showToast(`${h.sym} removed`, "error");
-    setSelectedHolding(null);
+    goAccount();
   };
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {!detailAcctId && (<>
 
       {/* ── Page header ── */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -994,7 +1241,7 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
         <Card style={{padding:0,overflow:"hidden"}}>
           {filteredStats.map(s => {
             const bc = BROKER_COLORS[s.account.bank] || { from:"#374151", to:"#1F2937" };
-            return <MobileListItem key={s.account.id} onClick={()=>{setDrawerTab("holdings");setSelectedAccount(s.account);}}
+            return <MobileListItem key={s.account.id} onClick={()=>navigate({screen:"stocks",parentId:s.account.id})}
               icon="📈" iconBg={`linear-gradient(135deg,${bc.from},${bc.to})`}
               title={s.account.bank} subtitle={`${s.account.accountName} · ${s.account.accountNumber || `••${s.account.last4||""}`}`}
               value={fmtCompact(s.value)} valueColor={T.text}
@@ -1006,7 +1253,7 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
         </Card>
       ) : (
         <Card style={{padding:0,overflow:"hidden"}}>
-          <SortHeader gridCols="2.2fr 0.8fr 0.9fr 1fr 1.1fr 1fr 0.9fr" sortKey={stkSort.sortKey} sortDir={stkSort.sortDir} onSort={stkSort.onSort}
+          <SortHeader gridCols={capCols("2.2fr 0.8fr 0.9fr 1fr 1.1fr 1fr 0.9fr")} sortKey={stkSort.sortKey} sortDir={stkSort.sortDir} onSort={stkSort.onSort}
             columns={[["Broker / Account","left","bank"],["Currency","left","currency"],["Positions","right","count"],["Cash Balance","right","cash"],["Holdings Value (SGD)","right","value"],["P&L","right","pnl"],["Return","right","pnlPct"]]}/>
           {stkSort.sortFn(filteredStats, (s, k) => {
             if (k==="bank") return (s.account.bank||"").toLowerCase();
@@ -1022,8 +1269,8 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
             const bals = acctBalances(s.account);
             const cashSGD = acctCashSGD(s.account);
             return (
-              <div key={s.account.id} onClick={()=>{setDrawerTab("holdings");setSelectedAccount(s.account);}}
-                style={{display:"grid",gridTemplateColumns:"2.2fr 0.8fr 0.9fr 1fr 1.1fr 1fr 0.9fr",padding:"13px 20px",borderBottom:i<filteredStats.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer"}}
+              <div key={s.account.id} onClick={()=>navigate({screen:"stocks",parentId:s.account.id})}
+                style={{display:"grid",gridTemplateColumns:capCols("2.2fr 0.8fr 0.9fr 1fr 1.1fr 1fr 0.9fr"),columnGap:24,padding:"13px 20px",borderBottom:i<filteredStats.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer"}}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                 onMouseLeave={e=>e.currentTarget.style.background=""}>
                 {/* Broker / Account */}
@@ -1055,9 +1302,12 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
         </Card>
       )}
 
-      {/* ── Brokerage account detail drawer (shows holdings inside) ── */}
-      {selectedAccount && (() => {
-        const acct = brokerAccounts.find(a => a.id === selectedAccount.id) || selectedAccount;
+      </>)}
+
+      {/* ── Brokerage account detail — full page (shows holdings inside) ── */}
+      {detailAcctId && !detailHoldingId && !brokerAccounts.find(a => String(a.id) === String(detailAcctId)) && <NotFound message="This account could not be found." onBack={goStocksList}/>}
+      {detailAcctId && !detailHoldingId && brokerAccounts.find(a => String(a.id) === String(detailAcctId)) && (() => {
+        const acct = brokerAccounts.find(a => String(a.id) === String(detailAcctId));
         const acctHoldings = holdings.filter(h => h.accountId === acct.id);
         const acctTxns = transactions.filter(t => t.accountId === acct.id);
         const acctDivs = (manualDivs || []).filter(d => d.accountId === acct.id);
@@ -1096,86 +1346,33 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
           }
         };
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e => { if (e.target === e.currentTarget) setSelectedAccount(null); }}>
-            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
-              {/* Header — matches Credit Cards drawer style */}
-              <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-                    <div style={{width:32,height:32,borderRadius:8,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>📈</div>
-                    <div style={{minWidth:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <div style={{fontSize:14,fontWeight:800}}>{acct.bank}</div>
-                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.accentBg,color:T.accent}}>Brokerage</span>
-                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{acct.currency}</span>
-                      </div>
-                      <div style={{fontSize:11,color:T.muted,marginTop:3}}>{acct.accountName} · {acct.accountNumber || `••${acct.last4||""}`}</div>
-                    </div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
-                    <button onClick={()=>setBuyModalAccount(acct)}
-                      style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:7,height:28,padding:"0 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",lineHeight:1}}>
-                      + Add Holding
-                    </button>
-                    <button onClick={()=>setSelectedAccount(null)} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:14,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
-                  </div>
-                </div>
-                {/* Stats — compact 4-col row */}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:14}}>
-                  {(() => {
-                    const bals = acctBalances(acct);
-                    const cashSGD = acctCashSGD(acct);
-                    return [
-                      { l:"Holdings Value", v:fmtCompact(value), c:T.text },
-                      { l:"Cost Basis", v:fmtCompact(cost), c:T.muted },
-                      { l:"Unrealised P&L", v:(pnl>=0?"+":"")+fmtCompact(pnl), c:pnl>=0?T.up:T.down, sub:`${pnl>=0?"+":""}${pnlPct.toFixed(1)}%` },
-                      { l:"Cash Balance", v:fmtCompact(cashSGD), c:T.text, sub:`${bals.length} currenc${bals.length===1?"y":"ies"}` },
-                    ];
-                  })().map(s=>(
-                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
-                      <div style={{fontSize:11,color:T.muted,fontWeight:500}}>{s.l}</div>
-                      <div style={{fontSize:14,fontWeight:700,marginTop:3,color:s.c}}>{s.v}</div>
-                      {s.sub && <div style={{fontSize:10,color:s.c,marginTop:1}}>{s.sub}</div>}
-                    </div>
-                  ))}
-                </div>
-                {/* Cash Balances by Currency — chips */}
-                {(() => {
-                  const bals = acctBalances(acct);
-                  if (bals.length === 0) return null;
-                  return (
-                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:14}}>
-                      <span style={{fontSize:11,color:T.muted,fontWeight:500}}>Cash by Currency:</span>
-                      {bals.map(b => (
-                        <span key={b.ccy} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11}}>
-                          <strong style={{color:T.muted,fontWeight:600}}>{b.ccy}</strong>
-                          <span style={{fontWeight:700}}>{(b.amount||0).toLocaleString(undefined,{maximumFractionDigits:2})}</span>
-                          <span style={{color:T.dim}}>· {fmtCompact(toSGD(b.amount||0, b.ccy))}</span>
-                        </span>
-                      ))}
-                    </div>
-                  );
-                })()}
-                {/* Pill tabs — like CC drawer */}
-                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                  {[
-                    { id:"holdings",     label:`Holdings (${acctHoldings.length})` },
-                    { id:"history",      label:`Transactions${acctTxns.length>0?` (${acctTxns.length})`:""}` },
-                    { id:"postings",     label:"Postings" },
-                  ].map(t => (
-                    <button key={t.id} onClick={()=>setDrawerTab(t.id)}
-                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===t.id?T.selected:T.inputBg,
-                        color:drawerTab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===t.id?700:400}}>
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Tab content — single scrollable area */}
-              <div style={{flex:1,overflowY:"auto",minHeight:0}}>
-                <div style={{padding:"18px 22px 32px"}}>
+          <DetailPage
+            icon="📈" iconBg={`linear-gradient(135deg,${bc.from},${bc.to})`}
+            title={acct.bank}
+            subtitle={`${acct.accountName} · ${acct.accountNumber || `••${acct.last4||""}`}`}
+            badges={<>
+              <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.accentBg,color:T.accent}}>Brokerage</span>
+              <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{acct.currency}</span>
+            </>}
+            headerActions={<button onClick={()=>setBuyModalAccount(acct)} style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:7,height:28,padding:"0 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",lineHeight:1}}>+ Add Holding</button>}
+            stats={(() => {
+              const bals = acctBalances(acct);
+              const cashSGD = acctCashSGD(acct);
+              return [
+                { l:"Holdings Value", v:fmtCompact(value), c:T.text },
+                { l:"Cost Basis", v:fmtCompact(cost), c:T.muted },
+                { l:"Unrealised P&L", v:(pnl>=0?"+":"")+fmtCompact(pnl), c:pnl>=0?T.up:T.down, sub:`${pnl>=0?"+":""}${pnlPct.toFixed(1)}%`, subC:pnl>=0?T.up:T.down },
+                { l:"Cash Balance", v:fmtCompact(cashSGD), c:T.text, sub:`${bals.length} currenc${bals.length===1?"y":"ies"}` },
+              ];
+            })()}
+            tabs={[
+              { id:"holdings", label:`Holdings (${acctHoldings.length})` },
+              { id:"history",  label:`Transactions${acctTxns.length>0?` (${acctTxns.length})`:""}` },
+              { id:"postings", label:"Postings" },
+            ]}
+            activeTab={drawerTab} onTab={setDrawerTab} onBack={goStocksList}>
+              <div>
+                <div>
                   {drawerTab === "holdings" && (
                     acctHoldings.length === 0 ? (
                       <div style={{padding:"28px",textAlign:"center",color:T.muted,fontSize:13,border:`1px dashed ${T.border}`,borderRadius:10}}>
@@ -1197,7 +1394,7 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
                           const p = v - c;
                           const pp = c > 0 ? (p/c*100) : 0;
                           return (
-                            <div key={h.id} onClick={()=>{setHoldingTab("overview");setHoldingDefaultTxType(null);setSelectedHolding(h);}}
+                            <div key={h.id} onClick={()=>{setHoldingDefaultTxType(null);navigate({screen:"stocks",parentId:acct.id,entityId:h.id});}}
                               style={{display:"grid",gridTemplateColumns:"2fr 0.7fr 1fr 1fr 1fr 1fr",padding:"11px 14px",borderBottom:i<acctHoldings.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center",cursor:"pointer"}}
                               onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                               onMouseLeave={e=>e.currentTarget.style.background=""}>
@@ -1236,14 +1433,14 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
                   )}
                 </div>
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
-      {/* ── Individual holding detail drawer (nested over account drawer) ── */}
-      {selectedHolding && (() => {
-        const h = holdings.find(x => x.id === selectedHolding.id) || selectedHolding;
+      {/* ── Individual holding detail — full page ── */}
+      {detailHoldingId && !detailHolding && <NotFound message="This holding could not be found." onBack={goAccount}/>}
+      {detailHolding && (() => {
+        const h = detailHolding;
         const value = (h.marketPrice||h.price) * h.qty;
         const cost = h.cost * h.qty;
         const pnl = value - cost;
@@ -1253,71 +1450,35 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
         const symDivs = symTxns.filter(t => t.txType === "Dividend");
         const dividendsReceived = symDivs.reduce((s,t) => s + toSGD(parseFloat(t.qty||0)*parseFloat(t.price||0), t.currency||"SGD"), 0);
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:210,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e => { if (e.target === e.currentTarget) setSelectedHolding(null); }}>
-            <div style={{width:"min(720px, 92vw)",height:"100vh",background:T.bg,boxShadow:"-4px 0 32px rgba(0,0,0,0.25)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
-              {/* Header — matches CC drawer style */}
-              <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-                    <div style={{width:32,height:32,borderRadius:8,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}}>{h.sym.slice(0,2)}</div>
-                    <div style={{minWidth:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                        <div style={{fontSize:14,fontWeight:800}}>{h.sym}</div>
-                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{h.sector||"Stock"}</span>
-                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{h.tradeCcy}</span>
-                      </div>
-                      <div style={{fontSize:11,color:T.muted,marginTop:3}}>{h.name} · {h.broker} · {h.exchange||"—"}</div>
-                    </div>
-                  </div>
-                  <button onClick={()=>setSelectedHolding(null)} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:14,color:T.muted,flexShrink:0,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
-                </div>
-                {/* Stats — compact 4-col row */}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:14}}>
-                  {[
-                    { l:"Quantity", v:String(h.qty), c:T.text },
-                    { l:"Avg Cost", v:`${h.tradeCcy} ${h.cost.toFixed(2)}`, c:T.muted },
-                    { l:"Mkt Price", v:`${h.tradeCcy} ${(h.marketPrice||h.price).toFixed(2)}`, c:T.text },
-                    { l:"Mkt Value (SGD)", v:fmtCompact(toSGD(value, h.tradeCcy)), c:T.text, sub:`${pnl>=0?"+":""}${pnlPct.toFixed(1)}%`, subC:pnl>=0?T.up:T.down },
-                  ].map(s=>(
-                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
-                      <div style={{fontSize:11,color:T.muted,fontWeight:500}}>{s.l}</div>
-                      <div style={{fontSize:14,fontWeight:700,marginTop:3,color:s.c}}>{s.v}</div>
-                      {s.sub && <div style={{fontSize:10,color:s.subC,marginTop:1,fontWeight:600}}>{s.sub}</div>}
-                    </div>
-                  ))}
-                </div>
-                {/* Pill tabs */}
-                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                  {[
-                    { id:"overview",     label:"Overview" },
-                    { id:"transactions", label:`Transactions${symTxns.length>0?` (${symTxns.length})`:""}` },
-                    { id:"chart",        label:"Chart" },
-                    { id:"dividends",    label:`Dividends${symDivs.length>0?` (${symDivs.length})`:""}` },
-                    { id:"history",      label:"History" },
-                    { id:"manage",       label:"Manage" },
-                  ].map(t => (
-                    <button key={t.id} onClick={()=>{setHoldingTab(t.id);if(t.id!=="manage")setHoldingDefaultTxType(null);}}
-                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:holdingTab===t.id?T.selected:T.inputBg,
-                        color:holdingTab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:holdingTab===t.id?700:400}}>
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Tab content — single scrollable */}
-              <div style={{flex:1,overflowY:"auto",minHeight:0}}>
-                <div style={{padding:"18px 22px 32px"}}>
+          <DetailPage
+            icon={h.sym.slice(0,2)} iconBg={`linear-gradient(135deg,${bc.from},${bc.to})`}
+            title={h.sym}
+            subtitle={`${h.name} · ${h.broker} · ${h.exchange||"—"}`}
+            badges={<>
+              <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{h.sector||"Stock"}</span>
+              <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{h.tradeCcy}</span>
+            </>}
+            stats={[
+              { l:"Quantity", v:String(h.qty), c:T.text },
+              { l:"Avg Cost", v:`${h.tradeCcy} ${h.cost.toFixed(2)}`, c:T.muted },
+              { l:"Mkt Price", v:`${h.tradeCcy} ${(h.marketPrice||h.price).toFixed(2)}`, c:T.text },
+              { l:"Mkt Value (SGD)", v:fmtCompact(toSGD(value, h.tradeCcy)), c:T.text },
+              { l:"Unrealised P&L", v:`${pnl>=0?"+":""}${fmtCompact(toSGD(pnl, h.tradeCcy))}`, c:pnl>=0?T.up:T.down, sub:`${pnl>=0?"+":""}${pnlPct.toFixed(1)}%`, subC:pnl>=0?T.up:T.down },
+            ]}
+            tabs={[
+              { id:"overview",     label:"Overview" },
+              { id:"chart",        label:"Chart" },
+              { id:"transactions", label:`Transactions${symTxns.length>0?` (${symTxns.length})`:""}` },
+              { id:"dividends",    label:`Dividends${symDivs.length>0?` (${symDivs.length})`:""}` },
+              { id:"audit",      label:"Audit" },
+              { id:"manage",       label:"Manage" },
+            ]}
+            activeTab={holdingTab} onTab={(id)=>{setHoldingTab(id);if(id!=="manage")setHoldingDefaultTxType(null);}} onBack={goAccount}>
+              <div>
+                <div>
                   {/* OVERVIEW — transactions list + P&L */}
                   {holdingTab === "overview" && (
                     <>
-                      <div style={{padding:"12px 16px",background:pnl>=0?T.upBg:T.downBg,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-                        <span style={{fontSize:12,color:T.muted,fontWeight:600}}>Unrealised P&L</span>
-                        <span style={{fontSize:18,fontWeight:700,color:pnl>=0?T.up:T.down}}>
-                          {pnl>=0?"+":""}{fmtCompact(toSGD(pnl, h.tradeCcy))} ({pnl>=0?"+":""}{pnlPct.toFixed(1)}%)
-                        </span>
-                      </div>
                       <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",marginBottom:16}}>
                         <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📋 Holding Details</div>
                         {[
@@ -1354,38 +1515,60 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
                     </>
                   )}
 
-                  {holdingTab === "transactions" && (
+                  {holdingTab === "transactions" && (()=>{
+                    const _q = txSearch.trim().toLowerCase();
+                    const visibleTxs = symTxns.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).filter(t =>
+                      (txFilter==="All" || t.txType===txFilter) &&
+                      (!_q || (t.txType||"").toLowerCase().includes(_q) || (t.date||"").includes(_q) || String(t.qty||"").includes(_q) || (t.notes||"").toLowerCase().includes(_q))
+                    );
+                    return (
                     <>
-                      <div style={{fontSize:14,fontWeight:600,marginBottom:12}}>Transactions ({symTxns.length})</div>
-                      {symTxns.length === 0 ? (
+                      <div style={{marginBottom:12}}>
+                        <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                          filters={["All",...Array.from(new Set(symTxns.map(t=>t.txType)))]}
+                          action={<button onClick={()=>setRecordTx("Buy")} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Record Transaction</button>}/>
+                      </div>
+                      {visibleTxs.length === 0 ? (
                         <div style={{padding:"28px",textAlign:"center",color:T.muted,fontSize:13,border:`1px dashed ${T.border}`,borderRadius:10}}>
-                          No transactions recorded for this position
+                          {symTxns.length===0?"No transactions recorded for this position":"No matching transactions"}
                         </div>
                       ) : (
                         <Card style={{padding:0,overflow:"hidden"}}>
-                          <div style={{display:"grid",gridTemplateColumns:"1fr 0.8fr 0.8fr 0.8fr 0.8fr",padding:"9px 14px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:500}}>
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 0.8fr 0.8fr 0.8fr 0.8fr 72px",padding:"9px 14px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:500}}>
                             <div>Date</div><div>Type</div>
                             <div style={{textAlign:"right"}}>Qty</div>
                             <div style={{textAlign:"right"}}>Price</div>
                             <div style={{textAlign:"right"}}>Total</div>
+                            <div></div>
                           </div>
-                          {symTxns.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map((t,i) => {
+                          {visibleTxs.map((t,i) => {
                             const total = (parseFloat(t.qty||0))*(parseFloat(t.price||0)) + parseFloat(t.fees||0);
                             const tColor = t.txType==="Buy"?T.up:t.txType==="Sell"?T.down:t.txType==="Dividend"?T.accent:T.muted;
                             return (
-                              <div key={t.id||i} style={{display:"grid",gridTemplateColumns:"1fr 0.8fr 0.8fr 0.8fr 0.8fr",padding:"10px 14px",borderBottom:i<symTxns.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center"}}>
+                              <div key={t.id||i} style={{display:"grid",gridTemplateColumns:"1fr 0.8fr 0.8fr 0.8fr 0.8fr 72px",padding:"10px 14px",borderBottom:i<visibleTxs.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center"}}>
                                 <div>{t.date}</div>
                                 <div><Badge bg={`${tColor}15`} color={tColor}>{t.txType}</Badge></div>
                                 <div style={{textAlign:"right"}}>{t.qty}</div>
                                 <div style={{textAlign:"right",color:T.muted}}>{t.currency||"SGD"} {t.price}</div>
                                 <div style={{textAlign:"right",fontWeight:600}}>{t.currency||"SGD"} {total.toFixed(2)}</div>
+                                <div style={{display:"flex",justifyContent:"flex-end"}}>
+                                  <TxRowActions
+                                    onEdit={()=>setEditStockTx(t)}
+                                    onDelete={()=>{
+                                      if(!window.confirm(`Delete this ${t.txType} transaction?`)) return;
+                                      setTransactions(prev=>prev.filter(x=>(x.id||"")!==(t.id||"")));
+                                      if(logAudit) logAudit("stock", h.sym, "delete-transaction", t, null, `${t.txType} · ${t.qty||""} ${h.sym}`);
+                                      showToast("Transaction deleted","success");
+                                    }}/>
+                                </div>
                               </div>
                             );
                           })}
                         </Card>
                       )}
                     </>
-                  )}
+                    );
+                  })()}
 
                   {/* CHART — single stock, compact (no scroll) */}
                   {holdingTab === "chart" && (
@@ -1411,7 +1594,7 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
                       {/* Header row with + Add Dividend button */}
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
                         <div style={{fontSize:14,fontWeight:600}}>Dividend Overview</div>
-                        <button onClick={()=>{setHoldingDefaultTxType("Dividend");setHoldingTab("manage");}}
+                        <button onClick={()=>setRecordTx("Dividend")}
                           style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:7,padding:"7px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                           + Add Dividend
                         </button>
@@ -1499,26 +1682,45 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
                     );
                   })()}
 
-                  {/* MANAGE — Buy/Sell/Dividend/Transfer In/Transfer Out + Delete */}
+                  {/* MANAGE — Transfer In/Transfer Out / Update Price + Delete (Buy/Sell/Dividend live in the Transactions tab) */}
                   {holdingTab === "manage" && (
-                    <StockActionPanel key={holdingDefaultTxType||"Buy"} holding={h} setHoldings={setHoldings} setTransactions={setTransactions}
+                    <StockActionPanel key="manage-actions" holding={h} setHoldings={setHoldings} setTransactions={setTransactions} setAccounts={setAccounts}
                       showToast={showToast} logAudit={logAudit} auditLog={auditLog}
-                      defaultTxType={holdingDefaultTxType}
+                      types={["Transfer In","Transfer Out","Update Price"]}
                       onDelete={()=>handleDeleteHolding(h)}/>
                   )}
 
                   {/* HISTORY — audit log */}
-                  {holdingTab === "history" && (
+                  {holdingTab === "audit" && (
                     <AuditLogPanel auditLog={auditLog} entityType="stock" entityId={h.id}/>
                   )}
                 </div>
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
       {/* ── Modals ── */}
+      {recordTx && detailHolding && (
+        <div onClick={e=>{ if(e.target===e.currentTarget) setRecordTx(null); }}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:400,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"40px 20px",overflowY:"auto"}}>
+          <div style={{background:T.bg,borderRadius:14,width:"min(620px,100%)",border:`1px solid ${T.border}`,boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}}>
+            <div style={{padding:"18px 22px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",background:T.sidebar,borderRadius:"14px 14px 0 0"}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700}}>Record Transaction</div>
+                <div style={{fontSize:12,color:T.muted,marginTop:2}}>{detailHolding.sym} · {detailHolding.name}</div>
+              </div>
+              <button onClick={()=>setRecordTx(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 12px",fontSize:13,cursor:"pointer",color:T.muted}}>×</button>
+            </div>
+            <div style={{padding:"18px 22px"}}>
+              <StockActionPanel key={recordTx} holding={detailHolding} setHoldings={setHoldings} setTransactions={setTransactions} setAccounts={setAccounts}
+                showToast={showToast} logAudit={logAudit} auditLog={auditLog}
+                types={["Buy","Sell","Dividend"]} defaultTxType={recordTx} showDanger={false}
+                onRecorded={()=>setRecordTx(null)}/>
+            </div>
+          </div>
+        </div>
+      )}
       {showHoldingModal && brokerAccounts.length > 0 && (
         <AccountPickerModal accounts={brokerAccounts}
           onPick={(a) => { setShowHoldingModal(false); setBuyModalAccount(a); }}
@@ -1541,6 +1743,16 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
           onClose={()=>setShowTransferModal(false)}
           onComplete={()=>{ setShowTransferModal(false); showToast("Transfer recorded","success"); }}
           logAudit={logAudit}/>
+      )}
+      {editStockTx && (
+        <StockTxEditModal tx={editStockTx}
+          onClose={()=>setEditStockTx(null)}
+          onSave={(upd)=>{
+            setTransactions(prev=>prev.map(x=>(x.id||"")===(editStockTx.id||"")?{...x,...upd}:x));
+            if(logAudit) logAudit("stock", editStockTx.sym, "edit-transaction", editStockTx, upd, `${upd.txType} · ${upd.qty||""} ${editStockTx.sym}`);
+            setEditStockTx(null);
+            showToast("Transaction updated","success");
+          }}/>
       )}
     </div>
   );
@@ -1608,11 +1820,126 @@ function CompactStockChart({ holding }) {
   );
 }
 
-function StockActionPanel({ holding, setHoldings, setTransactions, showToast, logAudit, auditLog, onDelete, defaultTxType }) {
-  const TYPES = ["Buy","Sell","Dividend","Transfer In","Transfer Out","Update Price"];
+// Crypto coin price chart — mirrors CompactStockChart (item #3: coins same as stock details).
+// Uses a price series scaled to the coin's current price (the stock chart's domain is fixed).
+function CompactCryptoChart({ crypto }) {
+  const [tf, setTf] = useState("1D");
+  const c = crypto;
+  const price = c.currentPrice || 0;
+  const data = Array.from({ length: 24 }, (_, i) => {
+    const wobble = Math.sin(i / 3) * 0.018 + (i / 24) * 0.025;
+    return { t: `${String(i).padStart(2, "0")}:00`, c: +(price * (0.97 + wobble)).toFixed(2) };
+  });
+  const lo = Math.min(...data.map(d => d.c)), hi = Math.max(...data.map(d => d.c));
+  const cost = c.avgCostPrice || 0;
+  const chg = cost > 0 ? ((price - cost) / cost * 100) : 0;
+  const f = (v) => `S$${(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  const stats = [
+    { l: "Current Price", v: f(price) },
+    { l: "Avg Cost", v: f(cost) },
+    { l: "24h High", v: f(hi) },
+    { l: "24h Low", v: f(lo) },
+    { l: "Holdings", v: `${(c.quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${c.symbol}` },
+    { l: "Chain", v: c.chain || "—" },
+    { l: "Holding Type", v: c.holdingType || "—" },
+    { l: "Unrealised P&L", v: `${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%` },
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <Card style={{ padding: "14px 16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 4 }}>
+            {["1D", "5D", "1M", "3M", "1Y", "MAX"].map(t => (
+              <button key={t} onClick={() => setTf(t)}
+                style={{ background: tf === t ? T.selected : "transparent", color: tf === t ? T.selectedText : T.muted, border: `1px solid ${tf === t ? T.selected : T.border}`, borderRadius: 5, padding: "3px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: tf === t ? 600 : 400 }}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1 }}>{f(price)}</div>
+            <div style={{ fontSize: 11, color: chg >= 0 ? T.up : T.down, marginTop: 2, fontWeight: 600 }}>
+              {chg >= 0 ? "+" : ""}{chg.toFixed(2)}% vs cost
+            </div>
+          </div>
+        </div>
+        <ResponsiveContainer width="100%" height={140}>
+          <AreaChart data={data}>
+            <defs>
+              <linearGradient id={`cgx-${c.symbol}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={T.accent} stopOpacity={0.18} />
+                <stop offset="100%" stopColor={T.accent} stopOpacity={0.01} />
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="t" tick={{ fontSize: 10, fill: T.dim }} axisLine={false} tickLine={false} interval={3} />
+            <YAxis domain={[lo * 0.998, hi * 1.002]} tick={{ fontSize: 10, fill: T.dim }} axisLine={false} tickLine={false} width={52} tickFormatter={(v) => (v >= 1000 ? (v / 1000).toFixed(0) + "k" : v.toFixed(2))} />
+            <Tooltip contentStyle={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 8, fontSize: 11 }} formatter={(v) => f(v)} />
+            <Area type="monotone" dataKey="c" stroke={T.accent} strokeWidth={2} fill={`url(#cgx-${c.symbol})`} dot={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </Card>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
+        {stats.map(s => (
+          <div key={s.l} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 9, padding: "9px 11px" }}>
+            <div style={{ fontSize: 10, color: T.muted, fontWeight: 500 }}>{s.l}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, marginTop: 3 }}>{s.v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Stock Transaction Edit Modal ──────────────────────────────
+// Stock trades live in the flat global `transactions` array (no per-holding
+// nesting), so editing reuses this lightweight form instead of the action panel.
+function StockTxEditModal({ tx, onSave, onClose }) {
+  const [f, setF] = useState({ ...tx });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const total = (parseFloat(f.qty||0))*(parseFloat(f.price||0)) + parseFloat(f.fees||0);
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:460,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:16,fontWeight:800}}>Edit Transaction</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{f.sym} · {f.currency||"SGD"}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
+          <div><Label required>Type</Label><Sel value={f.txType} onChange={e=>set("txType",e.target.value)} options={["Buy","Sell","Dividend","Transfer In","Transfer Out"]}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Quantity</Label><Input type="number" value={f.qty} onChange={e=>set("qty",+e.target.value)}/></div>
+          <div><Label>Price</Label><Input type="number" prefix={f.currency||"SGD"} value={f.price} onChange={e=>set("price",+e.target.value)}/></div>
+          <div><Label>Fees</Label><Input type="number" prefix={f.currency||"SGD"} value={f.fees||0} onChange={e=>set("fees",+e.target.value)}/></div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2}
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{background:T.inputBg,borderRadius:8,padding:"10px 14px",marginBottom:16,display:"flex",justifyContent:"space-between",fontSize:13}}>
+          <span style={{color:T.muted}}>Total (incl. fees)</span>
+          <span style={{fontWeight:700}}>{f.currency||"SGD"} {total.toFixed(2)}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.date}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date)?0.4:1}}>
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StockActionPanel({ holding, setHoldings, setTransactions, setAccounts, showToast, logAudit, auditLog, onDelete, defaultTxType, types, showDanger = true, onRecorded }) {
+  const TYPES = types || ["Buy","Sell","Dividend","Transfer In","Transfer Out","Update Price"];
   const US_EX = ["NASDAQ","NYSE","AMEX"];
   const isUSStock = US_EX.includes(holding.exchange);
-  const [txType, setTxType] = useState(defaultTxType || "Buy");
+  const [txType, setTxType] = useState(defaultTxType || TYPES[0]);
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0,10),
     qty: defaultTxType === "Dividend" ? String(holding.qty) : "",
@@ -1620,6 +1947,7 @@ function StockActionPanel({ holding, setHoldings, setTransactions, showToast, lo
     fees:"", notes:"",
   });
   const [divWithhold, setDivWithhold] = useState(isUSStock);
+  const [recordOnly, setRecordOnly] = useState(false);
   const set = (k,v) => setForm(f => ({...f, [k]:v}));
   const isUpdatePrice = txType === "Update Price";
   const needsPrice = txType === "Buy" || txType === "Sell" || txType === "Dividend" || isUpdatePrice;
@@ -1652,6 +1980,7 @@ function StockActionPanel({ holding, setHoldings, setTransactions, showToast, lo
       currency: holding.tradeCcy || "SGD",
       broker: holding.broker, accountId: holding.accountId,
       notes: form.notes,
+      recordOnly,
     };
     setTransactions(prev => [...prev, tx]);
 
@@ -1669,9 +1998,32 @@ function StockActionPanel({ holding, setHoldings, setTransactions, showToast, lo
       setHoldings(prev => prev.map(x => x.id === holding.id ? { ...x, qty: newQty } : x));
     }
 
+    // Dividend credits the linked brokerage account's cash balance (net of withholding)
+    // — unless flagged record-only (e.g. scrip / DRIP dividend taken in shares, no cash).
+    if (txType === "Dividend" && !recordOnly && setAccounts && holding.accountId) {
+      const gross = qty * price;
+      const net = divWithhold ? gross * 0.70 : gross;
+      const ccy = holding.tradeCcy || "SGD";
+      setAccounts(prev => prev.map(a => {
+        if (a.id !== holding.accountId) return a;
+        const cur = acctBalances(a);
+        const has = cur.find(b => b.ccy === ccy);
+        const nextBals = has ? cur.map(b => b.ccy === ccy ? { ...b, amount: (b.amount||0) + net } : b)
+                             : [...cur, { ccy, amount: net }];
+        const nextLegacy = ccy === a.currency ? { balance: (a.balance||0) + net } : {};
+        return { ...a, balances: nextBals, ...nextLegacy };
+      }));
+      tx.creditedAccountId = holding.accountId;
+      tx.netCredited = net;
+    }
+
     if (logAudit) logAudit("stock", holding.id, "add-transaction", null, tx, `${txType} ${form.qty} ${holding.sym}`);
-    showToast(`${txType} recorded — ${form.qty} ${holding.sym}`, "success");
+    showToast(txType === "Dividend" && holding.accountId
+      ? `Dividend recorded — ${holding.tradeCcy} ${(divWithhold ? qty*price*0.70 : qty*price).toLocaleString(undefined,{maximumFractionDigits:2})} credited to account`
+      : `${txType} recorded — ${form.qty} ${holding.sym}`, "success");
     setForm({ date:new Date().toISOString().slice(0,10), qty: txType === "Dividend" ? String(holding.qty) : "", price: txType === "Dividend" ? "" : String(holding.marketPrice||holding.price||""), fees:"", notes:"" });
+    setRecordOnly(false);
+    if (onRecorded) onRecorded();
   };
 
   return (
@@ -1824,22 +2176,23 @@ function StockActionPanel({ holding, setHoldings, setTransactions, showToast, lo
           const totalLocal = txType === "Dividend"
             ? (parseFloat(form.qty)||0) * (parseFloat(form.price)||0) * (divWithhold ? 0.7 : 1)
             : (parseFloat(form.qty)||0) * (parseFloat(form.price)||0) + (parseFloat(form.fees)||0);
-          const flowOverride =
+          const flowOverride = recordOnly ? "info" :
             txType === "Buy" ? "out" :
             txType === "Sell" || txType === "Dividend" ? "in" :
             "info";
-          const label =
-            txType === "Buy" ? "📤 Capital deployed to stock"
+          const label = recordOnly ? "📝 Recorded — no cash flow"
+            : txType === "Buy" ? "📤 Capital deployed to stock"
             : txType === "Sell" ? "📥 Sale proceeds"
             : txType === "Dividend" ? `💰 Dividend income${divWithhold ? " (net of WHT)" : ""}`
             : txType === "Transfer In" ? "⬇ Inbound transfer (no cash flow)"
             : txType === "Transfer Out" ? "⬆ Outbound transfer (no cash flow)"
             : "💰 Transaction";
-          const showAmount = txType !== "Transfer In" && txType !== "Transfer Out";
+          const showAmount = !recordOnly && txType !== "Transfer In" && txType !== "Transfer Out";
           return (
             <div style={{marginTop:14}}>
               <FlowBanner type={txType} flowOverride={flowOverride} prefix={`${holding.tradeCcy} `}
                 amount={showAmount ? totalLocal : null} label={label} style={{marginBottom:0}}/>
+              <RecordOnlyToggle recordOnly={recordOnly} setRecordOnly={setRecordOnly}/>
             </div>
           );
         })()}
@@ -1847,7 +2200,7 @@ function StockActionPanel({ holding, setHoldings, setTransactions, showToast, lo
         <div style={{marginTop:16,display:"flex",justifyContent:"flex-end",gap:8}}>
           <button onClick={handleSubmit} disabled={!canSubmit}
             style={{background:canSubmit?T.selected:T.border,color:canSubmit?T.selectedText:T.dim,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:600,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit"}}>
-            {isUpdatePrice ? "Update Price" : `Record ${txType}`}
+            {isUpdatePrice ? "Update Price" : recordOnly ? "Record entry" : `Record ${txType}`}
           </button>
         </div>
       </Card>
@@ -1910,6 +2263,7 @@ function StockActionPanel({ holding, setHoldings, setTransactions, showToast, lo
       })()}
 
       {/* Danger zone */}
+      {showDanger && onDelete && (
       <Card style={{padding:"16px 18px",borderColor:`${T.down}30`}}>
         <div style={{fontSize:13,fontWeight:600,marginBottom:8,color:T.down}}>Danger Zone</div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
@@ -1920,6 +2274,7 @@ function StockActionPanel({ holding, setHoldings, setTransactions, showToast, lo
           </button>
         </div>
       </Card>
+      )}
     </div>
   );
 }
@@ -2053,7 +2408,7 @@ function StocksHoldingsPanel({ holdings, account }) {
 }
 
 // ── Fiat transfer between brokerage account ↔ cash account ──
-function StocksTransferModal({ brokerAccount, brokerOptions, brokerLabel, allowedCcys, cashAccounts, accounts, setAccounts, setTransactions, onClose, onComplete, logAudit }) {
+function StocksTransferModal({ brokerAccount, brokerOptions, brokerLabel, allowedCcys, cashAccounts, accounts, setAccounts, setTransactions, onClose, onComplete, logAudit, fiatGuard }) {
   const [direction, setDirection] = useState("in"); // in = cash→broker, out = broker→cash
   const [cashAcctId, setCashAcctId] = useState(cashAccounts[0]?.id || "");
   const [selectedBrokerId, setSelectedBrokerId] = useState(brokerAccount?.id);
@@ -2065,7 +2420,8 @@ function StocksTransferModal({ brokerAccount, brokerOptions, brokerLabel, allowe
   const [notes, setNotes] = useState("");
   const cashAcct = cashAccounts.find(a => a.id === cashAcctId);
   const brokerCcyBal = brokerBals.find(b => b.ccy === brokerCcy)?.amount || 0;
-  const canSubmit = amount > 0 && cashAcct && (direction === "in" || parseFloat(amount) <= brokerCcyBal);
+  const fiatBlocked = fiatGuard ? !fiatGuard(activeBroker) : false;
+  const canSubmit = amount > 0 && cashAcct && !fiatBlocked && (direction === "in" || parseFloat(amount) <= brokerCcyBal);
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -2113,9 +2469,14 @@ function StocksTransferModal({ brokerAccount, brokerOptions, brokerLabel, allowe
             <div><Label>{brokerLabel || "Account"}</Label>
               <select value={selectedBrokerId} onChange={e=>{setSelectedBrokerId(e.target.value); const nb = brokerOptions.find(b=>b.id===e.target.value); setBrokerCcy(nb?.currency || acctBalances(nb)[0]?.ccy || "SGD"); setAmount("");}} style={iStyle}>
                 {brokerOptions.map(b => (
-                  <option key={b.id} value={b.id}>{b.bank} {b.accountName} ({b.currency})</option>
+                  <option key={b.id} value={b.id}>{b.bank} {b.accountName} ({b.currency}){fiatGuard && !fiatGuard(b) ? " — no fiat" : ""}</option>
                 ))}
               </select></div>
+          )}
+          {fiatBlocked && (
+            <div style={{padding:"10px 14px",borderRadius:9,fontSize:12,lineHeight:1.5,background:T.downBg,color:T.down,border:`1px solid ${T.down}30`}}>
+              <strong>🚫 {activeBroker.bank} can't transfer fiat.</strong> This wallet/protocol only holds crypto. Pick a fiat-capable exchange or hot wallet to move cash.
+            </div>
           )}
           {/* Direction toggle */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -2215,11 +2576,47 @@ const WORKFLOW_TRIGGER_KINDS = [
 ];
 
 const WORKFLOW_ACTION_KINDS = [
-  { id:"reminder",      label:"In-App Reminder",       sublabel:"Show a banner inside WealthOS" },
-  { id:"notification",  label:"Push Notification",     sublabel:"Send a push notification (mock)" },
-  { id:"email",         label:"Email",                 sublabel:"Send an email (mock)" },
-  { id:"task",          label:"Create Task",           sublabel:"Add a task to your to-do list" },
-  { id:"log",           label:"Log Only",              sublabel:"Just record that the trigger fired" },
+  // Notify / track
+  { id:"reminder",      label:"In-App Reminder",       sublabel:"Show a banner inside WealthOS",                group:"Notify" },
+  { id:"notification",  label:"Push Notification",     sublabel:"Send a push notification (mock)",             group:"Notify" },
+  { id:"email",         label:"Email",                 sublabel:"Send an email (mock)",                        group:"Notify" },
+  { id:"task",          label:"Create Task",           sublabel:"Add a task to your to-do list",               group:"Notify" },
+  { id:"record",        label:"Record Money Flow",     sublabel:"Log an IN / OUT / RECORD money movement",     group:"Notify" },
+  { id:"log",           label:"Log Only",              sublabel:"Just record that the trigger fired",          group:"Notify" },
+  // Firefly III–style transaction-mutating actions
+  { id:"set_category",  label:"Set Category",          sublabel:"Firefly: set the transaction category",       group:"Transform", needsArg:"category" },
+  { id:"add_tag",       label:"Add Tag",               sublabel:"Firefly: append a tag to the transaction",    group:"Transform", needsArg:"tag" },
+  { id:"set_budget",    label:"Set Budget",            sublabel:"Firefly: assign the transaction to a budget", group:"Transform", needsArg:"budget" },
+  { id:"set_description",label:"Set Description",      sublabel:"Firefly: overwrite the transaction description",group:"Transform", needsArg:"description" },
+  { id:"convert_transfer",label:"Convert to Transfer", sublabel:"Firefly: reclassify as an account transfer",  group:"Transform", needsArg:"account" },
+  { id:"clear_category",label:"Clear Category",        sublabel:"Firefly: remove the transaction category",    group:"Transform" },
+];
+
+// Firefly III rule operators (strict matching set)
+const WORKFLOW_CONDITION_OPS = [
+  { id:"=",          label:"is" },
+  { id:"!=",         label:"is not" },
+  { id:"contains",   label:"contains" },
+  { id:"starts",     label:"starts with" },
+  { id:"ends",       label:"ends with" },
+  { id:">",          label:"more than" },
+  { id:">=",         label:"at least" },
+  { id:"<",          label:"less than" },
+  { id:"<=",         label:"at most" },
+];
+
+// Firefly III "strict" (ALL) vs "non-strict" (ANY) rule matching
+const WORKFLOW_MATCH_MODES = [
+  { id:"all", label:"Match ALL", sublabel:"Strict — every condition must be true (Firefly: strict)" },
+  { id:"any", label:"Match ANY", sublabel:"Non-strict — at least one condition true (Firefly: any)" },
+];
+
+// Money-flow categories for workflows (and Record-Transaction modals)
+const MONEY_FLOW_CATEGORIES = [
+  { id:"none",   label:"No cash flow", icon:"⚪", color:"#6B7280" },
+  { id:"in",     label:"Money In",     icon:"🟢", color:"#16A34A" },
+  { id:"out",    label:"Money Out",    icon:"🔴", color:"#DC2626" },
+  { id:"record", label:"Record only",  icon:"🔵", color:"#2563EB" },
 ];
 
 const WORKFLOW_ENTITY_LABELS = {
@@ -2250,10 +2647,21 @@ const WORKFLOWS_INIT = [
     actions:[{ kind:"notification", message:"Cash balance is low" }],
     createdAt:"2026-04-12T10:00:00.000Z",
   },
+  { id:"WF004", name:"Auto-categorise Grab rides", description:"Firefly-style rule: tag & categorise large card spend at Grab",
+    enabled:true, runCount:23, lastRunAt:"2026-06-10T20:14:00.000Z",
+    moneyFlow:"out", matchMode:"all", stopProcessing:true,
+    trigger:{ kind:"transaction_over", value:0, entityType:"creditcard" },
+    conditions:[{ field:"description", op:"contains", value:"GRAB" }, { field:"amount", op:">", value:15 }],
+    actions:[{ kind:"set_category", arg:"Transport" }, { kind:"add_tag", arg:"ride-hailing" }],
+    createdAt:"2026-05-02T10:00:00.000Z",
+  },
 ];
 
 const EMPTY_WORKFLOW = {
   id:"", name:"", description:"", enabled:true, runCount:0, lastRunAt:null,
+  moneyFlow:"none",
+  matchMode:"all",        // Firefly III strict (ALL) vs non-strict (ANY)
+  stopProcessing:false,   // Firefly III "stop processing other rules after a match"
   trigger:{ kind:"before_due", days:3, entityType:"creditcard" },
   conditions:[],
   actions:[{ kind:"reminder", message:"" }],
@@ -2270,6 +2678,7 @@ function WorkflowsScreen({ workflows, setWorkflows, showToast, auditLog, logAudi
   const isMobile = useIsMobile();
   const [showModal, setShowModal] = useState(false);
   const [editWF, setEditWF] = useState(null);
+  const [historyWF, setHistoryWF] = useState(null);
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
 
@@ -2405,8 +2814,11 @@ function WorkflowsScreen({ workflows, setWorkflows, showToast, auditLog, logAudi
                     <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
                       <span style={{fontSize:14,flexShrink:0,marginTop:1}}>🔍</span>
                       <div style={{minWidth:0,flex:1}}>
-                        <div style={{fontSize:10,fontWeight:600,color:T.muted,letterSpacing:0.3,textTransform:"uppercase"}}>If</div>
-                        <div style={{fontSize:12,marginTop:2}}>{wf.conditions.map(c=>`${c.field} ${c.op} ${c.value}`).join(" AND ")}</div>
+                        <div style={{fontSize:10,fontWeight:600,color:T.muted,letterSpacing:0.3,textTransform:"uppercase"}}>If {wf.conditions.length>1 ? `· match ${(wf.matchMode||"all")==="any"?"ANY":"ALL"}` : ""}</div>
+                        <div style={{fontSize:12,marginTop:2}}>{wf.conditions.map(c=>{
+                          const opLabel = (WORKFLOW_CONDITION_OPS.find(o=>o.id===c.op)||{}).label || c.op;
+                          return `${c.field} ${opLabel} ${c.value}`;
+                        }).join((wf.matchMode||"all")==="any"?" OR ":" AND ")}</div>
                       </div>
                     </div>
                   )}
@@ -2421,9 +2833,17 @@ function WorkflowsScreen({ workflows, setWorkflows, showToast, auditLog, logAudi
                     </div>
                   </div>
                 </div>
+                {(() => { const mf = MONEY_FLOW_CATEGORIES.find(m => m.id === (wf.moneyFlow||"none")); return mf && mf.id!=="none" ? (
+                  <div style={{padding:"0 18px 10px",display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontSize:14,flexShrink:0}}>💸</span>
+                    <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:5,background:`${mf.color}15`,color:mf.color}}>{mf.icon} {mf.label}</span>
+                  </div>
+                ) : null; })()}
                 <div style={{padding:"9px 18px",fontSize:11,color:T.muted,background:T.sidebar,borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <span>Run {wf.runCount||0}× · {wf.lastRunAt ? `last ${new Date(wf.lastRunAt).toLocaleDateString("en-SG",{day:"numeric",month:"short"})}` : "never run"}</span>
                   <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>setHistoryWF(wf)}
+                      style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",color:T.text}}>History</button>
                     <button onClick={()=>{setEditWF(wf);setShowModal(true);}}
                       style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
                     <button onClick={()=>handleDelete(wf.id)}
@@ -2438,6 +2858,24 @@ function WorkflowsScreen({ workflows, setWorkflows, showToast, auditLog, logAudi
 
       {showModal && editWF && (
         <WorkflowModal workflow={editWF} onSave={handleSave} onClose={()=>{setShowModal(false);setEditWF(null);}}/>
+      )}
+
+      {historyWF && (
+        <div onClick={e=>{if(e.target===e.currentTarget)setHistoryWF(null);}}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:320,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:T.bg,borderRadius:16,width:"min(640px,100%)",maxHeight:"85vh",display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,overflow:"hidden"}}>
+            <div style={{padding:"20px 24px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:800}}>Activity & Audit Log</div>
+                <div style={{fontSize:12,color:T.muted,marginTop:2}}>{historyWF.name}</div>
+              </div>
+              <button onClick={()=>setHistoryWF(null)} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+            </div>
+            <div style={{padding:"18px 24px",overflowY:"auto"}}>
+              <AuditLogPanel auditLog={auditLog} entityType="workflow" entityId={historyWF.id}/>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -2468,6 +2906,24 @@ function WorkflowModal({ workflow, onSave, onClose }) {
             <input value={f.name} onChange={e=>setF("name",e.target.value)} placeholder="e.g. Credit card due reminder" style={iStyle}/></div>
           <div><Label>Description</Label>
             <input value={f.description} onChange={e=>setF("description",e.target.value)} placeholder="What does this workflow do?" style={iStyle}/></div>
+
+          {/* Money-flow category */}
+          <div><Label>Money-Flow Category</Label>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:4}}>
+              {MONEY_FLOW_CATEGORIES.map(m => {
+                const active = (f.moneyFlow||"none") === m.id;
+                return (
+                  <button key={m.id} type="button" onClick={()=>setF("moneyFlow",m.id)}
+                    style={{padding:"7px 13px",borderRadius:8,border:`1px solid ${active?m.color:T.border}`,
+                      background:active?`${m.color}15`:T.inputBg,color:active?m.color:T.muted,
+                      cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:active?700:500}}>
+                    {m.icon} {m.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{fontSize:11,color:T.muted,marginTop:6}}>Tags this workflow as money in/out, record-only, or no cash flow.</div>
+          </div>
 
           {/* When (trigger) */}
           <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"14px 16px",background:T.accentBg}}>
@@ -2504,21 +2960,33 @@ function WorkflowModal({ workflow, onSave, onClose }) {
             </div>
           </div>
 
-          {/* If (conditions) */}
+          {/* If (conditions) — Firefly III rule triggers */}
           <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"14px 16px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <div style={{fontSize:10,fontWeight:700,color:T.muted,letterSpacing:0.5}}>🔍 IF — CONDITIONS (OPTIONAL)</div>
               <button onClick={()=>setF("conditions",[...f.conditions,{field:"",op:"=",value:""}])}
                 style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",color:T.text}}>+ Add</button>
             </div>
+            {/* Firefly strict / non-strict match mode */}
+            <div style={{display:"flex",gap:8,marginBottom:10}}>
+              {WORKFLOW_MATCH_MODES.map(m => {
+                const active = (f.matchMode||"all") === m.id;
+                return (
+                  <button key={m.id} type="button" title={m.sublabel} onClick={()=>setF("matchMode",m.id)}
+                    style={{flex:1,padding:"7px 10px",borderRadius:8,border:`1px solid ${active?T.selected:T.border}`,
+                      background:active?T.selected:T.inputBg,color:active?T.selectedText:T.muted,
+                      cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:active?700:500}}>{m.label}</button>
+                );
+              })}
+            </div>
             {f.conditions.length === 0 ? (
               <div style={{fontSize:11,color:T.dim}}>No conditions — trigger fires for all matching entities</div>
             ) : (
               f.conditions.map((c,i) => (
-                <div key={i} style={{display:"grid",gridTemplateColumns:"1.4fr 0.7fr 1.4fr 30px",gap:8,marginBottom:8,alignItems:"center"}}>
-                  <input value={c.field} onChange={e=>updateCond(i,{field:e.target.value})} placeholder="field (e.g. status)" style={{...iStyle,padding:"7px 10px"}}/>
+                <div key={i} style={{display:"grid",gridTemplateColumns:"1.4fr 0.9fr 1.4fr 30px",gap:8,marginBottom:8,alignItems:"center"}}>
+                  <input value={c.field} onChange={e=>updateCond(i,{field:e.target.value})} placeholder="field (e.g. description, amount, category)" style={{...iStyle,padding:"7px 10px"}}/>
                   <select value={c.op} onChange={e=>updateCond(i,{op:e.target.value})} style={{...iStyle,padding:"7px 10px"}}>
-                    <option>=</option><option>!=</option><option>{"<"}</option><option>{"<="}</option><option>{">"}</option><option>{">="}</option><option>contains</option>
+                    {WORKFLOW_CONDITION_OPS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                   </select>
                   <input value={c.value} onChange={e=>updateCond(i,{value:e.target.value})} placeholder="value" style={{...iStyle,padding:"7px 10px"}}/>
                   <button onClick={()=>setF("conditions",f.conditions.filter((_,idx)=>idx!==i))}
@@ -2541,7 +3009,12 @@ function WorkflowModal({ workflow, onSave, onClose }) {
                 <div key={i} style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10,padding:"10px 12px",background:T.sidebar,borderRadius:8}}>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 30px",gap:8,alignItems:"center"}}>
                     <select value={a.kind} onChange={e=>updateAct(i,{kind:e.target.value})} style={{...iStyle,padding:"7px 10px"}}>
-                      {WORKFLOW_ACTION_KINDS.map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
+                      <optgroup label="Notify / Track">
+                        {WORKFLOW_ACTION_KINDS.filter(k=>k.group==="Notify").map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
+                      </optgroup>
+                      <optgroup label="Transform (Firefly III)">
+                        {WORKFLOW_ACTION_KINDS.filter(k=>k.group==="Transform").map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
+                      </optgroup>
                     </select>
                     {f.actions.length > 1 && (
                       <button onClick={()=>setF("actions",f.actions.filter((_,idx)=>idx!==i))}
@@ -2554,10 +3027,27 @@ function WorkflowModal({ workflow, onSave, onClose }) {
                   {a.kind === "email" && (
                     <input value={a.to||""} onChange={e=>updateAct(i,{to:e.target.value})} placeholder="Recipient email" style={{...iStyle,padding:"7px 10px"}}/>
                   )}
+                  {ak?.needsArg && (
+                    <input value={a.arg||""} onChange={e=>updateAct(i,{arg:e.target.value})}
+                      placeholder={ak.needsArg==="category"?"Category name (e.g. Dining)":ak.needsArg==="tag"?"Tag (e.g. reimbursable)":ak.needsArg==="budget"?"Budget name (e.g. Monthly Living)":ak.needsArg==="description"?"New description":ak.needsArg==="account"?"Destination account":"Value"}
+                      style={{...iStyle,padding:"7px 10px"}}/>
+                  )}
                   {ak?.sublabel && <div style={{fontSize:10,color:T.muted}}>{ak.sublabel}</div>}
                 </div>
               );
             })}
+          </div>
+
+          {/* Stop-processing (Firefly III) */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:T.sidebar,borderRadius:8}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600}}>Stop processing after match</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:2}}>Firefly III: when this rule matches, skip any later rules in the group.</div>
+            </div>
+            <div onClick={()=>setF("stopProcessing",!f.stopProcessing)}
+              style={{width:40,height:22,borderRadius:11,background:f.stopProcessing?T.selected:T.border,cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
+              <div style={{position:"absolute",top:3,left:f.stopProcessing?21:3,width:16,height:16,borderRadius:"50%",background:T.bg,transition:"left 0.2s"}}/>
+            </div>
           </div>
 
           {/* Enable toggle */}
@@ -3056,10 +3546,7 @@ function AddDividendModal({ onClose, onAdd }) {
 const DIVIDEND_SCHEDULE = [
   { sym: "AAPL",  payDate: "2026-03-10", perShare: 0.25,  color: T.accent },
   { sym: "JNJ",   payDate: "2026-03-10", perShare: 1.24,  color: T.up },
-  { sym: "MSFT",  payDate: "2026-03-15", perShare: 0.75,  color: "#8B5CF6" },
   { sym: "VOO",   payDate: "2026-03-21", perShare: 1.65,  color: T.accent },
-  { sym: "VTI",   payDate: "2026-03-21", perShare: 0.88,  color: "#0EA5E9" },
-  { sym: "BRK.B", payDate: "2026-03-28", perShare: 0.00,  color: T.muted },
 ];
 
 function DividendsScreen({ manualDivs = [] }) {
@@ -3863,7 +4350,7 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
                 const dateObj = new Date(tx.date);
                 const dateFormatted = dateObj.toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" });
                 return (
-                  <div key={tx.id} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.4fr 1fr 1.1fr 1.1fr", padding: "12px 20px", borderBottom: `1px solid ${T.border}`, alignItems: "center" }}>
+                  <div key={tx.id} className="hov-row" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.4fr 1fr 1.1fr 1.1fr", padding: "12px 20px", borderBottom: `1px solid ${T.border}`, alignItems: "center" }}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>
                       {tx.sym}
                       <div style={{ fontSize: 11, color: T.dim, fontWeight: 400, marginTop: 2 }}>
@@ -3901,7 +4388,7 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
       {tab === "postings" && (() => {
         const inter = "'Inter','Segoe UI',system-ui,sans-serif";
         const mono  = "'Courier New',Courier,monospace";
-        const sorted = [...transactions].sort((a,b) => a.date.localeCompare(b.date));
+        const sorted = [...transactions].sort((a,b) => b.date.localeCompare(a.date));
 
         const daysAgo = (d) => {
           if (!d) return "";
@@ -3982,8 +4469,7 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
                     <th style={{ padding: "9px 16px", textAlign: "right", width: 160, fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Credit</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {tableRows.map((row, ri) => (
+                {groupByFirst(tableRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                     <tr key={ri} style={{ borderBottom: `1px solid ${T.border}` }}>
                       <td style={{ padding: "11px 16px", verticalAlign: "top", width: 148 }}>
                         {row._first ? (
@@ -4008,8 +4494,7 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
                           : <span style={{ fontSize: 13, color: T.dim, fontFamily: inter }}>—</span>}
                       </td>
                     </tr>
-                  ))}
-                </tbody>
+                  ))}</tbody>))}
               </table>
             </div>
             <div style={{ padding: "12px 20px", borderTop: `1px solid ${T.border}`, background: T.sidebar }}>
@@ -4323,7 +4808,10 @@ const POLICIES_INIT = [
       { id: "PT005", date: "2025-03-15", amount: 980, method: "GIRO", ref: "AIA-2025-001", status: "Paid", notes: "" },
       { id: "PT006", date: "2026-03-15", amount: 980, method: "GIRO", ref: "AIA-2026-001", status: "Pending", notes: "Due today" },
     ],
-    claims: [], documents: [{ name: "Policy Document.pdf", date: "2021-03-16", type: "Policy" }, { name: "Premium Notice 2026.pdf", date: "2026-02-01", type: "Premium Notice" }] },
+    claims: [
+      { id: "C010", type: "Critical Illness", date: "2024-11-20", amount: 100000, status: "Paid", notes: "Accelerated CI benefit — early-stage diagnosis. Payout credited to DBS Multiplier." },
+      { id: "C011", type: "Hospital Cash", date: "2025-09-02", amount: 1200, status: "Pending", notes: "Daily hospital cash under TPD rider — under assessment." },
+    ], documents: [{ name: "Policy Document.pdf", date: "2021-03-16", type: "Policy" }, { name: "Premium Notice 2026.pdf", date: "2026-02-01", type: "Premium Notice" }] },
   { id: 2, type: "Whole Life", insurer: "Great Eastern", policyNo: "WL-2015-44210", planName: "GREAT Life Advantage", status: "Active", sumAssured: 200000, cashValue: 38400, surrenderValue: 34200, ilpFundValue: 0, currency: "SGD", premium: 3200, premFreq: "Yearly", totalPremPaid: 35200, startDate: "2015-06-01", endDate: "2099-06-01", nextPremDue: "2026-06-01", insuredName: "Dilwyn", dob: "1988-05-10", beneficiary: "Spouse — Jane Doe", riders: ["Dread Disease Rider", "Payor Premium Waiver"], exclusions: ["War and terrorism", "Professional sports activities"], notes: "Par policy. Participating in bonus pool.", reminderEnabled: true, reminderDays: 14,
     premiumTransactions: [
       { id: "PT101", date: "2015-06-01", amount: 3200, method: "Cheque", ref: "GE-2015-101", status: "Paid", notes: "Inception premium" },
@@ -4338,7 +4826,10 @@ const POLICIES_INIT = [
       { id: "PT110", date: "2024-06-01", amount: 3200, method: "GIRO", ref: "GE-2024-101", status: "Paid", notes: "" },
       { id: "PT111", date: "2025-06-01", amount: 3200, method: "GIRO", ref: "GE-2025-101", status: "Paid", notes: "" },
     ],
-    claims: [{ id: "C001", type: "Dread Disease", date: "2023-08-10", amount: 50000, status: "Approved", notes: "Early-stage cancer diagnosis. Claim approved within 30 days." }], documents: [{ name: "Policy Schedule.pdf", date: "2015-06-02", type: "Policy" }, { name: "Bonus Statement 2025.pdf", date: "2025-01-15", type: "Statement" }] },
+    claims: [
+      { id: "C001", type: "Dread Disease", date: "2023-08-10", amount: 50000, status: "Paid", notes: "Early-stage cancer diagnosis. Claim paid out within 30 days." },
+      { id: "C012", type: "Dread Disease", date: "2025-12-15", amount: 30000, status: "Paid", notes: "Second dread disease payout — credited to bank account." },
+    ], documents: [{ name: "Policy Schedule.pdf", date: "2015-06-02", type: "Policy" }, { name: "Bonus Statement 2025.pdf", date: "2025-01-15", type: "Statement" }] },
   { id: 3, type: "Hospital Plan", insurer: "NTUC Income", policyNo: "HP-2019-77231", planName: "Enhanced IncomeShield Preferred", status: "Active", sumAssured: 0, cashValue: 0, surrenderValue: 0, ilpFundValue: 0, currency: "SGD", premium: 1480, premFreq: "Yearly", totalPremPaid: 10360, startDate: "2019-01-10", endDate: null, nextPremDue: "2026-01-10", insuredName: "Dilwyn", dob: "1988-05-10", beneficiary: "—", riders: ["Enhanced Care Rider (Cashless)"], exclusions: ["Cosmetic procedures", "Dental treatment", "HIV/AIDS", "Pre-existing conditions (3yr wait)"], notes: "Integrated Shield Plan. MediShield Life base + private hospital rider.", reminderEnabled: true, reminderDays: 7,
     premiumTransactions: [
       { id: "PT201", date: "2019-01-10", amount: 1480, method: "Cheque", ref: "NTUC-2019-201", status: "Paid", notes: "Inception" },
@@ -4350,44 +4841,10 @@ const POLICIES_INIT = [
       { id: "PT207", date: "2025-01-10", amount: 1560, method: "GIRO", ref: "NTUC-2025-201", status: "Paid", notes: "" },
       { id: "PT208", date: "2026-01-10", amount: 0,    method: "GIRO", ref: "NTUC-2026-201", status: "Overdue", notes: "Unpaid — 59 days overdue" },
     ],
-    claims: [{ id: "C002", type: "Hospitalisation", date: "2024-04-05", amount: 6800, status: "Approved", notes: "Appendectomy at Mt Elizabeth. Fully covered minus deductible." }], documents: [{ name: "Policy Certificate.pdf", date: "2019-01-11", type: "Policy" }] },
-  { id: 4, type: "Critical Illness", insurer: "Prudential", policyNo: "CI-2020-12003", planName: "PRUActive Protect", status: "Active", sumAssured: 300000, cashValue: 0, surrenderValue: 0, ilpFundValue: 0, currency: "SGD", premium: 2100, premFreq: "Yearly", totalPremPaid: 12600, startDate: "2020-09-01", endDate: "2060-09-01", nextPremDue: "2026-09-01", insuredName: "Dilwyn", dob: "1988-05-10", beneficiary: "N/A", riders: [], exclusions: ["Stage 1 cancer", "Pre-existing conditions", "Congenital conditions"], notes: "Multi-pay CI covering 37 conditions across early, intermediate, advanced stages.", reminderEnabled: true, reminderDays: 14,
-    premiumTransactions: [
-      { id: "PT301", date: "2020-09-01", amount: 2100, method: "Credit Card", ref: "PRU-2020-301", status: "Paid", notes: "Inception" },
-      { id: "PT302", date: "2021-09-01", amount: 2100, method: "GIRO", ref: "PRU-2021-301", status: "Paid", notes: "" },
-      { id: "PT303", date: "2022-09-01", amount: 2100, method: "GIRO", ref: "PRU-2022-301", status: "Paid", notes: "" },
-      { id: "PT304", date: "2023-09-01", amount: 2100, method: "GIRO", ref: "PRU-2023-301", status: "Paid", notes: "" },
-      { id: "PT305", date: "2024-09-01", amount: 2100, method: "GIRO", ref: "PRU-2024-301", status: "Paid", notes: "" },
-      { id: "PT306", date: "2025-09-01", amount: 2100, method: "GIRO", ref: "PRU-2025-301", status: "Paid", notes: "" },
-    ],
-    claims: [], documents: [{ name: "Policy Booklet.pdf", date: "2020-09-02", type: "Policy" }] },
-  { id: 5, type: "ILP", insurer: "Manulife", policyNo: "ILP-2018-55801", planName: "Manulife InvestReady Wealth II", status: "Active", sumAssured: 100000, cashValue: 0, surrenderValue: 62400, ilpFundValue: 88600, currency: "SGD", premium: 800, premFreq: "Monthly", totalPremPaid: 76800, startDate: "2018-04-01", endDate: null, nextPremDue: "2026-04-01", insuredName: "Dilwyn", dob: "1988-05-10", beneficiary: "Spouse — Jane Doe", riders: [], exclusions: ["Market risk — fund value not guaranteed", "Surrender charges within first 3 years"], notes: "Invested in Manulife Asia Pacific REIT Fund (60%) + Equity Fund (40%).", reminderEnabled: true, reminderDays: 30,
-    premiumTransactions: (() => {
-      const txs = [];
-      let d = new Date("2018-04-01");
-      const end = new Date("2026-03-01");
-      let seq = 1;
-      while (d <= end) {
-        txs.push({ id: `PT4${String(seq).padStart(2,"0")}`, date: d.toISOString().slice(0,10), amount: 800, method: "GIRO", ref: `MNL-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}-${seq}`, status: d <= new Date("2026-03-10") ? "Paid" : "Pending", notes: "" });
-        d.setMonth(d.getMonth()+1); seq++;
-      }
-      return txs;
-    })(),
-    claims: [], documents: [{ name: "Policy Document.pdf", date: "2018-04-02", type: "Policy" }, { name: "Fund Statement Q4 2025.pdf", date: "2026-01-10", type: "Statement" }] },
-  { id: 6, type: "Personal Accident", insurer: "Tokio Marine", policyNo: "PA-2023-00321", planName: "PA Pro Plus", status: "Active", sumAssured: 500000, cashValue: 0, surrenderValue: 0, ilpFundValue: 0, currency: "SGD", premium: 380, premFreq: "Yearly", totalPremPaid: 760, startDate: "2023-07-01", endDate: "2024-07-01", nextPremDue: "2026-07-01", insuredName: "Dilwyn", dob: "1988-05-10", beneficiary: "Spouse — Jane Doe", riders: ["Medical Expenses Extension", "Infectious Disease Cover"], exclusions: ["Self-inflicted injury", "Extreme sports", "War"], notes: "Renewed annually. Covers worldwide 24h accidental death, disability, and medical.", reminderEnabled: true, reminderDays: 14,
-    premiumTransactions: [
-      { id: "PT501", date: "2023-07-01", amount: 380, method: "Credit Card", ref: "TM-2023-501", status: "Paid", notes: "Inception" },
-      { id: "PT502", date: "2024-07-01", amount: 388, method: "Credit Card", ref: "TM-2024-501", status: "Paid", notes: "Renewal — slight premium increase" },
-      { id: "PT503", date: "2025-07-01", amount: 388, method: "Credit Card", ref: "TM-2025-501", status: "Paid", notes: "Renewed" },
-    ],
-    claims: [], documents: [{ name: "PA Certificate 2025.pdf", date: "2025-07-01", type: "Policy" }] },
-  { id: 7, type: "Home", insurer: "FWD", policyNo: "HM-2024-88410", planName: "FWD Home Protection", status: "Active", sumAssured: 850000, cashValue: 0, surrenderValue: 0, ilpFundValue: 0, currency: "SGD", premium: 620, premFreq: "Yearly", totalPremPaid: 620, startDate: "2024-02-01", endDate: "2025-02-01", nextPremDue: "2026-02-01", insuredName: "Dilwyn", dob: "1988-05-10", beneficiary: "—", riders: ["Domestic Helper Cover", "Accidental Damage"], exclusions: ["Flood (standard)", "Wear and tear", "Valuables above S$5,000 each"], notes: "Covers building + contents + liability. HDB BTO at Tampines.", reminderEnabled: true, reminderDays: 14,
-    premiumTransactions: [
-      { id: "PT601", date: "2024-02-01", amount: 620, method: "PayNow", ref: "FWD-2024-601", status: "Paid", notes: "First year" },
-      { id: "PT602", date: "2025-02-01", amount: 635, method: "PayNow", ref: "FWD-2025-601", status: "Paid", notes: "Renewal" },
-      { id: "PT603", date: "2026-02-01", amount: 635, method: "PayNow", ref: "FWD-2026-601", status: "Overdue", notes: "37 days overdue — renewal pending" },
-    ],
-    claims: [], documents: [{ name: "Home Policy 2024.pdf", date: "2024-02-02", type: "Policy" }] },
+    claims: [
+      { id: "C002", type: "Hospitalisation", date: "2024-04-05", amount: 6800, status: "Paid", notes: "Appendectomy at Mt Elizabeth. Fully covered minus deductible. Payout received." },
+      { id: "C013", type: "Specialist Outpatient", date: "2025-11-10", amount: 920, status: "Rejected", notes: "Treatment not covered under plan rider." },
+    ], documents: [{ name: "Policy Certificate.pdf", date: "2019-01-11", type: "Policy" }] },
 ];
 
 
@@ -4429,17 +4886,6 @@ const BONDS_INIT = [
     ],
   },
   {
-    id:"BD002",productType:"SGS Bond",name:"SGS 3.0% 2034",issuer:"Singapore Government",issueCode:"NX24100W",
-    faceValue:15000,purchasePrice:14850,currentValue:15120,couponRate:3.0,yieldToMaturity:3.12,
-    maturityDate:"2034-10-01",issueDate:"2024-10-01",nextPaymentDate:"2026-04-01",couponFrequency:"Semi-Annual",
-    creditRating:"AAA",currency:"SGD",tenure:"10Y",status:"Active",
-    notes:"Benchmark 10-year SGS. Bought at slight discount on SGX. Tradeable.",
-    transactions:[
-      {id:"BTX003",date:"2025-10-01",type:"Coupon",amount:225,method:"CDP Credit",ref:"SGS-CPN-OCT25",status:"Paid",notes:"Semi-annual coupon 3.0%/2 on $15K face"},
-      {id:"BTX004",date:"2025-04-01",type:"Coupon",amount:225,method:"CDP Credit",ref:"SGS-CPN-APR25",status:"Paid",notes:"Semi-annual coupon"},
-    ],
-  },
-  {
     id:"BD003",productType:"T-Bill",name:"T-Bill BS25020W (6M)",issuer:"MAS",issueCode:"BS25020W",
     faceValue:50000,purchasePrice:48910,currentValue:50000,couponRate:0,yieldToMaturity:3.54,
     maturityDate:"2026-08-14",issueDate:"2026-02-14",nextPaymentDate:"",couponFrequency:"Zero-Coupon",
@@ -4447,17 +4893,6 @@ const BONDS_INIT = [
     notes:"6-month T-bill. Non-competitive bid. Discount price $97.82 per $100 face. Yield 3.54%.",
     transactions:[
       {id:"BTX005",date:"2026-02-14",type:"Purchase",amount:48910,method:"Bank Transfer",ref:"TBILL-BID-FEB26",status:"Paid",notes:"Non-competitive bid — 6M T-bill at 3.54% cut-off yield"},
-    ],
-  },
-  {
-    id:"BD004",productType:"T-Bill",name:"T-Bill BS25010Z (1Y)",issuer:"MAS",issueCode:"BS25010Z",
-    faceValue:30000,purchasePrice:29070,currentValue:30000,couponRate:0,yieldToMaturity:3.20,
-    maturityDate:"2026-01-15",issueDate:"2025-01-15",nextPaymentDate:"",couponFrequency:"Zero-Coupon",
-    creditRating:"AAA",currency:"SGD",tenure:"1Y",status:"Matured",
-    notes:"1-year T-bill. Matured Jan 2026. Received full face value $30,000.",
-    transactions:[
-      {id:"BTX006",date:"2025-01-15",type:"Purchase",amount:29070,method:"Bank Transfer",ref:"TBILL-BID-JAN25",status:"Paid",notes:"Non-competitive bid — 1Y T-bill"},
-      {id:"BTX007",date:"2026-01-15",type:"Redemption",amount:30000,method:"CDP Credit",ref:"TBILL-MAT-JAN26",status:"Paid",notes:"Maturity redemption — profit $930"},
     ],
   },
   {
@@ -4469,18 +4904,6 @@ const BONDS_INIT = [
     transactions:[
       {id:"BTX008",date:"2025-12-15",type:"Coupon",amount:217.50,method:"CDP Credit",ref:"ASTREA-CPN-DEC25",status:"Paid",notes:"Semi-annual coupon 4.35%/2"},
       {id:"BTX009",date:"2025-06-15",type:"Coupon",amount:217.50,method:"CDP Credit",ref:"ASTREA-CPN-JUN25",status:"Paid",notes:"Semi-annual coupon"},
-    ],
-  },
-  {
-    id:"BD006",productType:"Bond ETF",name:"ABF SG Bond ETF (A35)",issuer:"State Street",issueCode:"A35",
-    faceValue:8000,purchasePrice:8000,currentValue:8240,couponRate:0,yieldToMaturity:2.85,
-    maturityDate:"",issueDate:"2024-03-01",nextPaymentDate:"2026-07-01",couponFrequency:"Semi-Annual",
-    creditRating:"",currency:"SGD",tenure:"",status:"Active",
-    units:7200,purchasePricePerUnit:1.111,currentPricePerUnit:1.144,distributionYield:2.85,
-    notes:"ABF Singapore Bond Index Fund. Tracks iBoxx ABF SG Bond Index. SGS + quasi-govt bonds. Expense ratio 0.24%.",
-    transactions:[
-      {id:"BTX010",date:"2026-01-15",type:"Distribution",amount:114,method:"CDP Credit",ref:"A35-DIST-JAN26",status:"Paid",notes:"Semi-annual distribution $0.01583/unit"},
-      {id:"BTX011",date:"2025-07-15",type:"Distribution",amount:110,method:"CDP Credit",ref:"A35-DIST-JUL25",status:"Paid",notes:"Semi-annual distribution"},
     ],
   },
   {
@@ -4497,25 +4920,29 @@ const BONDS_INIT = [
 ];
 
 // ── Bond Transaction Modal ────────────────────────────────────
-function BondTxModalInner({ bond, onSave, onClose }) {
+function BondTxModalInner({ bond, editTx, onSave, onClose }) {
+  const isEdit = !!editTx;
   const txTypes = bond.productType === "T-Bill" ? ["Purchase","Redemption"]
     : bond.productType === "Bond ETF" ? ["Purchase","Sale","Distribution"]
     : bond.productType === "Fixed Deposit" ? ["Purchase","Redemption","Interest"]
     : ["Purchase","Sale","Coupon","Redemption"];
   const txTypeIcon = {Purchase:"📥",Sale:"📤",Coupon:"🎁",Distribution:"🎁",Interest:"🏦",Redemption:"📤"};
 
-  const [f, setF] = useState({
+  const [f, setF] = useState(editTx ? { ...editTx } : {
     type: txTypes.includes("Coupon") ? "Coupon" : txTypes.includes("Distribution") ? "Distribution" : txTypes[0],
     date: new Date().toISOString().slice(0,10),
     amount: 0, method: "CDP Credit", ref: "", notes: "",
   });
+  // Explicit RECORD toggle — log a non-cash event (e.g. PIK coupon paid in
+  // additional bonds, discount accretion) without an IN/OUT classification.
+  const [recordOnly, setRecordOnly] = useState(!!(editTx && editTx.recordOnly));
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <div style={{fontSize:16,fontWeight:800}}>{isEdit ? "Edit Transaction" : "Record Transaction"}</div>
           <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{bond.name} · {bond.issuer}</div>
@@ -4544,8 +4971,10 @@ function BondTxModalInner({ bond, onSave, onClose }) {
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Semi-annual coupon, maturity redemption…"
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
         </div>
-        <FlowBanner type={f.type} amount={f.amount} label={
-          f.type==="Purchase" ? "📤 Capital deployed to bond"
+        <FlowBanner type={f.type} flowOverride={recordOnly ? "info" : undefined}
+          amount={recordOnly ? null : f.amount} label={
+          recordOnly ? "📝 Recorded — no cash flow"
+          : f.type==="Purchase" ? "📤 Capital deployed to bond"
           : f.type==="Sale" ? "📥 Sale proceeds"
           : f.type==="Redemption" ? "📥 Principal returned at maturity"
           : f.type==="Coupon" ? "🎁 Coupon income"
@@ -4553,11 +4982,12 @@ function BondTxModalInner({ bond, onSave, onClose }) {
           : f.type==="Interest" ? "💰 Interest income"
           : "💰 Transaction"
         }/>
+        <RecordOnlyToggle recordOnly={recordOnly} setRecordOnly={setRecordOnly} style={{marginTop:0,marginBottom:14}}/>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0)?0.4:1}}>
-            Record {f.type}
+          <button onClick={()=>onSave({...f, recordOnly})} disabled={!f.date||(!recordOnly&&f.amount<=0)}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||(!recordOnly&&f.amount<=0))?0.4:1}}>
+            {isEdit ? "Save Changes" : recordOnly ? "Record entry" : `Record ${f.type}`}
           </button>
         </div>
       </div>
@@ -4620,24 +5050,32 @@ function BondModal({ bond, onSave, onClose }) {
 }
 
 // ── Bond Action Panel — pills + Update Price + price history ──
-function BondActionPanel({ bond, setBonds, auditLog, logAudit, showToast }) {
+function BondActionPanel({ bond, setBonds, accounts, setAccounts, auditLog, logAudit, showToast }) {
+  // Manage tab is for value/disposal actions; Purchase & Coupon are recorded
+  // via the Transactions tab's "+ Record Transaction" button instead.
   const TX_TYPES_BY_PRODUCT = {
-    "T-Bill": ["Purchase","Redemption"],
-    "Bond ETF": ["Purchase","Sale","Distribution"],
-    "Fixed Deposit": ["Purchase","Redemption","Interest"],
+    "T-Bill": ["Redemption"],
+    "Bond ETF": ["Sale","Distribution"],
+    "Fixed Deposit": ["Redemption","Interest"],
   };
-  const baseTypes = TX_TYPES_BY_PRODUCT[bond.productType] || ["Purchase","Sale","Coupon","Redemption"];
-  const ALL_TYPES = [...baseTypes, "Update Price"];
+  const baseTypes = TX_TYPES_BY_PRODUCT[bond.productType] || ["Sale","Redemption"];
+  // Par instruments are held to maturity at par — no per-unit market price, so
+  // "Update Price" only applies to tradable bonds (SGS, Corporate, Bond ETF).
+  const PAR_TYPES = ["Singapore Savings Bond","T-Bill","Fixed Deposit"];
+  const ALL_TYPES = PAR_TYPES.includes(bond.productType) ? baseTypes : [...baseTypes, "Update Price"];
   const ICONS = {Purchase:"📥",Sale:"📤",Coupon:"🎁",Distribution:"🎁",Interest:"🏦",Redemption:"📤","Update Price":"💲"};
   const colorFor = (t) => t==="Purchase"?T.up
     : t==="Sale"||t==="Redemption"?T.down
     : t==="Coupon"||t==="Distribution"||t==="Interest"?T.warn
     : t==="Update Price"?T.text : T.accent;
 
+  // Cash accounts that can receive sale/redemption proceeds (exclude brokerage & crypto wallets)
+  const cashAccounts = (accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
   const [txType, setTxType] = useState(baseTypes[0]);
   const blankForm = () => ({
     date: new Date().toISOString().slice(0,10),
-    amount: "", method: "CDP Credit", ref: "", notes: "",
+    amount: "", method: "Bank Transfer", notes: "",
+    creditAccountId: cashAccounts[0] ? String(cashAccounts[0].id) : "",
     pricePerUnit: String(bond.currentPricePerUnit || ""),
   });
   const [form, setForm] = useState(blankForm());
@@ -4655,7 +5093,7 @@ function BondActionPanel({ bond, setBonds, auditLog, logAudit, showToast }) {
 
   const canSubmit = isUpdatePrice
     ? !!form.pricePerUnit && parseFloat(form.pricePerUnit) > 0
-    : form.date && parseFloat(form.amount) > 0;
+    : form.date && parseFloat(form.amount) > 0 && !!form.creditAccountId;
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -4674,15 +5112,30 @@ function BondActionPanel({ bond, setBonds, auditLog, logAudit, showToast }) {
     }
 
     const amt = parseFloat(form.amount);
+    const creditAcct = cashAccounts.find(a => String(a.id) === String(form.creditAccountId));
     const newTx = {
       id: "BTX" + Date.now(),
       type: txType, date: form.date,
-      amount: amt, method: form.method, ref: form.ref, notes: form.notes,
+      amount: amt, method: form.method, notes: form.notes,
+      creditAccountId: form.creditAccountId,
+      creditAccountName: creditAcct ? `${creditAcct.bank} · ${creditAcct.accountName}` : "",
       status: "Paid",
     };
     setBonds(prevBs => prevBs.map(b => b.id === bond.id ? { ...b, transactions: [...(b.transactions||[]), newTx] } : b));
-    if (logAudit) logAudit("bond", bond.id, "add-transaction", null, newTx, `${txType} · S$${amt.toFixed(2)}`);
-    showToast(`${txType} recorded — S$${amt.toFixed(2)}`, "success");
+    // Credit the chosen cash account with the proceeds (bonds settle in S$/SGD)
+    if (creditAcct && setAccounts) {
+      setAccounts(prev => prev.map(a => {
+        if (String(a.id) !== String(form.creditAccountId)) return a;
+        const cur = acctBalances(a);
+        const has = cur.find(b => b.ccy === "SGD");
+        const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + amt } : b)
+                             : [...cur, { ccy: "SGD", amount: amt }];
+        const nextLegacy = (a.currency || "SGD") === "SGD" ? { balance: (a.balance||0) + amt } : {};
+        return { ...a, balances: nextBals, ...nextLegacy };
+      }));
+    }
+    if (logAudit) logAudit("bond", bond.id, "add-transaction", null, newTx, `${txType} · S$${amt.toFixed(2)}${creditAcct?` → ${creditAcct.accountName}`:""}`);
+    showToast(`${txType} recorded — S$${amt.toFixed(2)}${creditAcct?` credited to ${creditAcct.accountName}`:""}`, "success");
     setForm(blankForm());
   };
 
@@ -4699,10 +5152,10 @@ function BondActionPanel({ bond, setBonds, auditLog, logAudit, showToast }) {
   const newPnlPct = cost > 0 ? (newPnl/cost*100) : 0;
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <Card style={{padding:"16px 18px"}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Action</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+    <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:560}}>
+      <Card style={{padding:"12px 14px"}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:8,color:T.muted}}>Action</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
           {ALL_TYPES.map(t => {
             const active = txType === t;
             const c = colorFor(t);
@@ -4718,50 +5171,50 @@ function BondActionPanel({ bond, setBonds, auditLog, logAudit, showToast }) {
         </div>
       </Card>
 
-      <Card style={{padding:"18px"}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>{isUpdatePrice ? `Update Price per Unit — ${bond.name}` : `${txType} — ${bond.name}`}</div>
+      <Card style={{padding:"14px 16px"}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:10,color:T.muted}}>{isUpdatePrice ? `Update Price per Unit — ${bond.name}` : `${txType} — ${bond.name}`}</div>
         {isUpdatePrice ? (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div>
               <Label required>New Price per Unit (S$)</Label>
               <Input type="number" step="0.001" value={form.pricePerUnit} onChange={e=>set("pricePerUnit",e.target.value)} placeholder={String(oldPrice||"0.000")}/>
             </div>
             <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
-                <span>Current Price</span>
+                <span>Current</span>
                 <span style={{fontWeight:600,color:T.text}}>S${oldPrice.toFixed(3)}</span>
               </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                <span>Change</span>
+                <span style={{fontWeight:700,color:(newPriceVal-oldPrice)>=0?T.up:T.down}}>{(newPriceVal-oldPrice)>=0?"+":""}S${(newPriceVal-oldPrice).toFixed(3)}{oldPrice>0?` (${(newPriceVal-oldPrice)>=0?"+":""}${((newPriceVal-oldPrice)/oldPrice*100).toFixed(2)}%)`:""}</span>
+              </div>
               {units > 0 && (
-                <>
-                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
-                    <span>New Value ({units.toLocaleString()} units)</span>
-                    <span style={{fontWeight:700,color:T.text}}>S${newValue.toLocaleString(undefined,{maximumFractionDigits:2})}</span>
-                  </div>
-                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
-                    <span>New P/L</span>
-                    <span style={{fontWeight:700,color:newPnl>=0?T.up:T.down}}>{newPnl>=0?"+":""}S${newPnl.toLocaleString(undefined,{maximumFractionDigits:2})} ({newPnlPct>=0?"+":""}{newPnlPct.toFixed(2)}%)</span>
-                  </div>
-                </>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
+                  <span>New P/L</span>
+                  <span style={{fontWeight:700,color:newPnl>=0?T.up:T.down}}>{newPnl>=0?"+":""}S${newPnl.toLocaleString(undefined,{maximumFractionDigits:2})} ({newPnlPct>=0?"+":""}{newPnlPct.toFixed(2)}%)</span>
+                </div>
               )}
             </div>
           </div>
         ) : (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div><Label required>Date</Label>
               <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
             </div>
             <div><Label required>Amount (S$)</Label>
               <Input type="number" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/>
             </div>
-            <MoreOptions count={3}>
-              <div><Label>Method</Label>
-                <Sel value={form.method} onChange={e=>set("method",e.target.value)} options={["CDP Credit","Bank Transfer","GIRO","Cash"]}/>
-              </div>
-              <div><Label>Reference</Label>
-                <Input value={form.ref} onChange={e=>set("ref",e.target.value)} placeholder="Optional"/>
-              </div>
+            <div><Label>Method</Label>
+              <Sel value={form.method} onChange={e=>set("method",e.target.value)} options={["Bank Transfer"]}/>
+            </div>
+            <div><Label required>Credit to Account</Label>
+              <Sel value={form.creditAccountId} onChange={e=>set("creditAccountId",e.target.value)}
+                placeholder={cashAccounts.length ? "Select account…" : undefined}
+                options={cashAccounts.length ? cashAccounts.map(a => ({value:String(a.id), label:`${a.bank} · ${a.accountName}`})) : ["— No cash accounts —"]}/>
+            </div>
+            <MoreOptions count={1}>
               <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
-                <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Semi-annual coupon, maturity redemption…"
+                <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Maturity redemption, partial sale…"
                   style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
               </div>
             </MoreOptions>
@@ -4831,17 +5284,25 @@ function BondActionPanel({ bond, setBonds, auditLog, logAudit, showToast }) {
 }
 
 // ── Bonds & T-Bills Screen ────────────────────────────────────
-function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
+function BondsScreen({ bonds, setBonds, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
   const isMobile = useIsMobile();
-  const [selectedBond, setSelectedBond] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editBond, setEditBond] = useState(null);
   const [filterType, setFilterType] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
-  const [drawerTab, setDrawerTab] = useState("overview");
   const [showTxModal, setShowTxModal] = useState(false);
+  const [editTx, setEditTx] = useState(null);
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
   const bdSort = useSortState();
+
+  // Route-driven detail view (full page instead of overlay drawer)
+  const detailId = route.entityId;
+  const detailBond = detailId ? bonds.find(b => b.id === detailId) : null;
+  const drawerTab = route.tab || "overview";
+  const goTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goList = () => navigate({ screen: "bonds" });
 
   const activeHoldings = bonds.filter(b => b.status === "Active");
   const totalFaceValue = activeHoldings.reduce((s, b) => s + (b.faceValue||0), 0);
@@ -4884,6 +5345,7 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {!detailId && (<>
       {/* Page header */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <div>
@@ -4974,7 +5436,7 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
           {filtered.map(bond => {
             const tc = BOND_TYPE_CONFIG[bond.productType] || {icon:"📋",color:T.muted,bg:T.inputBg};
             const pnl = (bond.currentValue||0) - (bond.purchasePrice||0);
-            return <MobileListItem key={bond.id} onClick={()=>{setSelectedBond(bond);setDrawerTab("overview");}}
+            return <MobileListItem key={bond.id} onClick={()=>navigate({screen:"bonds",entityId:bond.id})}
               icon={tc.icon} iconBg={tc.bg} title={bond.name} subtitle={`${bond.issuer} · ${bond.productType}`}
               value={fmtCompact(bond.currentValue)} valueColor={T.text} valueSub={`YTM ${bond.yieldToMaturity}%`}
               badge={bond.status} badgeBg={bond.status==="Active"?T.upBg:T.inputBg} badgeColor={bond.status==="Active"?T.up:T.muted}
@@ -4984,7 +5446,7 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
         </Card>
       ) : (
         <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
-          <SortHeader gridCols="2.2fr 1fr 1.1fr 1fr 1fr 1fr 0.8fr" sortKey={bdSort.sortKey} sortDir={bdSort.sortDir} onSort={bdSort.onSort}
+          <SortHeader gridCols={capCols("2.2fr 1fr 1.1fr 1fr 1fr 1fr 0.8fr")} sortKey={bdSort.sortKey} sortDir={bdSort.sortDir} onSort={bdSort.onSort}
             columns={[["Name / Issuer","left","name"],["Type","left","type"],["Value","right","value"],["Coupon / Yield","right","yield"],["Maturity","left","maturity"],["P&L","right","pnl"],["Status","left","status"]]}/>
           {bdSort.sortFn(filtered, (b, k) => {
             if (k==="name") return (b.name||"").toLowerCase();
@@ -5000,8 +5462,8 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
             const pnl = (bond.currentValue||0) - (bond.purchasePrice||0);
             const daysToMat = bond.maturityDate ? Math.ceil((new Date(bond.maturityDate) - new Date()) / 86400000) : null;
             return (
-              <div key={bond.id} onClick={()=>{setSelectedBond(bond);setDrawerTab("overview");}}
-                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.1fr 1fr 1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:i<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+              <div key={bond.id} onClick={()=>navigate({screen:"bonds",entityId:bond.id})}
+                style={{display:"grid",gridTemplateColumns:capCols("2.2fr 1fr 1.1fr 1fr 1fr 1fr 0.8fr"),columnGap:24,padding:"13px 20px",borderBottom:i<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
                   opacity:bond.status==="Matured"||bond.status==="Redeemed"?0.55:1,background:bond.status==="Matured"||bond.status==="Redeemed"?T.sidebar:""}}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                 onMouseLeave={e=>e.currentTarget.style.background=(bond.status==="Matured"||bond.status==="Redeemed"?T.sidebar:"")}>
@@ -5045,9 +5507,12 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
         </Card>
       )}
 
-      {/* ══ BOND DETAIL DRAWER ══ */}
-      {selectedBond && (() => {
-        const bond = bonds.find(b => b.id === selectedBond.id) || selectedBond;
+      </>)}
+
+      {/* ══ BOND DETAIL — full page ══ */}
+      {detailId && !detailBond && <NotFound message="This holding could not be found." onBack={goList}/>}
+      {detailBond && (() => {
+        const bond = detailBond;
         const tc = BOND_TYPE_CONFIG[bond.productType] || {icon:"📋",color:T.muted,bg:T.inputBg};
         const txs = (bond.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
         const pnl = (bond.currentValue||0) - (bond.purchasePrice||0);
@@ -5060,47 +5525,20 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
         const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
 
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e=>{if(e.target===e.currentTarget) setSelectedBond(null);}}>
-            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
-              {/* Header */}
-              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
-                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:16,fontWeight:700}}>{bond.name}</div>
-                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{bond.issuer} · {bond.issueCode||"—"}</div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <Badge bg={bond.status==="Active"?T.upBg:T.inputBg} color={bond.status==="Active"?T.up:T.muted}>{bond.status}</Badge>
-                    <button onClick={()=>{setEditBond(bond);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
-                    <button onClick={()=>setSelectedBond(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
-                  </div>
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:10,marginBottom:14}}>
-                  {[
-                    {l:"Current Value",v:fmtCompact(bond.currentValue)},
-                    {l:"Yield to Maturity",v:`${bond.yieldToMaturity}%`},
-                    {l:"Unrealised P&L",v:(pnl>=0?"+":"")+fmtCompact(pnl)},
-                  ].map(s=>(
-                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
-                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
-                      <div style={{fontSize:15,fontWeight:700,marginTop:4}}>{s.v}</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
-                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
-                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
-                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
-                      {dt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* Body */}
-              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+          <DetailPage
+            icon={tc.icon} iconBg={tc.bg}
+            title={bond.name}
+            subtitle={`${bond.issuer} · ${bond.issueCode||"—"}`}
+            badges={<Badge bg={bond.status==="Active"?T.upBg:T.inputBg} color={bond.status==="Active"?T.up:T.muted}>{bond.status}</Badge>}
+            headerActions={<button onClick={()=>{setEditBond(bond);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>}
+            stats={[
+              {l:"Current Value",v:fmtCompact(bond.currentValue)},
+              {l:"Yield to Maturity",v:`${bond.yieldToMaturity}%`},
+              {l:"Unrealised P&L",v:(pnl>=0?"+":"")+fmtCompact(pnl),c:pnl>=0?T.up:T.down},
+            ]}
+            tabs={[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"audit",label:"Audit"},{id:"manage",label:"Manage"}]}
+            activeTab={drawerTab} onTab={goTab} onBack={goList}>
+              <div>
                 {drawerTab === "overview" && (
                   <div style={{display:"flex",flexDirection:"column",gap:16}}>
                     <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
@@ -5150,7 +5588,13 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
                     )}
                   </div>
                 )}
-                {drawerTab === "transactions" && (
+                {drawerTab === "transactions" && (()=>{
+                  const _q = txSearch.trim().toLowerCase();
+                  const visibleTxs = txs.filter(t =>
+                    (txFilter==="All" || t.type===txFilter) &&
+                    (!_q || (t.type||"").toLowerCase().includes(_q) || (t.notes||"").toLowerCase().includes(_q) || (t.date||"").includes(_q) || (t.ref||"").toLowerCase().includes(_q) || (t.method||"").toLowerCase().includes(_q))
+                  );
+                  return (
                   <div style={{display:"flex",flexDirection:"column",gap:14}}>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                       {(()=>{
@@ -5169,19 +5613,17 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
                         </div>
                       ))}
                     </div>
-                    {bond.status !== "Matured" && bond.status !== "Redeemed" && (
-                      <div style={{display:"flex",justifyContent:"flex-end"}}>
-                        <button onClick={()=>setShowTxModal(true)} style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>+ Record Transaction</button>
-                      </div>
-                    )}
-                    {txs.length===0?(
-                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No transactions yet</div></div>
+                    <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                      filters={["All",...Array.from(new Set(txs.map(t=>t.type)))]}
+                      action={bond.status !== "Matured" && bond.status !== "Redeemed" && <button onClick={()=>setShowTxModal(true)} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Record</button>}/>
+                    {visibleTxs.length===0?(
+                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>{txs.length===0?"No transactions yet":"No matching transactions"}</div></div>
                     ):(
                       <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                        {txs.map((tx,i)=>{
+                        {visibleTxs.map((tx,i)=>{
                           const isIncome=["Coupon","Distribution","Interest"].includes(tx.type);
                           return (
-                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                            <div key={tx.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                               <div style={{width:34,height:34,borderRadius:8,background:isIncome?T.upBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
                                 {{Purchase:"📥",Sale:"📤",Coupon:"🎁",Distribution:"🎁",Interest:"🏦",Redemption:"📤"}[tx.type]||"💰"}
                               </div>
@@ -5199,15 +5641,24 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
                                 </div>
                                 <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
                               </div>
+                              <TxRowActions
+                                onEdit={()=>{ setEditTx(tx); setShowTxModal(true); }}
+                                onDelete={()=>{
+                                  if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
+                                  setBonds(prev=>prev.map(b=>b.id===bond.id?{...b,transactions:(b.transactions||[]).filter(t=>t.id!==tx.id)}:b));
+                                  if(logAudit) logAudit("bond", bond.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  showToast("Transaction deleted","success");
+                                }}/>
                             </div>
                           );
                         })}
                       </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
                 {drawerTab === "postings" && (() => {
-                  const sortedTxs = (bond.transactions||[]).filter(t=>t.status==="Paid").slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  const sortedTxs = (bond.transactions||[]).filter(t=>t.status==="Paid").slice().sort((a,b)=>b.date.localeCompare(a.date));
                   const journalRows = [];
                   sortedTxs.forEach(tx => {
                     if (tx.type==="Purchase") {
@@ -5244,8 +5695,7 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
                               <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",width:hi===0||hi>=3?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
                             ))}
                           </tr></thead>
-                          <tbody>
-                            {journalRows.map((row,ri)=>(
+                          {groupByFirst(journalRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                               <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                                 <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
                                   {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
@@ -5259,8 +5709,7 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
                                   {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                                 </td>
                               </tr>
-                            ))}
-                          </tbody>
+                            ))}</tbody>))}
                         </table>
                       </div>
                       <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
@@ -5273,28 +5722,34 @@ function BondsScreen({ bonds, setBonds, showToast, auditLog, logAudit }) {
                     </div>
                   );
                 })()}
-                {drawerTab === "history" && (
+                {drawerTab === "audit" && (
                   <AuditLogPanel auditLog={auditLog} entityType="bond" entityId={bond.id}/>
                 )}
                 {drawerTab === "manage" && (
-                  <BondActionPanel bond={bond} setBonds={setBonds} auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+                  <BondActionPanel bond={bond} setBonds={setBonds} accounts={accounts} setAccounts={setAccounts} auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
                 )}
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
       {/* Transaction modal */}
-      {showTxModal && selectedBond && (() => {
-        const bond = bonds.find(b => b.id === selectedBond.id) || selectedBond;
-        return <BondTxModalInner bond={bond} onSave={(tx) => {
-          const newTx = {...tx, id:"BTX"+Date.now(), status:"Paid"};
-          setBonds(prev => prev.map(b => b.id === bond.id ? { ...b, transactions: [...(b.transactions||[]), newTx] } : b));
-          if (logAudit) logAudit("bond", bond.id, "add-transaction", null, newTx, `${tx.type} · ${tx.amount||tx.qty||""}`);
-          setShowTxModal(false);
-          showToast(`${tx.type} recorded`, "success");
-        }} onClose={()=>setShowTxModal(false)}/>;
+      {showTxModal && detailBond && (() => {
+        const bond = detailBond;
+        return <BondTxModalInner bond={bond} editTx={editTx} onSave={(tx) => {
+          if (editTx) {
+            const upd = {...editTx, ...tx};
+            setBonds(prev => prev.map(b => b.id === bond.id ? { ...b, transactions: (b.transactions||[]).map(t=>t.id===editTx.id?upd:t) } : b));
+            if (logAudit) logAudit("bond", bond.id, "edit-transaction", editTx, upd, `${tx.type} · ${tx.amount||tx.qty||""}`);
+            showToast(`${tx.type} updated`, "success");
+          } else {
+            const newTx = {...tx, id:"BTX"+Date.now(), status:"Paid"};
+            setBonds(prev => prev.map(b => b.id === bond.id ? { ...b, transactions: [...(b.transactions||[]), newTx] } : b));
+            if (logAudit) logAudit("bond", bond.id, "add-transaction", null, newTx, `${tx.type} · ${tx.amount||tx.qty||""}`);
+            showToast(`${tx.type} recorded`, "success");
+          }
+          setShowTxModal(false); setEditTx(null);
+        }} onClose={()=>{setShowTxModal(false);setEditTx(null);}}/>;
       })()}
 
       {/* Add/Edit modal */}
@@ -5362,53 +5817,6 @@ const RETIREMENT_INIT = [
     ],
   },
   {
-    id:"RT003", planType:"Retirement Income Plan", planName:"NTUC Gro Retire Flex", provider:"NTUC Income", accountNumber:"GRF-2019-88421",
-    balance:45000, monthlyPayout:850, payoutStartAge:65, payoutStartDate:"2053-01-01",
-    payoutPlan:"", payoutPeriod:"20 years",
-    annualContribution:3600, totalContributed:18000,
-    interestRate:3.25, maturityDate:"2073-01-01", surrenderValue:12800, deathBenefit:52000,
-    fundingSource:"Cash", status:"Active",
-    guaranteedPayout:620, projectedPayout:850,
-    premiumPaymentTerm:20, premiumEndDate:"2039-01-01",
-    notes:"Regular premium plan. Guaranteed $620/mo + projected non-guaranteed bonus. 20-year payout period from age 65.",
-    transactions:[
-      {id:"RTX006",date:"2026-03-01",type:"Premium",amount:300,method:"GIRO",ref:"GRF-MAR26",status:"Paid",notes:"Mar 2026 monthly premium"},
-      {id:"RTX007",date:"2026-02-01",type:"Premium",amount:300,method:"GIRO",ref:"GRF-FEB26",status:"Paid",notes:"Feb 2026 monthly premium"},
-      {id:"RTX008",date:"2026-01-01",type:"Premium",amount:300,method:"GIRO",ref:"GRF-JAN26",status:"Paid",notes:"Jan 2026 monthly premium"},
-    ],
-  },
-  {
-    id:"RT004", planType:"Legacy / Endowment Plan", planName:"Manulife Wealth Builder", provider:"Manulife", accountNumber:"MWB-2021-44190",
-    balance:38000, monthlyPayout:0, payoutStartAge:0, payoutStartDate:"",
-    payoutPlan:"", payoutPeriod:"Whole Life",
-    annualContribution:6000, totalContributed:18000,
-    interestRate:0, maturityDate:"", surrenderValue:14200, deathBenefit:120000,
-    fundingSource:"Cash", status:"Active",
-    annualCouponGuaranteed:1200, annualCouponProjected:2400, accumulatedCoupons:3600,
-    premiumPaymentTerm:15, premiumEndDate:"2036-01-01",
-    notes:"15-year premium term. 2% guaranteed annual coupon + non-guaranteed. Death benefit 120K. Coupons accumulating.",
-    transactions:[
-      {id:"RTX009",date:"2026-01-15",type:"Premium",amount:6000,method:"Bank Transfer",ref:"MWB-2026",status:"Paid",notes:"2026 annual premium"},
-      {id:"RTX010",date:"2025-12-01",type:"Coupon",amount:1200,method:"Insurer Credit",ref:"MWB-COUP-2025",status:"Paid",notes:"2025 guaranteed annual coupon — accumulated with insurer"},
-      {id:"RTX011",date:"2025-01-15",type:"Premium",amount:6000,method:"Bank Transfer",ref:"MWB-2025",status:"Paid",notes:"2025 annual premium"},
-    ],
-  },
-  {
-    id:"RT005", planType:"Cash Reserve", planName:"Retirement Buffer — OCBC 360", provider:"OCBC", accountNumber:"360-5567",
-    balance:42000, monthlyPayout:0, payoutStartAge:0, payoutStartDate:"",
-    payoutPlan:"", payoutPeriod:"",
-    annualContribution:12000, totalContributed:42000,
-    interestRate:2.5, maturityDate:"", surrenderValue:42000, deathBenefit:0,
-    fundingSource:"Cash", status:"Active",
-    accountType:"Savings", isLiquid:true,
-    notes:"Liquid emergency + retirement buffer. Target 2-3 years of expenses. OCBC 360 bonus interest tiers.",
-    transactions:[
-      {id:"RTX012",date:"2026-03-01",type:"Top-Up",amount:1000,method:"Bank Transfer",ref:"OCBC-MAR26",status:"Paid",notes:"Mar 2026 monthly savings"},
-      {id:"RTX013",date:"2026-02-01",type:"Top-Up",amount:1000,method:"Bank Transfer",ref:"OCBC-FEB26",status:"Paid",notes:"Feb 2026 monthly savings"},
-      {id:"RTX014",date:"2025-12-15",type:"Interest",amount:87.50,method:"Bank Credit",ref:"OCBC-INT-Q4",status:"Paid",notes:"Q4 2025 interest credited"},
-    ],
-  },
-  {
     id:"RT006", planType:"CPF Balances", planName:"CPF OA + SA", provider:"CPF Board", accountNumber:"S****567A",
     balance:185000, monthlyPayout:0, payoutStartAge:55, payoutStartDate:"",
     payoutPlan:"", payoutPeriod:"",
@@ -5422,21 +5830,6 @@ const RETIREMENT_INIT = [
       {id:"RTX015",date:"2026-03-01",type:"Contribution",amount:1870,method:"Employer + Employee",ref:"CPF-MAR26",status:"Paid",notes:"Mar 2026 CPF contribution (OA $1,081 + SA $354 + MA $435)"},
       {id:"RTX016",date:"2026-02-01",type:"Contribution",amount:1870,method:"Employer + Employee",ref:"CPF-FEB26",status:"Paid",notes:"Feb 2026 CPF contribution"},
       {id:"RTX017",date:"2026-01-01",type:"Interest",amount:612,method:"CPF Board",ref:"CPF-INT-2025",status:"Paid",notes:"2025 annual interest credited — OA 2.5% + SA 4%"},
-    ],
-  },
-  {
-    id:"RT007", planType:"Retirement Income Plan", planName:"AIA Retirement Saver III", provider:"AIA", accountNumber:"ARS3-2022-10032",
-    balance:22000, monthlyPayout:500, payoutStartAge:60, payoutStartDate:"2048-07-01",
-    payoutPlan:"", payoutPeriod:"Lifetime",
-    annualContribution:2400, totalContributed:7200,
-    interestRate:3.0, maturityDate:"", surrenderValue:5800, deathBenefit:35000,
-    fundingSource:"SRS", status:"Active",
-    guaranteedPayout:380, projectedPayout:500,
-    premiumPaymentTerm:25, premiumEndDate:"2047-07-01",
-    notes:"Funded from SRS for tax efficiency. Lifetime payout option. Guaranteed $380/mo + projected bonuses.",
-    transactions:[
-      {id:"RTX018",date:"2026-01-01",type:"Premium",amount:2400,method:"SRS",ref:"ARS3-2026",status:"Paid",notes:"2026 annual premium — funded from SRS account"},
-      {id:"RTX019",date:"2025-01-01",type:"Premium",amount:2400,method:"SRS",ref:"ARS3-2025",status:"Paid",notes:"2025 annual premium — funded from SRS account"},
     ],
   },
 ];
@@ -5534,17 +5927,22 @@ function RetirementPlanModal({ plan, onSave, onClose }) {
 }
 
 // ── Retirement Transaction Modal ──────────────────────────────
-function RetirementTxModalInner({ plan, txTypes, txTypeIcon, onSave, onClose }) {
-  const [f, setF] = useState({
+function RetirementTxModalInner({ plan, txTypes, txTypeIcon, editTx, cashAccounts, onSave, onClose }) {
+  const isEdit = !!editTx;
+  const [f, setF] = useState(editTx ? { ...editTx } : {
     type: txTypes[0] || "Top-Up",
     date: new Date().toISOString().slice(0,10),
     amount: ["Payout"].includes(txTypes[0]) ? (plan.monthlyPayout||0) : 0,
-    method: plan.fundingSource === "SRS" ? "SRS" : plan.fundingSource === "CPF" ? "CPF Board" : "Bank Transfer",
+    method: plan.fundingSource === "SRS" ? "SRS" : plan.fundingSource === "CPF" ? "CPF" : "Bank Transfer",
     ref: "",
     notes: "",
+    creditAccountId: "",
   });
+  // Explicit RECORD toggle — log a non-cash event (e.g. employer-match
+  // vesting, in-kind rollover) without an IN/OUT classification.
+  const [recordOnly, setRecordOnly] = useState(!!(editTx && editTx.recordOnly));
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
-  const isOut = ["Payout","Withdrawal"].includes(f.type);
+  const isOut = !recordOnly && ["Payout","Withdrawal"].includes(f.type);
 
   const handleTypeChange = (type) => {
     set("type", type);
@@ -5557,7 +5955,7 @@ function RetirementTxModalInner({ plan, txTypes, txTypeIcon, onSave, onClose }) 
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <div style={{fontSize:16,fontWeight:800}}>{isEdit ? "Edit Transaction" : "Record Transaction"}</div>
           <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{plan.planName} · {plan.provider}</div>
@@ -5584,9 +5982,18 @@ function RetirementTxModalInner({ plan, txTypes, txTypeIcon, onSave, onClose }) 
           <div><Label required>Amount</Label><Input type="number" prefix="S$" value={f.amount} onChange={e=>set("amount",+e.target.value)}/></div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
-          <div><Label>Method</Label><Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Bank Transfer","GIRO","PayNow","CPF Board","SRS","Insurer Credit","Cash","Cheque"]}/></div>
+          <div><Label>Method</Label><Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Bank Transfer","CPF","SRS","Cash"]}/></div>
           <div><Label>Reference</Label><Input value={f.ref} onChange={e=>set("ref",e.target.value)} placeholder="e.g. REF-123456"/></div>
         </div>
+        {isOut && (
+          <div style={{marginBottom:14}}>
+            <Label required>Credit to Account</Label>
+            <Sel value={f.creditAccountId} onChange={e=>set("creditAccountId",e.target.value)}
+              placeholder={(cashAccounts&&cashAccounts.length) ? "Select account…" : undefined}
+              options={(cashAccounts&&cashAccounts.length) ? cashAccounts.map(a => ({value:String(a.id), label:`${a.bank} · ${a.accountName}`})) : ["— No cash accounts —"]}/>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>The {f.type.toLowerCase()} proceeds will be credited to this account.</div>
+          </div>
+        )}
         <div style={{marginBottom:14}}>
           <Label>Notes</Label>
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Mar 2026 monthly payout, annual SRS top-up…"
@@ -5594,8 +6001,10 @@ function RetirementTxModalInner({ plan, txTypes, txTypeIcon, onSave, onClose }) 
         </div>
 
         {/* Summary */}
-        <FlowBanner type={f.type} amount={f.amount} label={
-          f.type==="Top-Up" ? "📤 Top-up contribution to plan"
+        <FlowBanner type={f.type} flowOverride={recordOnly ? "info" : undefined}
+          amount={recordOnly ? null : f.amount} label={
+          recordOnly ? "📝 Recorded — no cash flow"
+          : f.type==="Top-Up" ? "📤 Top-up contribution to plan"
           : f.type==="Premium" ? "📤 Premium paid"
           : f.type==="Contribution" ? "📤 Plan contribution"
           : f.type==="Payout" ? "📥 Payout received from plan"
@@ -5604,12 +6013,13 @@ function RetirementTxModalInner({ plan, txTypes, txTypeIcon, onSave, onClose }) 
           : f.type==="Coupon" ? "🎁 Coupon credited"
           : "💰 Transaction"
         }/>
+        <RecordOnlyToggle recordOnly={recordOnly} setRecordOnly={setRecordOnly} style={{marginTop:0,marginBottom:14}}/>
 
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0)?0.4:1}}>
-            Record {f.type}
+          <button onClick={()=>onSave({...f, recordOnly})} disabled={!f.date||f.amount<=0||(isOut&&!f.creditAccountId)}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0||(isOut&&!f.creditAccountId))?0.4:1}}>
+            {isEdit ? "Save Changes" : recordOnly ? "Record entry" : `Record ${f.type}`}
           </button>
         </div>
       </div>
@@ -5622,7 +6032,7 @@ function RetirementTxModalInner({ plan, txTypes, txTypeIcon, onSave, onClose }) 
    Used for Manage tabs on Retirement / Real Estate / Loan / CC / BP.
    Renders action pills, current/new comparison, submit button, and an
    audit-log-driven history table for the currently selected field. */
-function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, auditLog, logAudit, showToast }) {
+function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, auditLog, logAudit, showToast, extraActions }) {
   const [actionKey, setActionKey] = useState(fields[0].key);
   const current = fields.find(f => f.key === actionKey) || fields[0];
   const [val, setVal] = useState(String(entity[current.key] ?? ""));
@@ -5655,24 +6065,25 @@ function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, a
     && (e.changes || []).some(c => c.field === current.key));
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <Card style={{padding:"16px 18px"}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Action</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+    <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:560}}>
+      <Card style={{padding:"12px 14px"}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:8,color:T.muted}}>Action</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
           {fields.map(f => (
             <button key={f.key} onClick={()=>switchAction(f.key)}
               style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${actionKey===f.key?T.selected:T.border}`,
                 background:actionKey===f.key?`${T.selected}15`:T.inputBg,color:actionKey===f.key?T.selected:T.muted,
                 cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:actionKey===f.key?700:500}}>
-              {f.icon || "💲"} Update {f.label}
+              {f.icon || "💲"} {f.label}
             </button>
           ))}
+          {extraActions}
         </div>
       </Card>
 
-      <Card style={{padding:"18px"}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>Update {current.label} — {entityLabel}</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <Card style={{padding:"14px 16px"}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:10,color:T.muted}}>Update {current.label} — {entityLabel}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           <div>
             <Label required>New {current.label}{suffix?` (${suffix})`:""}</Label>
             <Input type="number" step={current.step || "0.01"} prefix={prefix} value={val}
@@ -5698,7 +6109,7 @@ function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, a
         </div>
       </Card>
 
-      <Card style={{padding:"16px 18px"}}>
+      <Card style={{padding:"12px 14px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
           <div style={{fontSize:13,fontWeight:600}}>{current.label} History</div>
           <div style={{fontSize:11,color:T.muted}}>{updates.length} {updates.length === 1 ? "entry" : "entries"}</div>
@@ -5750,17 +6161,25 @@ function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, a
   );
 }
 
-function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
+function RetirementScreen({ plans, setPlans, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
+  const cashAccounts = (accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
   const isMobile = useIsMobile();
-  const [selectedPlan, setSelectedPlan] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editPlan, setEditPlan] = useState(null);
   const [filterType, setFilterType] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
-  const [drawerTab, setDrawerTab] = useState("overview");
   const [showTxModal, setShowTxModal] = useState(false);
+  const [editTx, setEditTx] = useState(null);
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
   const rtSort = useSortState();
+
+  const detailId = route.entityId;
+  const detailPlan = detailId ? plans.find(p => p.id === detailId) : null;
+  const drawerTab = route.tab || "overview";
+  const goTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goList = () => navigate({ screen: "retirement" });
 
   const activePlans = plans.filter(p => p.status === "Active" || p.status === "In Payout");
   const totalAssets = activePlans.reduce((s, p) => s + (p.balance||0), 0);
@@ -5801,6 +6220,7 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {!detailId && (<>
 
       {/* ── Page header ── */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -5891,7 +6311,7 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
         <Card style={{padding:0,overflow:"hidden"}}>
           {filtered.map(plan => {
             const tc = RET_TYPE_CONFIG[plan.planType] || {icon:"📋",color:T.muted,bg:T.inputBg};
-            return <MobileListItem key={plan.id} onClick={()=>{setSelectedPlan(plan);setDrawerTab("overview");}}
+            return <MobileListItem key={plan.id} onClick={()=>navigate({screen:"retirement",entityId:plan.id})}
               icon={tc.icon} iconBg={tc.bg} title={plan.planName} subtitle={`${plan.provider} · ${plan.planType}`}
               value={fmtCompact(plan.balance)} valueSub={plan.monthlyPayout>0?`+${fmtCompact(plan.monthlyPayout)}/mo`:plan.annualContribution>0?`${fmtCompact(plan.annualContribution)}/yr`:""}
               badge={plan.status} badgeBg={plan.status==="Active"?T.upBg:plan.status==="In Payout"?T.accentBg:T.inputBg} badgeColor={plan.status==="Active"?T.up:plan.status==="In Payout"?T.accent:T.muted}
@@ -5900,7 +6320,7 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
         </Card>
       ) : (
         <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
-          <SortHeader gridCols="2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.8fr" sortKey={rtSort.sortKey} sortDir={rtSort.sortDir} onSort={rtSort.onSort}
+          <SortHeader gridCols={capCols("2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.8fr")} sortKey={rtSort.sortKey} sortDir={rtSort.sortDir} onSort={rtSort.onSort}
             columns={[["Plan / Provider","left","planName"],["Type","left","planType"],["Balance","right","balance"],["Monthly Payout","right","payout"],["Contribution","right","contrib"],["Payout Age","left","payoutAge"],["Status","left","status"]]}/>
           {rtSort.sortFn(filtered, (p, k) => {
             if (k==="planName") return (p.planName||"").toLowerCase();
@@ -5914,8 +6334,8 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
           }).map((plan, i) => {
             const tc = RET_TYPE_CONFIG[plan.planType] || {icon:"📋",color:T.muted,bg:T.inputBg};
             return (
-              <div key={plan.id} onClick={()=>{setSelectedPlan(plan);setDrawerTab("overview");}}
-                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:i<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+              <div key={plan.id} onClick={()=>navigate({screen:"retirement",entityId:plan.id})}
+                style={{display:"grid",gridTemplateColumns:capCols("2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.8fr"),columnGap:24,padding:"13px 20px",borderBottom:i<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
                   opacity:plan.status==="Matured"||plan.status==="Surrendered"?0.55:1,
                   background:plan.status==="Matured"||plan.status==="Surrendered"?T.sidebar:""}}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
@@ -5966,9 +6386,12 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
         </Card>
       )}
 
-      {/* ══ PLAN DETAIL DRAWER — slide-in overlay ══ */}
-      {selectedPlan && (() => {
-        const plan = plans.find(p => p.id === selectedPlan.id) || selectedPlan;
+      </>)}
+
+      {/* ══ PLAN DETAIL — full page ══ */}
+      {detailId && !detailPlan && <NotFound message="This plan could not be found." onBack={goList}/>}
+      {detailPlan && (() => {
+        const plan = detailPlan;
         const tc = RET_TYPE_CONFIG[plan.planType] || {icon:"📋",color:T.muted,bg:T.inputBg};
         const txs = (plan.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
         const isPayoutPlan = plan.status === "In Payout" || plan.monthlyPayout > 0;
@@ -6000,53 +6423,21 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
         };
 
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e=>{if(e.target===e.currentTarget) setSelectedPlan(null);}}>
-            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
-              {/* Header */}
-              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
-                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:16,fontWeight:700}}>{plan.planName}</div>
-                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{plan.provider} · {plan.accountNumber||"—"}</div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <Badge bg={plan.status==="Active"?T.upBg:plan.status==="In Payout"?T.accentBg:T.inputBg}
-                      color={plan.status==="Active"?T.up:plan.status==="In Payout"?T.accent:T.muted}>
-                      {plan.status}
-                    </Badge>
-                    <button onClick={()=>{setEditPlan(plan);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
-                    <button onClick={()=>setSelectedPlan(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
-                  </div>
-                </div>
-                {/* Quick stats */}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:10,marginBottom:14}}>
-                  {[
-                    {l:"Balance / Value",v:fmtCompact(plan.balance)},
-                    {l:"Monthly Payout",v:plan.monthlyPayout>0?`+S$${plan.monthlyPayout.toLocaleString()}/mo`:"—"},
-                    {l:plan.deathBenefit>0?"Death Benefit":plan.surrenderValue>0?"Surrender Value":"Total Contributed",
-                     v:plan.deathBenefit>0?fmtCompact(plan.deathBenefit):plan.surrenderValue>0?fmtCompact(plan.surrenderValue):fmtCompact(plan.totalContributed)},
-                  ].map(s=>(
-                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
-                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
-                      <div style={{fontSize:15,fontWeight:700,marginTop:4}}>{s.v}</div>
-                    </div>
-                  ))}
-                </div>
-                {/* Pill tabs — same style as Loans/CC drawer */}
-                <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
-                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
-                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
-                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
-                      {dt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* Body */}
-              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+          <DetailPage
+            icon={tc.icon} iconBg={tc.bg}
+            title={plan.planName}
+            subtitle={`${plan.provider} · ${plan.accountNumber||"—"}`}
+            badges={<Badge bg={plan.status==="Active"?T.upBg:plan.status==="In Payout"?T.accentBg:T.inputBg} color={plan.status==="Active"?T.up:plan.status==="In Payout"?T.accent:T.muted}>{plan.status}</Badge>}
+            headerActions={<button onClick={()=>{setEditPlan(plan);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>}
+            stats={[
+              {l:"Balance / Value",v:fmtCompact(plan.balance)},
+              {l:"Monthly Payout",v:plan.monthlyPayout>0?`+S$${plan.monthlyPayout.toLocaleString()}/mo`:"—"},
+              {l:plan.deathBenefit>0?"Death Benefit":plan.surrenderValue>0?"Surrender Value":"Total Contributed",
+               v:plan.deathBenefit>0?fmtCompact(plan.deathBenefit):plan.surrenderValue>0?fmtCompact(plan.surrenderValue):fmtCompact(plan.totalContributed)},
+            ]}
+            tabs={[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"audit",label:"Audit"},{id:"manage",label:"Manage"}]}
+            activeTab={drawerTab} onTab={goTab} onBack={goList}>
+              <div>
 
                 {/* ── OVERVIEW TAB ── */}
                 {drawerTab === "overview" && (
@@ -6115,7 +6506,13 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
                 )}
 
                 {/* ── TRANSACTIONS TAB ── */}
-                {drawerTab === "transactions" && (
+                {drawerTab === "transactions" && (()=>{
+                  const _q = txSearch.trim().toLowerCase();
+                  const visibleTxs = txs.filter(t =>
+                    (txFilter==="All" || t.type===txFilter) &&
+                    (!_q || (t.type||"").toLowerCase().includes(_q) || (t.notes||"").toLowerCase().includes(_q) || (t.date||"").includes(_q) || (t.ref||"").toLowerCase().includes(_q) || (t.method||"").toLowerCase().includes(_q))
+                  );
+                  return (
                   <div style={{display:"flex",flexDirection:"column",gap:14}}>
                     {/* Summary strip */}
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
@@ -6138,30 +6535,25 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
                       ))}
                     </div>
 
-                    {/* + Record button */}
-                    {plan.status !== "Matured" && plan.status !== "Surrendered" && (
-                      <div style={{display:"flex",justifyContent:"flex-end"}}>
-                        <button onClick={()=>setShowTxModal(true)}
-                          style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
-                          + Record Transaction
-                        </button>
-                      </div>
-                    )}
+                    {/* Search + filter + Record */}
+                    <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                      filters={["All",...Array.from(new Set(txs.map(t=>t.type)))]}
+                      action={plan.status !== "Matured" && plan.status !== "Surrendered" && <button onClick={()=>setShowTxModal(true)} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Record</button>}/>
 
                     {/* Transaction list */}
-                    {txs.length === 0 ? (
+                    {visibleTxs.length === 0 ? (
                       <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}>
                         <div style={{fontSize:28,marginBottom:8}}>📒</div>
-                        <div style={{fontSize:13,fontWeight:600}}>No transactions yet</div>
-                        <div style={{fontSize:12,marginTop:4}}>Record a {isPayoutPlan?"payout":"premium or top-up"} to get started</div>
+                        <div style={{fontSize:13,fontWeight:600}}>{txs.length===0?"No transactions yet":"No matching transactions"}</div>
+                        {txs.length===0 && <div style={{fontSize:12,marginTop:4}}>Record a {isPayoutPlan?"payout":"premium or top-up"} to get started</div>}
                       </div>
                     ) : (
                       <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                        {txs.map((tx,i)=>{
+                        {visibleTxs.map((tx,i)=>{
                           const isOut = ["Payout","Withdrawal"].includes(tx.type);
                           const isPassive = ["Interest","Coupon"].includes(tx.type);
                           return (
-                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                            <div key={tx.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                               <div style={{width:34,height:34,borderRadius:8,background:isOut?T.downBg:isPassive?T.accentBg:T.upBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
                                 {txTypeIcon[tx.type]||"💰"}
                               </div>
@@ -6179,17 +6571,26 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
                                 </div>
                                 <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
                               </div>
+                              <TxRowActions
+                                onEdit={()=>{ setEditTx(tx); setShowTxModal(true); }}
+                                onDelete={()=>{
+                                  if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
+                                  setPlans(prev=>prev.map(p=>p.id===plan.id?{...p,transactions:(p.transactions||[]).filter(t=>t.id!==tx.id)}:p));
+                                  if(logAudit) logAudit("retirement", plan.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  showToast("Transaction deleted","success");
+                                }}/>
                             </div>
                           );
                         })}
                       </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* ── POSTINGS TAB ── */}
                 {drawerTab === "postings" && (() => {
-                  const sortedTxs = (plan.transactions || []).filter(t=>t.status==="Paid").slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  const sortedTxs = (plan.transactions || []).filter(t=>t.status==="Paid").slice().sort((a,b)=>b.date.localeCompare(a.date));
                   const journalRows = [];
 
                   sortedTxs.forEach(tx => {
@@ -6252,8 +6653,7 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
                               <th style={{padding:"9px 16px",textAlign:"right",width:148,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter}}>Credit</th>
                             </tr>
                           </thead>
-                          <tbody>
-                            {journalRows.map((row,ri)=>(
+                          {groupByFirst(journalRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                               <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                                 <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
                                   {row._first ? (<><div style={{fontSize:13,fontWeight:400,color:T.text,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>) : null}
@@ -6267,8 +6667,7 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
                                   {!row.debit ? <span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span> : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                                 </td>
                               </tr>
-                            ))}
-                          </tbody>
+                            ))}</tbody>))}
                         </table>
                       </div>
                       <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
@@ -6282,7 +6681,7 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
                     </div>
                   );
                 })()}
-                {drawerTab === "history" && (
+                {drawerTab === "audit" && (
                   <AuditLogPanel auditLog={auditLog} entityType="retirement" entityId={plan.id}/>
                 )}
                 {drawerTab === "manage" && (
@@ -6300,14 +6699,13 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
                 )}
 
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
       {/* Record Transaction Modal */}
-      {showTxModal && selectedPlan && (() => {
-        const plan = plans.find(p => p.id === selectedPlan.id) || selectedPlan;
+      {showTxModal && detailPlan && (() => {
+        const plan = detailPlan;
         const isPayoutPlan = plan.status === "In Payout" || plan.monthlyPayout > 0;
         const getTxTypes = () => {
           if (plan.status === "In Payout" || plan.planType === "CPF LIFE") return ["Payout","Withdrawal"];
@@ -6320,22 +6718,49 @@ function RetirementScreen({ plans, setPlans, showToast, auditLog, logAudit }) {
         const txTypes = getTxTypes();
         const txTypeIcon = {Payout:"📤",Premium:"💳",["Top-Up"]:"📥",Contribution:"📥",Interest:"🏦",Coupon:"🎁",Withdrawal:"📤"};
 
+        const balEffect = (t) => (["Payout","Withdrawal"].includes(t.type) ? -1 : 1) * (t.amount||0);
+        const contribEffect = (t) => (!["Payout","Withdrawal","Interest","Coupon"].includes(t.type)) ? (t.amount||0) : 0;
         return (
-          <RetirementTxModalInner plan={plan} txTypes={txTypes} txTypeIcon={txTypeIcon}
+          <RetirementTxModalInner plan={plan} txTypes={txTypes} txTypeIcon={txTypeIcon} editTx={editTx} cashAccounts={cashAccounts}
             onSave={(tx) => {
-              const newTx = {...tx, id:"RTX"+Date.now(), status:"Paid"};
-              const isOut = ["Payout","Withdrawal"].includes(tx.type);
-              setPlans(prev => prev.map(p => p.id === plan.id ? {
-                ...p,
-                transactions: [...(p.transactions||[]), newTx],
-                balance: isOut ? Math.max(0, p.balance - tx.amount) : p.balance + tx.amount,
-                totalContributed: !isOut && tx.type !== "Interest" && tx.type !== "Coupon" ? p.totalContributed + tx.amount : p.totalContributed,
-              } : p));
-              if (logAudit) logAudit("retirement", plan.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount}`);
-              setShowTxModal(false);
-              showToast(`${tx.type} recorded`, "success");
+              if (editTx) {
+                const upd = {...editTx, ...tx};
+                setPlans(prev => prev.map(p => p.id === plan.id ? {
+                  ...p,
+                  transactions: (p.transactions||[]).map(t=>t.id===editTx.id?upd:t),
+                  balance: Math.max(0, p.balance - balEffect(editTx) + balEffect(upd)),
+                  totalContributed: (p.totalContributed||0) - contribEffect(editTx) + contribEffect(upd),
+                } : p));
+                if (logAudit) logAudit("retirement", plan.id, "edit-transaction", editTx, upd, `${tx.type} · S$${tx.amount}`);
+                showToast(`${tx.type} updated`, "success");
+              } else {
+                const newTx = {...tx, id:"RTX"+Date.now(), status:"Paid"};
+                const isOut = ["Payout","Withdrawal"].includes(tx.type);
+                setPlans(prev => prev.map(p => p.id === plan.id ? {
+                  ...p,
+                  transactions: [...(p.transactions||[]), newTx],
+                  balance: isOut ? Math.max(0, p.balance - tx.amount) : p.balance + tx.amount,
+                  totalContributed: !isOut && tx.type !== "Interest" && tx.type !== "Coupon" ? p.totalContributed + tx.amount : p.totalContributed,
+                } : p));
+                // Payout/Withdrawal via Bank Transfer credits the chosen cash account
+                // — skipped when the entry is flagged record-only (no cash flow).
+                if (isOut && !tx.recordOnly && tx.creditAccountId && setAccounts) {
+                  const amt = +tx.amount || 0;
+                  setAccounts(prev => prev.map(a => {
+                    if (String(a.id) !== String(tx.creditAccountId)) return a;
+                    const cur = acctBalances(a);
+                    const has = cur.find(b => b.ccy === "SGD");
+                    const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + amt } : b) : [...cur, { ccy:"SGD", amount: amt }];
+                    const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + amt } : {};
+                    return { ...a, balances: nextBals, ...nextLegacy };
+                  }));
+                }
+                if (logAudit) logAudit("retirement", plan.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount}`);
+                showToast(`${tx.type} recorded`, "success");
+              }
+              setShowTxModal(false); setEditTx(null);
             }}
-            onClose={()=>setShowTxModal(false)}
+            onClose={()=>{setShowTxModal(false);setEditTx(null);}}
           />
         );
       })()}
@@ -6400,18 +6825,6 @@ const CRYPTO_INIT = [
     ],
   },
   {
-    id:"CR002", holdingType:"Spot Crypto", symbol:"ETH", name:"Ethereum", chain:"Ethereum",
-    wallet:"MetaMask", walletType:"Hot Wallet", walletAddress:"0x742d...38a1", walletAccountId:"WL002",
-    quantity:4.25, avgCostPrice:3240, currentPrice:4820,
-    stakingYield:0, lendingProtocol:"",
-    acquisitionDate:"2024-05-08", currency:"SGD", status:"Active",
-    notes:"Used for DeFi interactions and NFT minting. Kept in MetaMask for convenience.",
-    transactions:[
-      {id:"CTX005",date:"2024-05-08",type:"Buy",qty:2.5,price:3100,amount:7750,method:"Binance",ref:"BN-ETH-MAY24",status:"Complete",notes:"Initial purchase"},
-      {id:"CTX006",date:"2024-07-22",type:"Buy",qty:1.75,price:3440,amount:6020,method:"Binance",ref:"BN-ETH-JUL24",status:"Complete",notes:"Added on dip"},
-    ],
-  },
-  {
     id:"CR003", holdingType:"Stablecoin", symbol:"USDC", name:"USD Coin", chain:"Ethereum",
     wallet:"Binance", walletType:"Exchange", walletAddress:"", walletAccountId:"WL003",
     quantity:12500, avgCostPrice:1.35, currentPrice:1.34,
@@ -6420,21 +6833,6 @@ const CRYPTO_INIT = [
     notes:"Dry powder for buying dips. Kept on exchange for quick deployment.",
     transactions:[
       {id:"CTX007",date:"2025-01-10",type:"Buy",qty:12500,price:1.35,amount:16875,method:"Bank Transfer",ref:"BN-USDC-JAN25",status:"Complete",notes:"Converted SGD to USDC for crypto allocation"},
-    ],
-  },
-  {
-    id:"CR004", holdingType:"Lending / DeFi", symbol:"USDT", name:"Tether USD", chain:"BNB Chain",
-    wallet:"Crypto.com Earn", walletType:"DeFi Protocol", walletAddress:"", walletAccountId:"WL004",
-    quantity:8000, avgCostPrice:1.34, currentPrice:1.34,
-    stakingYield:6.5, lendingProtocol:"Crypto.com Earn",
-    acquisitionDate:"2024-11-20", currency:"SGD", status:"Active",
-    notes:"Fixed 3-month term. 6.5% APY on stablecoin. Auto-renewing.",
-    transactions:[
-      {id:"CTX008",date:"2024-11-20",type:"Deposit",qty:8000,price:1.34,amount:10720,method:"Crypto.com Earn",ref:"CR-USDT-NOV24",status:"Complete",notes:"3-month term deposit"},
-      {id:"CTX009",date:"2025-02-20",type:"Interest",qty:130,price:1.34,amount:174,method:"Auto-credit",ref:"CR-INT-FEB25",status:"Complete",notes:"Quarterly interest payout"},
-      {id:"CTX010",date:"2025-05-20",type:"Interest",qty:132,price:1.34,amount:177,method:"Auto-credit",ref:"CR-INT-MAY25",status:"Complete",notes:"Quarterly interest payout"},
-      {id:"CTX011",date:"2025-08-20",type:"Interest",qty:134,price:1.34,amount:180,method:"Auto-credit",ref:"CR-INT-AUG25",status:"Complete",notes:"Quarterly interest payout"},
-      {id:"CTX012",date:"2025-11-20",type:"Interest",qty:136,price:1.34,amount:182,method:"Auto-credit",ref:"CR-INT-NOV25",status:"Complete",notes:"Quarterly interest payout"},
     ],
   },
   {
@@ -6450,47 +6848,25 @@ const CRYPTO_INIT = [
       {id:"CTX015",date:"2025-08-15",type:"Staking Reward",qty:0.033,price:4620,amount:152.46,method:"Auto-rebase",ref:"LIDO-RWD-AUG25",status:"Complete",notes:"H2 staking reward"},
     ],
   },
-  {
-    id:"CR006", holdingType:"Staked", symbol:"SOL", name:"Solana", chain:"Solana",
-    wallet:"Phantom", walletType:"Hot Wallet", walletAddress:"7xKw...9mP2", walletAccountId:"WL006",
-    quantity:62.5, avgCostPrice:180, currentPrice:310,
-    stakingYield:7.1, lendingProtocol:"Marinade Finance",
-    acquisitionDate:"2024-09-03", currency:"SGD", status:"Active",
-    notes:"Native SOL staking via Marinade. ~7.1% APY. Liquid staking with mSOL.",
-    transactions:[
-      {id:"CTX016",date:"2024-09-03",type:"Buy",qty:62.5,price:180,amount:11250,method:"Binance",ref:"BN-SOL-SEP24",status:"Complete",notes:"Purchased SOL for staking"},
-      {id:"CTX017",date:"2024-09-10",type:"Stake",qty:62.5,price:0,amount:0,method:"Marinade",ref:"MNDE-STAKE-SEP24",status:"Complete",notes:"Delegated to Marinade validator"},
-      {id:"CTX018",date:"2025-03-10",type:"Staking Reward",qty:2.2,price:265,amount:583,method:"Auto-restake",ref:"MNDE-RWD-MAR25",status:"Complete",notes:"H1 rewards"},
-      {id:"CTX019",date:"2025-09-10",type:"Staking Reward",qty:2.1,price:290,amount:609,method:"Auto-restake",ref:"MNDE-RWD-SEP25",status:"Complete",notes:"H2 rewards"},
-    ],
-  },
-  {
-    id:"CR007", holdingType:"Spot Crypto", symbol:"AVAX", name:"Avalanche", chain:"Avalanche",
-    wallet:"Coinbase", walletType:"Exchange", walletAddress:"", walletAccountId:"WL007",
-    quantity:85, avgCostPrice:42, currentPrice:38.50,
-    stakingYield:0, lendingProtocol:"",
-    acquisitionDate:"2025-02-28", currency:"SGD", status:"Active",
-    notes:"Speculative position. Waiting for ecosystem growth.",
-    transactions:[
-      {id:"CTX020",date:"2025-02-28",type:"Buy",qty:85,price:42,amount:3570,method:"Coinbase",ref:"CB-AVAX-FEB25",status:"Complete",notes:"Alt allocation"},
-    ],
-  },
 ];
 
 // ── Crypto Transaction Modal ──────────────────────────────────
-function CryptoTxModalInner({ crypto, onSave, onClose }) {
+function CryptoTxModalInner({ crypto, editTx, onSave, onClose }) {
+  const isEdit = !!editTx;
   const txTypes = crypto.holdingType === "Staked" ? ["Stake","Unstake","Staking Reward","Transfer In","Transfer Out"]
     : crypto.holdingType === "Lending / DeFi" ? ["Deposit","Withdraw","Interest"]
     : crypto.holdingType === "Stablecoin" ? ["Buy","Sell","Transfer In","Transfer Out","Interest"]
     : ["Buy","Sell","Transfer In","Transfer Out","Airdrop","Fee"];
   const txTypeIcon = {Buy:"📥",Sell:"📤","Transfer In":"⬇",  "Transfer Out":"⬆",Stake:"🔒",Unstake:"🔓","Staking Reward":"🎁",Deposit:"📥",Withdraw:"📤",Interest:"💰",Airdrop:"🎉",Fee:"⚠️"};
 
-  const [f, setF] = useState({
+  const [f, setF] = useState(editTx ? { ...editTx } : {
     type: txTypes[0],
     date: new Date().toISOString().slice(0,10),
     qty: 0, price: crypto.currentPrice || 0, amount: 0,
     method: crypto.wallet || "", ref: "", notes: "",
   });
+  // Explicit RECORD toggle — log the entry without an IN/OUT cash-flow classification (item #15)
+  const [recordOnly, setRecordOnly] = useState(!!(editTx && editTx.recordOnly));
   const set = (k, v) => {
     setF(p => {
       const next = { ...p, [k]: v };
@@ -6505,7 +6881,7 @@ function CryptoTxModalInner({ crypto, onSave, onClose }) {
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <div style={{fontSize:16,fontWeight:800}}>{isEdit ? "Edit Transaction" : "Record Transaction"}</div>
           <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{crypto.symbol} · {crypto.name} · {crypto.wallet}</div>
@@ -6538,8 +6914,10 @@ function CryptoTxModalInner({ crypto, onSave, onClose }) {
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. DCA buy, staking reward, moved to cold storage…"
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
         </div>
-        <FlowBanner type={f.type} amount={f.amount} label={
-          f.type==="Buy" ? "📤 Capital deployed to crypto"
+        <FlowBanner type={f.type} flowOverride={recordOnly ? "info" : undefined}
+          amount={recordOnly ? null : f.amount} label={
+          recordOnly ? "📝 Recorded — no cash flow"
+          : f.type==="Buy" ? "📤 Capital deployed to crypto"
           : f.type==="Sell" ? "📥 Sale proceeds"
           : f.type==="Fee" ? "📤 Network / protocol fee"
           : f.type==="Staking Reward" ? "🎁 Staking reward"
@@ -6553,11 +6931,21 @@ function CryptoTxModalInner({ crypto, onSave, onClose }) {
           : f.type==="Withdraw" ? "📤 DeFi withdrawal (no cash flow)"
           : "💰 Transaction"
         }/>
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+        <div onClick={()=>setRecordOnly(v=>!v)}
+          style={{marginTop:10,display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:recordOnly?T.accentBg:T.inputBg,border:`1px solid ${recordOnly?T.accent+"55":T.border}`,borderRadius:9,cursor:"pointer",userSelect:"none"}}>
+          <div style={{width:18,height:18,borderRadius:5,border:`2px solid ${recordOnly?T.accent:T.dim}`,background:recordOnly?T.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            {recordOnly && <span style={{color:"#fff",fontSize:12,fontWeight:700,lineHeight:1}}>✓</span>}
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,fontWeight:600,color:recordOnly?T.accent:T.text}}>Record only — no cash flow</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:1}}>Log this entry for the books without classifying it as money IN or OUT.</div>
+          </div>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:14}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.date}
+          <button onClick={()=>onSave({...f, recordOnly})} disabled={!f.date}
             style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date)?0.4:1}}>
-            Record {f.type}
+            {isEdit ? "Save Changes" : recordOnly ? "Record entry" : `Record ${f.type}`}
           </button>
         </div>
       </div>
@@ -6623,14 +7011,17 @@ function CryptoModal({ crypto, onSave, onClose }) {
 }
 
 // ── Cryptocurrencies Screen ───────────────────────────────────
-function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast }) {
+function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast, mode, onRecorded }) {
   const TX_TYPES_BY_HOLDING = {
     "Staked": ["Stake","Unstake","Staking Reward","Transfer In","Transfer Out"],
     "Lending / DeFi": ["Deposit","Withdraw","Interest"],
     "Stablecoin": ["Buy","Sell","Transfer In","Transfer Out","Interest"],
   };
   const baseTypes = TX_TYPES_BY_HOLDING[crypto.holdingType] || ["Buy","Sell","Transfer In","Transfer Out"];
-  const ALL_TYPES = [...baseTypes, "Update Price"];
+  // mode "record" → transaction-recording types only (Buy/Sell/Transfer/…); mode "manage" → Update Price only; default → all
+  const ALL_TYPES = mode === "manage" ? ["Update Price"]
+    : mode === "record" ? baseTypes
+    : [...baseTypes, "Update Price"];
   const ICONS = {Buy:"📥",Sell:"📤","Transfer In":"⬇","Transfer Out":"⬆",Stake:"🔒",Unstake:"🔓","Staking Reward":"🎁",Deposit:"📥",Withdraw:"📤",Interest:"💰",Airdrop:"🎉",Fee:"⚠️","Update Price":"💲"};
   const colorFor = (t) => t==="Buy"||t==="Deposit"||t==="Stake"?T.up
     : t==="Sell"||t==="Withdraw"||t==="Unstake"||t==="Fee"?T.down
@@ -6639,7 +7030,7 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast }
   const INCREASE_QTY = ["Buy","Transfer In","Staking Reward","Airdrop","Deposit","Stake"];
   const DECREASE_QTY = ["Sell","Transfer Out","Withdraw","Unstake","Fee"];
 
-  const [txType, setTxType] = useState("Buy");
+  const [txType, setTxType] = useState(ALL_TYPES[0]);
   const blankForm = () => ({
     date: new Date().toISOString().slice(0,10),
     qty: "", price: String(crypto.currentPrice || ""), amount: "",
@@ -6715,6 +7106,7 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast }
     if (logAudit) logAudit("crypto", crypto.id, "add-transaction", null, newTx, `${txType} · ${qty} ${crypto.symbol}`);
     showToast(`${txType} recorded — ${qty} ${crypto.symbol}`, "success");
     setForm(blankForm());
+    if (onRecorded) onRecorded();
   };
 
   const oldPrice = crypto.currentPrice || 0;
@@ -6732,11 +7124,11 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast }
   const needsPrice = txType === "Buy" || txType === "Sell" || txType === "Interest";
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:560}}>
       {/* Action pills */}
-      <Card style={{padding:"16px 18px"}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Action</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      <Card style={{padding:"12px 14px"}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:8,color:T.muted}}>Action</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
           {ALL_TYPES.map(t => {
             const active = txType === t;
             const c = colorFor(t);
@@ -6753,10 +7145,10 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast }
       </Card>
 
       {/* Details form */}
-      <Card style={{padding:"18px"}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>{isUpdatePrice ? `Update Market Price — ${crypto.symbol}` : `${txType} — ${crypto.symbol}`}</div>
+      <Card style={{padding:"14px 16px"}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:10,color:T.muted}}>{isUpdatePrice ? `Update Market Price — ${crypto.symbol}` : `${txType} — ${crypto.symbol}`}</div>
         {isUpdatePrice ? (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div>
               <Label required>New Market Price (SGD)</Label>
               <Input type="number" step="0.01" value={form.price} onChange={e=>set("price",e.target.value)} placeholder={String(oldPrice||"0.00")}/>
@@ -6777,7 +7169,7 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast }
             </div>
           </div>
         ) : (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div><Label required>Date</Label>
               <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
             </div>
@@ -6921,25 +7313,42 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast }
   );
 }
 
-function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransactions, showToast, auditLog, logAudit }) {
+function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransactions, showToast, auditLog, logAudit, route, navigate }) {
   const isMobile = useIsMobile();
-  const [selectedWallet, setSelectedWallet] = useState(null);
-  const [walletDrawerTab, setWalletDrawerTab] = useState("holdings");
   const [buyCryptoModalWallet, setBuyCryptoModalWallet] = useState(null);
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [showCryptoTransferModal, setShowCryptoTransferModal] = useState(false);
-  const [selectedCrypto, setSelectedCrypto] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editCrypto, setEditCrypto] = useState(null);
   const [filterType, setFilterType] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
-  const [drawerTab, setDrawerTab] = useState("overview");
   const [showTxModal, setShowTxModal] = useState(false);
+  const [editTx, setEditTx] = useState(null);
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
+  const [labelWallet, setLabelWallet] = useState(null); // wallet whose custom label is being edited
+  const [labelDraft, setLabelDraft] = useState("");
   const cySort = useSortState();
   const walSort = useSortState();
+  // Wallet-level Transactions tab toolbar state (mirrors the Stocks account history tab)
+  const [walTxSearch, setWalTxSearch] = useState("");
+  const [walTxFilter, setWalTxFilter] = useState("All");
+  const [walTxSort, setWalTxSort] = useState({ col: "date", dir: "desc" });
 
   const walletAccounts = (accounts || []).filter(a => a.accountType === "Crypto Wallet");
+
+  // Two-level routing: parentId = wallet, entityId = coin
+  const detailWalletId = route.parentId;
+  const detailCoinId = route.entityId;
+  const selectedWallet = detailWalletId ? walletAccounts.find(a => String(a.id) === String(detailWalletId)) : null;
+  const selectedCrypto = detailCoinId ? cryptos.find(c => String(c.id) === String(detailCoinId)) : null;
+  const walletDrawerTab = route.tab || "holdings";
+  const drawerTab = route.tab || "overview";
+  const setWalletDrawerTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const setDrawerTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goCryptoList = () => navigate({ screen: "crypto" });
+  const goWallet = () => navigate({ screen: "crypto", parentId: detailWalletId || (selectedCrypto && selectedCrypto.walletAccountId) });
   const walletList = [...new Set([...walletAccounts.map(a => a.bank), ...cryptos.map(c => c.wallet)])].filter(Boolean);
 
   // No wallet scoping in flat view
@@ -6993,6 +7402,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {!detailWalletId && (<>
 
       {/* Page header */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -7096,7 +7506,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
             {filteredWallets.map(s => {
               const bc = BANK_COLORS[s.wallet.bank] || { from:"#374151", to:"#1F2937" };
               const total = s.value + s.fiatSGD;
-              return <MobileListItem key={s.wallet.id} onClick={()=>{setWalletDrawerTab("holdings");setSelectedWallet(s.wallet);}}
+              return <MobileListItem key={s.wallet.id} onClick={()=>navigate({screen:"crypto",parentId:s.wallet.id})}
                 icon="🪙" iconBg={`linear-gradient(135deg,${bc.from},${bc.to})`}
                 title={s.wallet.bank} subtitle={`${s.wallet.accountName} · ${s.wallet.chain||""}`}
                 value={fmtCompact(total)} valueColor={T.text}
@@ -7108,7 +7518,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
         );
         return (
           <Card style={{padding:0,overflow:"hidden"}}>
-            <SortHeader gridCols="2.2fr 1fr 0.9fr 1fr 1.1fr 1fr 0.9fr" sortKey={walSort.sortKey} sortDir={walSort.sortDir} onSort={walSort.onSort}
+            <SortHeader gridCols={capCols("2.2fr 1fr 0.9fr 1fr 1.1fr 1fr 0.9fr")} sortKey={walSort.sortKey} sortDir={walSort.sortDir} onSort={walSort.onSort}
               columns={[["Wallet","left","wallet"],["Chain","left","chain"],["Coins","right","count"],["Cash (SGD)","right","fiat"],["Crypto Value","right","value"],["P&L","right","pnl"],["Return","right","pnlPct"]]}/>
             {walSort.sortFn(filteredWallets, (s, k) => {
               if (k==="wallet") return (s.wallet.bank||"").toLowerCase();
@@ -7123,15 +7533,18 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
               const bc = BANK_COLORS[s.wallet.bank] || { from:"#374151", to:"#1F2937" };
               const bals = acctBalances(s.wallet);
               return (
-                <div key={s.wallet.id} onClick={()=>{setWalletDrawerTab("holdings");setSelectedWallet(s.wallet);}}
-                  style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 0.9fr 1fr 1.1fr 1fr 0.9fr",padding:"13px 20px",borderBottom:i<filteredWallets.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer"}}
+                <div key={s.wallet.id} onClick={()=>navigate({screen:"crypto",parentId:s.wallet.id})}
+                  style={{display:"grid",gridTemplateColumns:capCols("2.2fr 1fr 0.9fr 1fr 1.1fr 1fr 0.9fr"),columnGap:24,padding:"13px 20px",borderBottom:i<filteredWallets.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer"}}
                   onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                   onMouseLeave={e=>e.currentTarget.style.background=""}>
                   {/* Wallet */}
                   <div style={{display:"flex",gap:10,alignItems:"center",minWidth:0}}>
                     <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0,color:"#fff"}}>🪙</div>
                     <div style={{minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:600}}>{s.wallet.bank}</div>
+                      <div style={{fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+                        {s.wallet.bank}
+                        {s.wallet.label && <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:5,background:T.selected,color:T.selectedText}}>🏷 {s.wallet.label}</span>}
+                      </div>
                       <div style={{fontSize:11,color:T.muted,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.wallet.accountName} · {s.wallet.walletKind}</div>
                     </div>
                   </div>
@@ -7157,9 +7570,12 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
         );
       })()}
 
-      {/* ── Wallet drawer — drill-down into one wallet ── */}
-      {selectedWallet && (() => {
-        const w = walletAccounts.find(a => a.id === selectedWallet.id) || selectedWallet;
+      </>)}
+
+      {/* ── Wallet detail — full page (drill-down into one wallet) ── */}
+      {detailWalletId && !detailCoinId && !selectedWallet && <NotFound message="This wallet could not be found." onBack={goCryptoList}/>}
+      {detailWalletId && !detailCoinId && selectedWallet && (() => {
+        const w = selectedWallet;
         const coins = cryptos.filter(c => c.walletAccountId === w.id || c.wallet === w.bank || c.wallet === w.accountName);
         const bc = BANK_COLORS[w.bank] || { from:"#374151", to:"#1F2937" };
         const bals = acctBalances(w);
@@ -7168,72 +7584,40 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
         const cryptoCost  = coins.filter(c => c.status === "Active").reduce((s,c) => s + ((c.quantity||0)*(c.avgCostPrice||0)), 0);
         const cryptoPnL = cryptoValue - cryptoCost;
         const cryptoPnLPct = cryptoCost > 0 ? (cryptoPnL/cryptoCost*100) : 0;
+        const txCount = coins.reduce((s,c) => s + ((c.transactions||[]).length), 0);
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e=>{if(e.target===e.currentTarget) setSelectedWallet(null);}}>
-            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
-              {/* Header — matches Brokerage drawer style */}
-              <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-                    <div style={{width:32,height:32,borderRadius:8,background:`linear-gradient(135deg,${bc.from},${bc.to})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>🪙</div>
-                    <div style={{minWidth:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                        <div style={{fontSize:14,fontWeight:800}}>{w.bank}</div>
-                        <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.accentBg,color:T.accent}}>{w.walletKind}</span>
-                        {w.chain && <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{w.chain}</span>}
-                      </div>
-                      <div style={{fontSize:11,color:T.muted,marginTop:3,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                        <span>{w.accountName}</span>
-                        {w.walletAddress && <AddressPill address={w.walletAddress}/>}
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
-                    <button onClick={()=>setBuyCryptoModalWallet(w)}
-                      style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:7,height:28,padding:"0 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",lineHeight:1}}>
-                      + Add Holding
-                    </button>
-                    <button onClick={()=>setSelectedWallet(null)} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:14,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
-                  </div>
-                </div>
-                {/* Stat cards */}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:14}}>
-                  {[
-                    { l:"Crypto Value", v:fmtCompact(cryptoValue), c:T.text },
-                    { l:"Cost Basis", v:fmtCompact(cryptoCost), c:T.muted },
-                    { l:"Unrealised P&L", v:(cryptoPnL>=0?"+":"")+fmtCompact(cryptoPnL), c:cryptoPnL>=0?T.up:T.down, sub:`${cryptoPnL>=0?"+":""}${cryptoPnLPct.toFixed(1)}%` },
-                    { l:"Cash Balance", v:fmtCompact(fiatSGD), c:T.text, sub:"SGD" },
-                  ].map(s=>(
-                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
-                      <div style={{fontSize:11,color:T.muted,fontWeight:500}}>{s.l}</div>
-                      <div style={{fontSize:14,fontWeight:700,marginTop:3,color:s.c}}>{s.v}</div>
-                      {s.sub && <div style={{fontSize:10,color:s.c,marginTop:1}}>{s.sub}</div>}
-                    </div>
-                  ))}
-                </div>
-                {/* Pill tabs */}
-                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                  {(() => {
-                    const txCount = coins.reduce((s,c) => s + ((c.transactions||[]).length), 0);
-                    return [
-                      { id:"holdings", label:`Holdings (${coins.length})` },
-                      { id:"history",  label:`Transactions${txCount>0?` (${txCount})`:""}` },
-                      { id:"postings", label:"Postings" },
-                    ];
-                  })().map(t => (
-                    <button key={t.id} onClick={()=>setWalletDrawerTab(t.id)}
-                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:walletDrawerTab===t.id?T.selected:T.inputBg,
-                        color:walletDrawerTab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:walletDrawerTab===t.id?700:400}}>
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Tab content */}
-              <div style={{flex:1,overflowY:"auto",minHeight:0}}>
-                <div style={{padding:"18px 22px 32px"}}>
+          <DetailPage
+            icon="🪙" iconBg={`linear-gradient(135deg,${bc.from},${bc.to})`}
+            title={w.bank}
+            subtitle={w.accountName}
+            badges={<>
+              {w.label && <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:5,background:T.selected,color:T.selectedText}}>🏷 {w.label}</span>}
+              <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.accentBg,color:T.accent}}>{w.walletKind}</span>
+              {w.chain && <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.inputBg,color:T.muted}}>{w.chain}</span>}
+              <span title={walletFiatCapable(w)?"This wallet can hold & transfer fiat":"This wallet cannot transfer fiat — crypto only"}
+                style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:walletFiatCapable(w)?T.upBg:T.inputBg,color:walletFiatCapable(w)?T.up:T.muted}}>
+                {walletFiatCapable(w)?"💵 Fiat OK":"🚫 No fiat"}
+              </span>
+              {w.walletAddress && <AddressPill address={w.walletAddress}/>}
+            </>}
+            headerActions={<div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{setLabelWallet(w);setLabelDraft(w.label||"");}} style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,height:28,padding:"0 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",color:T.text,display:"inline-flex",alignItems:"center",lineHeight:1}}>🏷 {w.label?"Edit Label":"Add Label"}</button>
+              <button onClick={()=>setBuyCryptoModalWallet(w)} style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:7,height:28,padding:"0 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",lineHeight:1}}>+ Add Holding</button>
+            </div>}
+            stats={[
+              { l:"Crypto Value", v:fmtCompact(cryptoValue), c:T.text },
+              { l:"Cost Basis", v:fmtCompact(cryptoCost), c:T.muted },
+              { l:"Unrealised P&L", v:(cryptoPnL>=0?"+":"")+fmtCompact(cryptoPnL), c:cryptoPnL>=0?T.up:T.down, sub:`${cryptoPnL>=0?"+":""}${cryptoPnLPct.toFixed(1)}%`, subC:cryptoPnL>=0?T.up:T.down },
+              { l:"Cash Balance", v:fmtCompact(fiatSGD), c:T.text, sub:"SGD" },
+            ]}
+            tabs={[
+              { id:"holdings", label:`Holdings (${coins.length})` },
+              { id:"history",  label:`Transactions${txCount>0?` (${txCount})`:""}` },
+              { id:"postings", label:"Postings" },
+            ]}
+            activeTab={walletDrawerTab} onTab={setWalletDrawerTab} onBack={goCryptoList}>
+              <div>
+                <div>
                   {walletDrawerTab === "holdings" && (
                     coins.length === 0 ? (
                       <div style={{padding:"28px",textAlign:"center",color:T.muted,fontSize:13,border:`1px dashed ${T.border}`,borderRadius:10}}>
@@ -7256,7 +7640,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                           const p = v - co;
                           const pp = co > 0 ? (p/co*100) : 0;
                           return (
-                            <div key={c.id} onClick={()=>{setDrawerTab("overview");setSelectedCrypto(c);}}
+                            <div key={c.id} onClick={()=>navigate({screen:"crypto",parentId:w.id,entityId:c.id})}
                               style={{display:"grid",gridTemplateColumns:"1.6fr 1fr 1fr 1fr 1fr 1fr",padding:"11px 14px",borderBottom:i<coins.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center",cursor:"pointer",opacity:c.status!=="Active"?0.55:1}}
                               onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                               onMouseLeave={e=>e.currentTarget.style.background=""}>
@@ -7284,30 +7668,108 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                   {walletDrawerTab === "history" && (
                     (() => {
                       const allTxs = coins.flatMap(c => (c.transactions||[]).map(t => ({ ...t, _sym: c.symbol })));
+                      const CR = ["Sell","Transfer In","Staking Reward","Interest","Airdrop"];
+                      const DR = ["Buy","Transfer Out","Unstake","Withdraw","Fee","Stake","Deposit"];
                       if (allTxs.length === 0) return (
                         <div style={{padding:"28px",textAlign:"center",color:T.muted,fontSize:13,border:`1px dashed ${T.border}`,borderRadius:10}}>
                           No transactions recorded in this wallet yet.
                         </div>
                       );
+                      const txTypes = Array.from(new Set(allTxs.map(t=>t.type)));
+                      const filtered = allTxs.filter(t => {
+                        const q = walTxSearch.trim().toLowerCase();
+                        const mSearch = !q || (t.type||"").toLowerCase().includes(q) || (t._sym||"").toLowerCase().includes(q) || (t.date||"").includes(q) || (t.notes||"").toLowerCase().includes(q);
+                        const mType = walTxFilter === "All" || t.type === walTxFilter;
+                        return mSearch && mType;
+                      });
+                      const sorted = [...filtered].sort((a,b)=>{
+                        let va, vb;
+                        if (walTxSort.col === "date") { va=a.date; vb=b.date; }
+                        else if (walTxSort.col === "type") { va=a.type||""; vb=b.type||""; }
+                        else if (walTxSort.col === "asset") { va=a._sym||""; vb=b._sym||""; }
+                        else if (walTxSort.col === "qty") { va=parseFloat(a.qty)||0; vb=parseFloat(b.qty)||0; }
+                        else { va=parseFloat(a.amount)||0; vb=parseFloat(b.amount)||0; }
+                        if (va < vb) return walTxSort.dir === "asc" ? -1 : 1;
+                        if (va > vb) return walTxSort.dir === "asc" ? 1 : -1;
+                        return 0;
+                      });
                       return (
-                        <Card style={{padding:0,overflow:"hidden"}}>
-                          <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr 0.8fr 1fr 1fr",padding:"9px 14px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:500}}>
-                            <div>Date</div>
-                            <div>Type</div>
-                            <div>Asset</div>
-                            <div style={{textAlign:"right"}}>Quantity</div>
-                            <div style={{textAlign:"right"}}>Amount</div>
-                          </div>
-                          {allTxs.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map((t,i) => (
-                            <div key={t.id||i} style={{display:"grid",gridTemplateColumns:"1.2fr 1fr 0.8fr 1fr 1fr",padding:"10px 14px",borderBottom:i<allTxs.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center"}}>
-                              <div>{t.date}</div>
-                              <div>{t.type}</div>
-                              <div style={{fontWeight:600}}>{t._sym}</div>
-                              <div style={{textAlign:"right"}}>{t.qty ? (+t.qty).toLocaleString(undefined,{maximumFractionDigits:6}) : "—"}</div>
-                              <div style={{textAlign:"right",fontWeight:600}}>S${(+t.amount||0).toFixed(2)}</div>
+                        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                          {/* Search + filter + sort toolbar */}
+                          <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                            <div style={{position:"relative",flex:"1 1 180px",minWidth:160}}>
+                              <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.dim,pointerEvents:"none"}}>🔍</span>
+                              <input value={walTxSearch} onChange={e=>setWalTxSearch(e.target.value)} placeholder="Search asset…"
+                                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px 8px 34px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}/>
                             </div>
-                          ))}
-                        </Card>
+                            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                              {["All",...txTypes].map(f => (
+                                <button key={f} onClick={()=>setWalTxFilter(f)}
+                                  style={{background:walTxFilter===f?T.selected:T.inputBg,color:walTxFilter===f?T.selectedText:T.muted,border:`1px solid ${walTxFilter===f?T.selected:T.border}`,borderRadius:7,padding:"6px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:walTxFilter===f?600:400}}>
+                                  {f}
+                                </button>
+                              ))}
+                            </div>
+                            <div style={{display:"flex",gap:6,alignItems:"center",marginLeft:"auto"}}>
+                              <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>Sort by</span>
+                              <select value={walTxSort.col} onChange={e=>setWalTxSort(s=>({...s,col:e.target.value}))}
+                                style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 10px",fontSize:12,fontFamily:"inherit",color:T.text,cursor:"pointer",outline:"none"}}>
+                                <option value="date">Date</option>
+                                <option value="type">Type</option>
+                                <option value="asset">Asset</option>
+                                <option value="qty">Quantity</option>
+                                <option value="amount">Amount</option>
+                              </select>
+                              <button onClick={()=>setWalTxSort(s=>({...s,dir:s.dir==="desc"?"asc":"desc"}))}
+                                style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 10px",fontSize:13,cursor:"pointer",fontFamily:"inherit",color:T.text,minWidth:36}}>
+                                {walTxSort.dir==="desc"?"↓":"↑"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {sorted.length === 0 ? (
+                            <Card style={{padding:"36px 24px",textAlign:"center"}}>
+                              <div style={{fontSize:28,marginBottom:10}}>🔍</div>
+                              <div style={{fontSize:13,fontWeight:600}}>No results found</div>
+                              <div style={{fontSize:12,color:T.muted,marginTop:4}}>Try adjusting your search or filter</div>
+                            </Card>
+                          ) : (
+                          <Card style={{padding:0,overflow:"hidden"}}>
+                            {/* Result count */}
+                            <div style={{padding:"10px 20px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                              <span style={{fontSize:12,color:T.muted}}>{sorted.length} of {allTxs.length} transactions</span>
+                              {(walTxSearch || walTxFilter !== "All") && (
+                                <button onClick={()=>{setWalTxSearch("");setWalTxFilter("All");}} style={{fontSize:11,color:T.accent,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
+                              )}
+                            </div>
+                            <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr 0.8fr 1fr 1fr",padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:500}}>
+                              <div>Date</div>
+                              <div>Type</div>
+                              <div>Asset</div>
+                              <div style={{textAlign:"right"}}>Quantity</div>
+                              <div style={{textAlign:"right"}}>Amount</div>
+                            </div>
+                            {sorted.map((t,i) => {
+                              const isCr = CR.includes(t.type);
+                              const isDr = DR.includes(t.type);
+                              const badgeC = isCr ? T.up : isDr ? T.down : T.accent;
+                              const badgeBg = isCr ? T.upBg : isDr ? T.downBg : T.accentBg;
+                              const amt = +t.amount||0;
+                              return (
+                                <div key={t.id||i} className="hov-row" style={{display:"grid",gridTemplateColumns:"1.2fr 1fr 0.8fr 1fr 1fr",padding:"12px 20px",borderBottom:i<sorted.length-1?`1px solid ${T.border}`:"none",fontSize:12,alignItems:"center"}}>
+                                  <div>{t.date}</div>
+                                  <div><Badge bg={badgeBg} color={badgeC}>{t.type}</Badge></div>
+                                  <div style={{fontWeight:600}}>{t._sym}</div>
+                                  <div style={{textAlign:"right"}}>{t.qty ? (+t.qty).toLocaleString(undefined,{maximumFractionDigits:6}) : "—"}</div>
+                                  <div style={{textAlign:"right",fontWeight:600,color:amt===0?T.muted:isCr?T.up:isDr?T.down:T.text}}>
+                                    {amt===0 ? "—" : `${isCr?"+":isDr?"−":""}S$${amt.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </Card>
+                          )}
+                        </div>
                       );
                     })()
                   )}
@@ -7322,7 +7784,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                     coins.forEach(c => {
                       const cryptoAcct = `Assets:Crypto:${(c.chain||"Other").replace(/ /g,"")}:${c.symbol}`;
                       const incomeAcct = `Income:Crypto:${c.holdingType==="Staked"?"Staking":c.holdingType==="Lending / DeFi"?"Lending":"Other"}`;
-                      const txs = (c.transactions||[]).filter(t=>t.status==="Complete"&&t.amount>0).slice().sort((a,b)=>a.date.localeCompare(b.date));
+                      const txs = (c.transactions||[]).filter(t=>t.status==="Complete"&&t.amount>0).slice().sort((a,b)=>b.date.localeCompare(a.date));
                       txs.forEach(tx => {
                         txCount++;
                         if (["Buy","Deposit","Stake"].includes(tx.type)) {
@@ -7359,8 +7821,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                                 <th key={h} style={{padding:"9px 16px",textAlign:hi>=4?"right":"left",width:hi===0?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
                               ))}
                             </tr></thead>
-                            <tbody>
-                              {journalRows.map((row,ri)=>(
+                            {groupByFirst(journalRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                                 <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                                   <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
                                     {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
@@ -7375,8 +7836,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                                     {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                                   </td>
                                 </tr>
-                              ))}
-                            </tbody>
+                              ))}</tbody>))}
                           </table>
                         </div>
                         <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
@@ -7391,14 +7851,14 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                   })()}
                 </div>
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
-      {/* ══ CRYPTO DETAIL DRAWER ══ */}
+      {/* ══ CRYPTO COIN DETAIL — full page ══ */}
+      {detailCoinId && !selectedCrypto && <NotFound message="This coin could not be found." onBack={goWallet}/>}
       {selectedCrypto && (() => {
-        const crypto = cryptos.find(c => c.id === selectedCrypto.id) || selectedCrypto;
+        const crypto = selectedCrypto;
         const tc = CRYPTO_TYPE_CONFIG[crypto.holdingType] || {icon:"🪙",color:T.muted,bg:T.inputBg};
         const txs = (crypto.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
         const value = (crypto.quantity||0)*(crypto.currentPrice||0);
@@ -7411,53 +7871,32 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
         const cashAcct = "Assets:Bank:Cash";
         const cryptoAcct = `Assets:Crypto:${(crypto.chain||"Other").replace(/ /g,"")}:${crypto.symbol}`;
         const incomeAcct = `Income:Crypto:${crypto.holdingType==="Staked"?"Staking":crypto.holdingType==="Lending / DeFi"?"Lending":"Other"}`;
+        // Self-transfers move coins between your own wallets — booked through a clearing account at cost basis (no gain/loss, no income)
+        const transferAcct = `Assets:Crypto:Transfers:${crypto.symbol}`;
+        const feeAcct = "Expenses:Crypto:NetworkFees";
         const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
 
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:210,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e=>{if(e.target===e.currentTarget) setSelectedCrypto(null);}}>
-            <div style={{width:"min(720px, 92vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.25)",display:"flex",flexDirection:"column"}}>
-              {/* Header */}
-              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
-                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:16,fontWeight:700}}>{crypto.symbol} · {crypto.name}</div>
-                    <div style={{fontSize:12,color:T.muted,marginTop:2,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      <span>{crypto.wallet} · {crypto.chain}</span>
-                      {crypto.walletAddress && <AddressPill address={crypto.walletAddress}/>}
-                    </div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <Badge bg={crypto.status==="Active"?T.upBg:T.inputBg} color={crypto.status==="Active"?T.up:T.muted}>{crypto.status}</Badge>
-                    <button onClick={()=>{setEditCrypto(crypto);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
-                    <button onClick={()=>setSelectedCrypto(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
-                  </div>
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:10,marginBottom:14}}>
-                  {[
-                    {l:"Current Value",v:fmtCompact(value)},
-                    {l:"Holdings",v:`${(+crypto.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} ${crypto.symbol}`},
-                    {l:"Unrealised P&L",v:`${pnl>=0?"+":""}${fmtCompact(pnl)} (${pnl>=0?"+":""}${pnlPct.toFixed(1)}%)`},
-                  ].map(s=>(
-                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
-                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
-                      <div style={{fontSize:15,fontWeight:700,marginTop:4}}>{s.v}</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
-                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
-                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
-                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
-                      {dt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* Body */}
-              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+          <DetailPage
+            icon={tc.icon} iconBg={tc.bg}
+            title={`${crypto.symbol} · ${crypto.name}`}
+            subtitle={`${crypto.wallet} · ${crypto.chain}`}
+            badges={<>
+              {crypto.walletAddress && <AddressPill address={crypto.walletAddress}/>}
+              <Badge bg={crypto.status==="Active"?T.upBg:T.inputBg} color={crypto.status==="Active"?T.up:T.muted}>{crypto.status}</Badge>
+            </>}
+            headerActions={<button onClick={()=>{setEditCrypto(crypto);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>}
+            stats={[
+              {l:"Current Value",v:fmtCompact(value)},
+              {l:"Holdings",v:`${(+crypto.quantity).toLocaleString(undefined,{maximumFractionDigits:6})} ${crypto.symbol}`},
+              {l:"Unrealised P&L",v:`${pnl>=0?"+":""}${fmtCompact(pnl)} (${pnl>=0?"+":""}${pnlPct.toFixed(1)}%)`,c:pnl>=0?T.up:T.down},
+            ]}
+            tabs={[{id:"overview",label:"Overview"},{id:"chart",label:"Chart"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"audit",label:"Audit"},{id:"manage",label:"Manage"}]}
+            activeTab={drawerTab} onTab={setDrawerTab} onBack={goWallet}>
+              <div>
+                {drawerTab === "chart" && (
+                  <CompactCryptoChart crypto={crypto}/>
+                )}
                 {drawerTab === "overview" && (
                   <div style={{display:"flex",flexDirection:"column",gap:16}}>
                     <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
@@ -7504,7 +7943,13 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                     )}
                   </div>
                 )}
-                {drawerTab === "transactions" && (
+                {drawerTab === "transactions" && (()=>{
+                  const _q = txSearch.trim().toLowerCase();
+                  const visibleTxs = txs.filter(t =>
+                    (txFilter==="All" || t.type===txFilter) &&
+                    (!_q || (t.type||"").toLowerCase().includes(_q) || (t.notes||"").toLowerCase().includes(_q) || (t.date||"").includes(_q) || (t.ref||"").toLowerCase().includes(_q) || (t.method||"").toLowerCase().includes(_q))
+                  );
+                  return (
                   <div style={{display:"flex",flexDirection:"column",gap:14}}>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                       {(()=>{
@@ -7523,21 +7968,19 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                         </div>
                       ))}
                     </div>
-                    {crypto.status === "Active" && (
-                      <div style={{display:"flex",justifyContent:"flex-end"}}>
-                        <button onClick={()=>setShowTxModal(true)} style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>+ Record Transaction</button>
-                      </div>
-                    )}
-                    {txs.length===0?(
-                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No transactions yet</div></div>
+                    <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                      filters={["All",...Array.from(new Set(txs.map(t=>t.type)))]}
+                      action={crypto.status === "Active" && <button onClick={()=>setShowTxModal(true)} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Record</button>}/>
+                    {visibleTxs.length===0?(
+                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>{txs.length===0?"No transactions yet":"No matching transactions"}</div></div>
                     ):(
                       <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                        {txs.map((tx,i)=>{
+                        {visibleTxs.map((tx,i)=>{
                           const isOut = ["Sell","Transfer Out","Unstake","Withdraw","Fee"].includes(tx.type);
                           const isIncome = ["Staking Reward","Interest","Airdrop"].includes(tx.type);
                           const icon = {Buy:"📥",Sell:"📤","Transfer In":"⬇","Transfer Out":"⬆",Stake:"🔒",Unstake:"🔓","Staking Reward":"🎁",Deposit:"📥",Withdraw:"📤",Interest:"💰",Airdrop:"🎉",Fee:"⚠️"}[tx.type]||"💰";
                           return (
-                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                            <div key={tx.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                               <div style={{width:34,height:34,borderRadius:8,background:isIncome?T.upBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
                               <div style={{flex:1,minWidth:0}}>
                                 <div style={{fontSize:13,fontWeight:600}}>{tx.type}{tx.qty>0?` · ${(+tx.qty).toLocaleString(undefined,{maximumFractionDigits:6})} ${crypto.symbol}`:""}{tx.notes?` — ${tx.notes}`:""}</div>
@@ -7555,15 +7998,27 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                                 </div>
                                 <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
                               </div>
+                              <TxRowActions
+                                onEdit={()=>{ setEditTx(tx); setShowTxModal(true); }}
+                                onDelete={()=>{
+                                  if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
+                                  setCryptos(prev=>prev.map(c=>String(c.id)===String(crypto.id)?{...c,transactions:(c.transactions||[]).filter(t=>t.id!==tx.id)}:c));
+                                  if(logAudit) logAudit("crypto", crypto.id, "delete-transaction", tx, null, `${tx.type} · ${tx.qty||tx.amount||""}`);
+                                  showToast("Transaction deleted","success");
+                                }}/>
                             </div>
                           );
                         })}
                       </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
                 {drawerTab === "postings" && (() => {
-                  const sortedTxs = (crypto.transactions||[]).filter(t=>t.status==="Complete"&&t.amount>0).slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  // Transfers carry no market amount but still post (asset-to-asset at cost basis), so don't require amount>0 for them
+                  const isTransfer = (t) => t.type === "Transfer In" || t.type === "Transfer Out";
+                  const sortedTxs = (crypto.transactions||[]).filter(t=>t.status==="Complete" && (t.amount>0 || isTransfer(t))).slice().sort((a,b)=>b.date.localeCompare(a.date));
+                  const basisOf = (tx) => (parseFloat(tx.qty)||0) * (crypto.avgCostPrice || parseFloat(tx.price) || crypto.currentPrice || 0);
                   const journalRows = [];
                   sortedTxs.forEach(tx => {
                     if (["Buy","Deposit","Stake"].includes(tx.type)) {
@@ -7577,9 +8032,32 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                         {date:null,desc:"",account:cryptoAcct,amount:fmtA(tx.amount),debit:false,_first:false},
                       );
                     } else if (["Staking Reward","Interest","Airdrop"].includes(tx.type)) {
+                      // Rewards & airdrops are income recognised at fair-market value on receipt
                       journalRows.push(
                         {date:tx.date,desc:`${tx.type} — ${tx.notes||crypto.symbol}`,account:cryptoAcct,amount:fmtA(tx.amount),debit:true,_first:true},
                         {date:null,desc:"",account:incomeAcct,amount:fmtA(tx.amount),debit:false,_first:false},
+                      );
+                    } else if (tx.type === "Transfer In") {
+                      // Coins arrive from another wallet you own — Dr this wallet, Cr the transfers clearing account, at cost basis
+                      const basis = basisOf(tx);
+                      journalRows.push(
+                        {date:tx.date,desc:`Transfer In — ${(parseFloat(tx.qty)||0).toLocaleString(undefined,{maximumFractionDigits:6})} ${crypto.symbol} (cost basis)`,account:cryptoAcct,amount:fmtA(basis),debit:true,_first:true},
+                        {date:null,desc:"",account:transferAcct,amount:fmtA(basis),debit:false,_first:false},
+                      );
+                    } else if (tx.type === "Transfer Out") {
+                      // Coins leave to another wallet you own — Cr this wallet, Dr the transfers clearing account, at cost basis
+                      const basis = basisOf(tx);
+                      journalRows.push(
+                        {date:tx.date,desc:`Transfer Out — ${(parseFloat(tx.qty)||0).toLocaleString(undefined,{maximumFractionDigits:6})} ${crypto.symbol} (cost basis)`,account:transferAcct,amount:fmtA(basis),debit:true,_first:true},
+                        {date:null,desc:"",account:cryptoAcct,amount:fmtA(basis),debit:false,_first:false},
+                      );
+                    }
+                    // Network/gas fee on any tx is a real expense (its own entry: Dr Expenses:NetworkFees / Cr Cash)
+                    const gas = parseFloat(tx.gasFees)||0;
+                    if (gas > 0) {
+                      journalRows.push(
+                        {date:tx.date,desc:`⛽ Network fee — ${tx.type}`,account:feeAcct,amount:fmtA(gas),debit:true,_first:true},
+                        {date:null,desc:"",account:cashAcct,amount:fmtA(gas),debit:false,_first:false},
                       );
                     }
                   });
@@ -7600,8 +8078,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                               <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",width:hi===0||hi>=3?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
                             ))}
                           </tr></thead>
-                          <tbody>
-                            {journalRows.map((row,ri)=>(
+                          {groupByFirst(journalRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                               <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                                 <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
                                   {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
@@ -7615,8 +8092,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                                   {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                                 </td>
                               </tr>
-                            ))}
-                          </tbody>
+                            ))}</tbody>))}
                         </table>
                       </div>
                       <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
@@ -7624,45 +8100,98 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                         <div style={{fontSize:11,color:T.muted,lineHeight:1.8,fontFamily:inter}}>
                           <div>• <span style={{color:T.up,fontWeight:600}}>Debit (Dr):</span> Buy / Stake / Deposit → increases crypto holdings; Sell / Withdraw → increases cash; Rewards → increase holdings</div>
                           <div>• <span style={{color:T.down,fontWeight:600}}>Credit (Cr):</span> Buy → reduces cash; Sell / Unstake → reduces holdings; Staking Reward / Interest / Airdrop → income recognised</div>
+                          <div>• <span style={{fontWeight:600}}>Transfer In / Out:</span> a move between your own wallets — booked asset-to-asset through <span style={{fontFamily:mono}}>{transferAcct}</span> at <strong>cost basis</strong>, so it realises no gain/loss and no income.</div>
+                          <div>• <span style={{fontWeight:600}}>Airdrop:</span> ordinary income at fair-market value on receipt (Dr holdings / Cr {incomeAcct}); that value becomes the coins' cost basis.</div>
+                          <div>• <span style={{fontWeight:600}}>Network / gas fee:</span> recorded as a <span style={{fontFamily:mono}}>{feeAcct}</span> expense.</div>
                         </div>
                       </div>
                     </div>
                   );
                 })()}
                 {drawerTab === "manage" && (
-                  <CryptoActionPanel crypto={crypto} setCryptos={setCryptos} auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+                  <CryptoActionPanel mode="manage" crypto={crypto} setCryptos={setCryptos} auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
                 )}
-                {drawerTab === "history" && (
+                {drawerTab === "audit" && (
                   <AuditLogPanel auditLog={auditLog} entityType="crypto" entityId={crypto.id}/>
                 )}
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
       {/* Transaction modal */}
       {showTxModal && selectedCrypto && (() => {
-        const crypto = cryptos.find(c => c.id === selectedCrypto.id) || selectedCrypto;
-        return <CryptoTxModalInner crypto={crypto} onSave={(tx) => {
-          const newTx = {...tx, id:"CTX"+Date.now(), status:"Complete"};
-          setCryptos(prev => prev.map(c => {
-            if (c.id !== crypto.id) return c;
-            const nextTxs = [...(c.transactions||[]), newTx];
-            let nextQty = c.quantity;
-            if (["Buy","Transfer In","Staking Reward","Airdrop","Deposit"].includes(tx.type)) nextQty = (+c.quantity||0) + (+tx.qty||0);
-            else if (["Sell","Transfer Out","Withdraw","Unstake","Fee"].includes(tx.type)) nextQty = Math.max(0, (+c.quantity||0) - (+tx.qty||0));
-            return { ...c, transactions: nextTxs, quantity: nextQty };
-          }));
-          if (logAudit) logAudit("crypto", crypto.id, "add-transaction", null, newTx, `${tx.type} · ${tx.qty||""} ${crypto.symbol}`);
-          setShowTxModal(false);
-          showToast(`${tx.type} recorded`, "success");
-        }} onClose={()=>setShowTxModal(false)}/>;
+        const crypto = selectedCrypto;
+        const qtyEffect = (t) => ["Buy","Transfer In","Staking Reward","Airdrop","Deposit"].includes(t.type) ? (+t.qty||0)
+          : ["Sell","Transfer Out","Withdraw","Unstake","Fee"].includes(t.type) ? -(+t.qty||0) : 0;
+        return <CryptoTxModalInner crypto={crypto} editTx={editTx} onSave={(tx) => {
+          if (editTx) {
+            const upd = {...editTx, ...tx};
+            setCryptos(prev => prev.map(c => {
+              if (String(c.id) !== String(crypto.id)) return c;
+              const nextQty = Math.max(0, (+c.quantity||0) - qtyEffect(editTx) + qtyEffect(upd));
+              return { ...c, transactions:(c.transactions||[]).map(t=>t.id===editTx.id?upd:t), quantity: nextQty };
+            }));
+            if (logAudit) logAudit("crypto", crypto.id, "edit-transaction", editTx, upd, `${tx.type} · ${tx.qty||""} ${crypto.symbol}`);
+            showToast(`${tx.type} updated`, "success");
+          } else {
+            const newTx = {...tx, id:"CTX"+Date.now(), status:"Complete"};
+            setCryptos(prev => prev.map(c => {
+              if (c.id !== crypto.id) return c;
+              const nextTxs = [...(c.transactions||[]), newTx];
+              const nextQty = Math.max(0, (+c.quantity||0) + qtyEffect(newTx));
+              return { ...c, transactions: nextTxs, quantity: nextQty };
+            }));
+            if (logAudit) logAudit("crypto", crypto.id, "add-transaction", null, newTx, `${tx.type} · ${tx.qty||""} ${crypto.symbol}`);
+            showToast(`${tx.type} recorded`, "success");
+          }
+          setShowTxModal(false); setEditTx(null);
+        }} onClose={()=>{setShowTxModal(false);setEditTx(null);}}/>;
       })()}
 
       {/* Add/Edit modal */}
       {showModal && editCrypto && (
         <CryptoModal crypto={editCrypto} onSave={handleSave} onClose={()=>{setShowModal(false);setEditCrypto(null);}}/>
+      )}
+
+      {/* Wallet custom label editor (item #12 — label wallets/exchanges, e.g. Ledger 1, Ledger 2) */}
+      {labelWallet && (
+        <div onClick={e=>{ if(e.target===e.currentTarget) setLabelWallet(null); }}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:T.bg,borderRadius:14,width:420,border:`1px solid ${T.border}`,boxShadow:"0 20px 50px rgba(0,0,0,0.25)"}}>
+            <div style={{padding:"18px 22px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,borderRadius:"14px 14px 0 0"}}>
+              <div style={{fontSize:14,fontWeight:700}}>Wallet Label</div>
+              <div style={{fontSize:12,color:T.muted,marginTop:2}}>{labelWallet.bank} · {labelWallet.accountName}</div>
+            </div>
+            <div style={{padding:"20px 22px",display:"flex",flexDirection:"column",gap:14}}>
+              <div>
+                <Label>Custom label</Label>
+                <Input value={labelDraft} onChange={e=>setLabelDraft(e.target.value)} placeholder="e.g. Ledger 1, Cold Storage, Trading"/>
+                <div style={{fontSize:11,color:T.dim,marginTop:5}}>Distinguishes wallets/exchanges of the same provider (Ledger 1 vs Ledger 2). Shown as a chip on the wallet.</div>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                {labelWallet.label
+                  ? <button onClick={()=>{
+                      const prev = labelWallet;
+                      setAccounts(prevAs => prevAs.map(a => a.id===labelWallet.id ? {...a, label:""} : a));
+                      if (logAudit) logAudit("account", labelWallet.id, "update", prev, {...prev, label:""}, `${prev.bank} · removed label`);
+                      showToast("Label removed","success"); setLabelWallet(null);
+                    }} style={{background:"transparent",border:"none",color:T.down,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Remove label</button>
+                  : <span/>}
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setLabelWallet(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit",color:T.muted}}>Cancel</button>
+                  <button onClick={()=>{
+                      const lbl = labelDraft.trim();
+                      const prev = labelWallet;
+                      setAccounts(prevAs => prevAs.map(a => a.id===labelWallet.id ? {...a, label:lbl} : a));
+                      if (logAudit) logAudit("account", labelWallet.id, "update", prev, {...prev, label:lbl}, `${prev.bank} · label "${lbl}"`);
+                      showToast("Label saved","success"); setLabelWallet(null);
+                    }} style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:8,padding:"8px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Save</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Wallet picker — page-level + Add Holding flow */}
@@ -7683,6 +8212,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
           accounts={accounts} setAccounts={setAccounts} setTransactions={setTransactions}
           onClose={()=>setShowCryptoTransferModal(false)}
           onComplete={()=>{ setShowCryptoTransferModal(false); showToast("Transfer recorded","success"); }}
+          fiatGuard={walletFiatCapable}
           logAudit={logAudit}/>
       )}
 
@@ -7748,27 +8278,41 @@ function BuyCryptoModal({ wallet, onSave, onClose }) {
       style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:320,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <div style={{background:T.bg,borderRadius:16,width:"min(620px, 100%)",maxHeight:"90vh",display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,overflow:"hidden"}}>
         <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-          <div style={{fontSize:16,fontWeight:800}}>Add Holding</div>
+          <div style={{fontSize:16,fontWeight:800}}>{txType === "Buy" ? "Buy Crypto" : "Transfer In Crypto"} · {wallet.bank}</div>
           <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
         <div style={{padding:"22px 24px",overflowY:"auto",flex:1,minHeight:0,display:"flex",flexDirection:"column",gap:18}}>
           {/* Type pills — Buy / Transfer In only */}
           <div>
-            <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Transaction Type</div>
+            <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>What are you recording?</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {["Buy","Transfer In"].map(t => {
+              {[
+                {t:"Buy", icon:"📥", sub:"Purchase new coins — cash leaves your account"},
+                {t:"Transfer In", icon:"⬇", sub:"Move coins you already own into this wallet — no purchase"},
+              ].map(({t,icon,sub}) => {
                 const active = txType === t;
                 const tColor = t === "Buy" ? T.up : T.accent;
                 return (
-                  <button key={t} onClick={()=>setTxType(t)}
-                    style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${active?tColor:T.border}`,
+                  <button key={t} onClick={()=>setTxType(t)} title={sub}
+                    style={{flex:"1 1 220px",textAlign:"left",padding:"10px 14px",borderRadius:8,border:`1px solid ${active?tColor:T.border}`,
                       background:active?`${tColor}15`:T.inputBg,color:active?tColor:T.muted,
                       cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500}}>
-                    {t === "Buy" ? "📥" : "⬇"} {t}
+                    <div>{icon} {t}</div>
+                    <div style={{fontSize:11,fontWeight:400,color:T.muted,marginTop:3}}>{sub}</div>
                   </button>
                 );
               })}
             </div>
+          </div>
+
+          {/* Money-flow clarity banner */}
+          <div style={{padding:"10px 14px",borderRadius:9,fontSize:12,lineHeight:1.5,
+            background: txType==="Buy" ? T.downBg : T.accentBg,
+            color: txType==="Buy" ? T.down : T.accent,
+            border:`1px solid ${txType==="Buy" ? T.down : T.accent}30`}}>
+            {txType==="Buy"
+              ? <><strong>MONEY OUT.</strong> A Buy records a purchase — you pay the price per unit (plus gas) and the coins are added to {wallet.bank}.</>
+              : <><strong>NO CASH FLOW.</strong> A Transfer In just relocates coins you already hold into {wallet.bank}. Enter their original cost basis for accurate P&L — no money leaves your account.</>}
           </div>
 
           <div>
@@ -7783,7 +8327,7 @@ function BuyCryptoModal({ wallet, onSave, onClose }) {
               <div><Label required>Quantity</Label>
                 <Input type="number" step="1" value={form.quantity} onChange={e=>set("quantity", e.target.value)} placeholder="0"/>
               </div>
-              <div><Label required>Price per Unit (SGD)</Label>
+              <div><Label required>{txType==="Buy" ? "Price per Unit (SGD)" : "Cost Basis per Unit (SGD)"}</Label>
                 <Input type="number" value={form.unitCost} onChange={e=>set("unitCost", e.target.value)} placeholder="0.00"/>
               </div>
               <MoreOptions count={txType==="Transfer In"?5:4}>
@@ -7812,8 +8356,8 @@ function BuyCryptoModal({ wallet, onSave, onClose }) {
             {(qty > 0 && unit > 0) && (
               <div style={{marginTop:14,padding:"10px 12px",background:T.inputBg,borderRadius:8,display:"flex",flexDirection:"column",gap:6,fontSize:12}}>
                 <div style={{display:"flex",justifyContent:"space-between"}}>
-                  <span style={{color:T.muted}}>Total ({txType})</span>
-                  <span style={{fontWeight:700}}>S${total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                  <span style={{color:T.muted}}>{txType==="Buy" ? "Total Cost (cash out)" : "Transferred Value (no cash flow)"}</span>
+                  <span style={{fontWeight:700,color:txType==="Buy"?T.down:T.text}}>S${total.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
                 </div>
                 {gas > 0 && (
                   <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px dashed ${T.border}`,paddingTop:6}}>
@@ -7832,7 +8376,7 @@ function BuyCryptoModal({ wallet, onSave, onClose }) {
             </button>
             <button onClick={()=>onSave({ ...form, txType, quantity:qty, unitCost:unit, gasFees:gas })} disabled={!canSubmit}
               style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit",opacity:canSubmit?1:0.4}}>
-              Add Holding
+              {txType==="Buy" ? "Record Buy" : "Record Transfer In"}
             </button>
           </div>
         </div>
@@ -7919,85 +8463,33 @@ const PE_INIT = [
       {id:"PTX010",date:"2023-08-20",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"CAR-BUY-01",status:"Complete",notes:"Secondary purchase from departing employee"},
     ],
   },
-  {
-    id:"PE004", investmentType:"VC Fund", name:"Vertex Ventures SEA & India VI",
-    manager:"Vertex Holdings (Temasek)", vintageYear:2023, stage:"N/A", sector:"Technology", geography:"Southeast Asia & India",
-    commitment:200000, calledCapital:80000, distributionsReceived:0, nav:82000,
-    ownershipPct:0, irr:3.2,
-    investmentDate:"2023-10-01", exitDate:"",
-    currency:"SGD", fundSize:540000000, gpCommit:2.0,
-    status:"Active",
-    notes:"Temasek-backed early-stage fund. Focus on AI, B2B SaaS, climate tech. Still deploying.",
-    transactions:[
-      {id:"PTX011",date:"2023-10-15",type:"Capital Call",amount:40000,method:"Wire Transfer",ref:"VTX-CC-01",status:"Complete",notes:"Initial call"},
-      {id:"PTX012",date:"2024-08-05",type:"Capital Call",amount:40000,method:"Wire Transfer",ref:"VTX-CC-02",status:"Complete",notes:"Second call"},
-    ],
-  },
-  {
-    id:"PE005", investmentType:"SAFE / Convertible Note", name:"Atomos AI (Seed SAFE)",
-    manager:"Self-directed", vintageYear:2024, stage:"Seed", sector:"SaaS", geography:"Singapore",
-    commitment:25000, calledCapital:25000, distributionsReceived:0, nav:35000,
-    ownershipPct:1.2, irr:0,
-    investmentDate:"2024-04-15", exitDate:"",
-    currency:"SGD", fundSize:0, gpCommit:0,
-    status:"Active",
-    notes:"SAFE note with $8M post-money cap, 20% discount. Founders ex-Meta. AI workflow automation for SMBs.",
-    transactions:[
-      {id:"PTX013",date:"2024-04-15",type:"Capital Call",amount:25000,method:"Wire Transfer",ref:"ATOMOS-SAFE",status:"Complete",notes:"SAFE subscription — $8M cap, 20% discount"},
-    ],
-  },
-  {
-    id:"PE006", investmentType:"Secondary", name:"Stripe Inc. (Secondary)",
-    manager:"Self-directed via Forge Global", vintageYear:2024, stage:"Pre-IPO", sector:"Fintech", geography:"US",
-    commitment:75000, calledCapital:75000, distributionsReceived:0, nav:92000,
-    ownershipPct:0, irr:18.5,
-    investmentDate:"2024-01-30", exitDate:"",
-    currency:"SGD", fundSize:0, gpCommit:0,
-    status:"Active",
-    notes:"Secondary purchase via Forge Global at $60B valuation. Waiting for IPO.",
-    transactions:[
-      {id:"PTX014",date:"2024-01-30",type:"Capital Call",amount:75000,method:"Wire Transfer",ref:"STR-SEC-01",status:"Complete",notes:"Secondary purchase — 1.3 shares at $60B val"},
-      {id:"PTX015",date:"2024-12-15",type:"Management Fee",amount:1125,method:"Netting",ref:"FRG-FEE",status:"Complete",notes:"Forge platform / custody fee 1.5%"},
-    ],
-  },
-  {
-    id:"PE007", investmentType:"PE Fund", name:"Blackstone Real Estate Asia III",
-    manager:"Blackstone", vintageYear:2020, stage:"N/A", sector:"Real Estate", geography:"Asia Pacific",
-    commitment:150000, calledCapital:150000, distributionsReceived:168000, nav:45000,
-    ownershipPct:0, irr:22.4,
-    investmentDate:"2020-09-01", exitDate:"",
-    currency:"SGD", fundSize:7300000000, gpCommit:3.0,
-    status:"Partially Realised",
-    notes:"Asian real estate fund. Fully called. In harvest phase — returned 112% of capital. Residual NAV $45K.",
-    transactions:[
-      {id:"PTX016",date:"2020-10-01",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"BX-CC-01",status:"Complete",notes:"Initial capital call"},
-      {id:"PTX017",date:"2021-06-15",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"BX-CC-02",status:"Complete",notes:"Second call"},
-      {id:"PTX018",date:"2022-04-20",type:"Capital Call",amount:50000,method:"Wire Transfer",ref:"BX-CC-03",status:"Complete",notes:"Final call — fully drawn"},
-      {id:"PTX019",date:"2023-12-10",type:"Distribution",amount:48000,method:"Wire Transfer",ref:"BX-DIST-01",status:"Complete",notes:"First realisation — office complex sale"},
-      {id:"PTX020",date:"2024-08-15",type:"Distribution",amount:72000,method:"Wire Transfer",ref:"BX-DIST-02",status:"Complete",notes:"Second realisation — logistics portfolio exit"},
-      {id:"PTX021",date:"2025-07-10",type:"Distribution",amount:48000,method:"Wire Transfer",ref:"BX-DIST-03",status:"Complete",notes:"Third distribution — data centre exit"},
-    ],
-  },
 ];
 
 // ── VC/PE Transaction Modal ───────────────────────────────────
-function PETxModalInner({ inv, onSave, onClose }) {
-  const txTypes = ["Capital Call","Distribution","Income / Gain","Management Fee","Valuation Update","Exit / Realisation"];
-  const txTypeIcon = {"Capital Call":"📤","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Valuation Update":"📊","Exit / Realisation":"🏁"};
+function PETxModalInner({ inv, editTx, cashAccounts, onSave, onClose }) {
+  const isEdit = !!editTx;
+  const txTypes = ["Capital Call","Distribution","Income / Gain","Management Fee","Exit / Realisation"];
+  const txTypeIcon = {"Capital Call":"📤","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Exit / Realisation":"🏁"};
 
-  const [f, setF] = useState({
+  const [f, setF] = useState(editTx ? { ...editTx } : {
     type: "Capital Call",
     date: new Date().toISOString().slice(0,10),
-    amount: 0, method: "Wire Transfer", ref: "", notes: "",
+    amount: 0, method: "Wire Transfer", ref: "", notes: "", cashAccountId: "",
   });
+  // Explicit RECORD toggle — log a non-cash event (e.g. in-kind distribution,
+  // PIK interest, NAV mark) without an IN/OUT classification.
+  const [recordOnly, setRecordOnly] = useState(!!(editTx && editTx.recordOnly));
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
   const isValOnly = f.type === "Valuation Update";
+  const flowOut = TX_FLOW_OUT.has(f.type);
+  const flowIn = TX_FLOW_IN.has(f.type);
+  const needsAccount = !recordOnly && f.method === "Bank Transfer" && (flowOut || flowIn);
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <div style={{fontSize:16,fontWeight:800}}>{isEdit ? "Edit Transaction" : "Record Transaction"}</div>
           <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{inv.name} · {inv.manager}</div>
@@ -8021,13 +8513,26 @@ function PETxModalInner({ inv, onSave, onClose }) {
           <div><Label>Method</Label><Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Wire Transfer","Netting","Bank Transfer","In-Kind","Check"]}/></div>
           <div><Label>Reference</Label><Input value={f.ref} onChange={e=>set("ref",e.target.value)} placeholder="e.g. SEQ-CC-01"/></div>
         </div>
+        {needsAccount && (
+          <div style={{marginBottom:14}}>
+            <Label required>{flowOut ? "Pay from Account" : "Credit to Account"}</Label>
+            <Sel value={f.cashAccountId||""} onChange={e=>set("cashAccountId",e.target.value)}
+              placeholder={(cashAccounts&&cashAccounts.length) ? "Select account…" : undefined}
+              options={(cashAccounts&&cashAccounts.length) ? cashAccounts.map(a => ({value:String(a.id), label:`${a.bank} · ${a.accountName}`})) : ["— No cash accounts —"]}/>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>
+              {flowOut ? `This ${f.type.toLowerCase()} will be debited from this account.` : `The ${f.type.toLowerCase()} proceeds will be credited to this account.`}
+            </div>
+          </div>
+        )}
         <div style={{marginBottom:14}}>
           <Label>Notes</Label>
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Capital call 20% of commitment, portfolio co exit…"
             style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
         </div>
-        <FlowBanner type={f.type} amount={f.amount} label={
-          f.type==="Capital Call" ? "📤 Capital called"
+        <FlowBanner type={f.type} flowOverride={recordOnly ? "info" : undefined}
+          amount={recordOnly ? null : f.amount} label={
+          recordOnly ? "📝 Recorded — no cash flow"
+          : f.type==="Capital Call" ? "📤 Capital called"
           : f.type==="Management Fee" ? "⚠️ Management fee paid"
           : f.type==="Distribution" ? "📥 Distribution received"
           : f.type==="Income / Gain" ? "🎁 Income / realised gain"
@@ -8035,11 +8540,12 @@ function PETxModalInner({ inv, onSave, onClose }) {
           : f.type==="Valuation Update" ? "📊 NAV marked (no cash flow)"
           : "💰 Transaction"
         }/>
+        <RecordOnlyToggle recordOnly={recordOnly} setRecordOnly={setRecordOnly} style={{marginTop:0,marginBottom:14}}/>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0)?0.4:1}}>
-            Record {f.type}
+          <button onClick={()=>onSave({...f, recordOnly})} disabled={!f.date||f.amount<=0||(needsAccount&&!f.cashAccountId)}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0||(needsAccount&&!f.cashAccountId))?0.4:1}}>
+            {isEdit ? "Save Changes" : recordOnly ? "Record entry" : `Record ${f.type}`}
           </button>
         </div>
       </div>
@@ -8105,14 +8611,13 @@ function PEModal({ inv, onSave, onClose }) {
 // ── VC/PE Investments Screen ──────────────────────────────────
 // ── PE Action Panel — pills + Update NAV + NAV history ──
 function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
-  const ALL_TYPES = ["Capital Call","Distribution","Income / Gain","Management Fee","Update NAV","Exit / Realisation"];
-  const ICONS = {"Capital Call":"📤","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Update NAV":"📊","Exit / Realisation":"🏁"};
-  const colorFor = (t) => t==="Capital Call"||t==="Management Fee"?T.down
-    : t==="Distribution"||t==="Income / Gain"?T.up
-    : t==="Update NAV"?T.text
-    : t==="Exit / Realisation"?T.warn : T.accent;
+  // Manage = value update only. All cash-flow transactions (Capital Call, Distribution,
+  // Income/Gain, Management Fee, Exit/Realisation) live in the Record Transaction modal.
+  const ALL_TYPES = ["Update NAV"];
+  const ICONS = {"Update NAV":"📊"};
+  const colorFor = () => T.text;
 
-  const [txType, setTxType] = useState("Capital Call");
+  const [txType, setTxType] = useState("Update NAV");
   const blankForm = () => ({
     date: new Date().toISOString().slice(0,10),
     amount: "", method: "Wire Transfer", ref: "", notes: "",
@@ -8129,7 +8634,7 @@ function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
   };
 
   const canSubmit = isUpdateNav
-    ? !!form.nav && parseFloat(form.nav) >= 0
+    ? !!form.nav && parseFloat(form.nav) >= 0 && !!form.date
     : form.date && parseFloat(form.amount) > 0;
 
   const handleSubmit = () => {
@@ -8137,11 +8642,13 @@ function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
 
     if (isUpdateNav) {
       const newNav = parseFloat(form.nav);
+      const navDate = form.date;
       const prev = { ...inv };
-      const next = { ...inv, nav: newNav };
-      setInvestments(prevIs => prevIs.map(i => i.id === inv.id ? { ...i, nav: newNav } : i));
-      if (logAudit) logAudit("pe", inv.id, "update", prev, next, `${inv.name} · NAV S$${(inv.nav||0).toLocaleString()} → S$${newNav.toLocaleString()}`);
-      showToast(`${inv.name} NAV updated to S$${newNav.toLocaleString()}`, "success");
+      const next = { ...inv, nav: newNav, navDate };
+      const valTx = { id:"PTX"+Date.now(), type:"Valuation Update", date:navDate, amount:newNav, method:"NAV statement", ref:"", notes:`NAV updated to S$${newNav.toLocaleString()}`, status:"Complete" };
+      setInvestments(prevIs => prevIs.map(i => i.id === inv.id ? { ...i, nav: newNav, navDate, transactions:[...(i.transactions||[]), valTx] } : i));
+      if (logAudit) logAudit("pe", inv.id, "update", prev, next, `${inv.name} · NAV S$${(inv.nav||0).toLocaleString()} → S$${newNav.toLocaleString()} (${navDate})`);
+      showToast(`${inv.name} NAV updated to S$${newNav.toLocaleString()} as of ${navDate}`, "success");
       setForm(f => ({ ...f, nav: String(newNav) }));
       return;
     }
@@ -8181,32 +8688,38 @@ function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
   const newPnlPct = cost > 0 ? (newPnl/cost*100) : 0;
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      <Card style={{padding:"16px 18px"}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Action</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {ALL_TYPES.map(t => {
-            const active = txType === t;
-            const c = colorFor(t);
-            return (
-              <button key={t} onClick={()=>switchType(t)}
-                style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${active?c:T.border}`,
-                  background:active?`${c}15`:T.inputBg,color:active?c:T.muted,
-                  cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500}}>
-                {ICONS[t]||"💰"} {t}
-              </button>
-            );
-          })}
-        </div>
-      </Card>
+    <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:560}}>
+      {ALL_TYPES.length > 1 && (
+        <Card style={{padding:"12px 14px"}}>
+          <div style={{fontSize:12,fontWeight:600,marginBottom:8,color:T.muted}}>Action</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {ALL_TYPES.map(t => {
+              const active = txType === t;
+              const c = colorFor(t);
+              return (
+                <button key={t} onClick={()=>switchType(t)}
+                  style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${active?c:T.border}`,
+                    background:active?`${c}15`:T.inputBg,color:active?c:T.muted,
+                    cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500}}>
+                  {ICONS[t]||"💰"} {t}
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
-      <Card style={{padding:"18px"}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>{isUpdateNav ? `Update NAV — ${inv.name}` : `${txType} — ${inv.name}`}</div>
+      <Card style={{padding:"14px 16px"}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:10,color:T.muted}}>{isUpdateNav ? `Update NAV — ${inv.name}` : `${txType} — ${inv.name}`}</div>
         {isUpdateNav ? (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div>
               <Label required>New NAV (S$)</Label>
               <Input type="number" step="0.01" value={form.nav} onChange={e=>set("nav",e.target.value)} placeholder={String(oldNav||"0.00")}/>
+            </div>
+            <div>
+              <Label required>Valuation Date</Label>
+              <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
             </div>
             <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
@@ -8224,7 +8737,7 @@ function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
             </div>
           </div>
         ) : (
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div><Label required>Date</Label>
               <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
             </div>
@@ -8308,17 +8821,25 @@ function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
   );
 }
 
-function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }) {
+function PEScreen({ investments, setInvestments, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
   const isMobile = useIsMobile();
-  const [selectedInv, setSelectedInv] = useState(null);
+  const cashAccounts = (accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
   const [showModal, setShowModal] = useState(false);
   const [editInv, setEditInv] = useState(null);
   const [filterType, setFilterType] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
-  const [drawerTab, setDrawerTab] = useState("overview");
   const [showTxModal, setShowTxModal] = useState(false);
+  const [editTx, setEditTx] = useState(null);
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
   const peSort = useSortState();
+
+  const detailId = route.entityId;
+  const detailInv = detailId ? investments.find(i => i.id === detailId) : null;
+  const drawerTab = route.tab || "overview";
+  const goTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goList = () => navigate({ screen: "privateequity" });
 
   const activeInvs = investments.filter(i => i.status !== "Written Off");
   const totalCommitment = activeInvs.reduce((s,i) => s + (i.commitment||0), 0);
@@ -8364,6 +8885,7 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {!detailId && (<>
       {/* Page header */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <div>
@@ -8467,7 +8989,7 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
           {filtered.map(inv => {
             const tc = PE_TYPE_CONFIG[inv.investmentType] || {icon:"📋",color:T.muted,bg:T.inputBg};
             const tvpi = inv.calledCapital > 0 ? (inv.nav + inv.distributionsReceived) / inv.calledCapital : 0;
-            return <MobileListItem key={inv.id} onClick={()=>{setSelectedInv(inv);setDrawerTab("overview");}}
+            return <MobileListItem key={inv.id} onClick={()=>navigate({screen:"privateequity",entityId:inv.id})}
               icon={tc.icon} iconBg={tc.bg} title={inv.name} subtitle={`${inv.manager} · ${inv.investmentType}`}
               value={fmtCompact(inv.nav)} valueColor={T.text} valueSub={`TVPI ${tvpi.toFixed(2)}x · IRR ${inv.irr}%`}
               badge={inv.status} badgeBg={inv.status==="Active"?T.upBg:inv.status==="Realised"?T.inputBg:T.warnBg} badgeColor={inv.status==="Active"?T.up:inv.status==="Realised"?T.muted:T.warn}
@@ -8477,7 +8999,7 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
         </Card>
       ) : (
         <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
-          <SortHeader gridCols="2.2fr 1fr 1.1fr 1.2fr 1fr 0.9fr 0.8fr" sortKey={peSort.sortKey} sortDir={peSort.sortDir} onSort={peSort.onSort}
+          <SortHeader gridCols={capCols("2.2fr 1fr 1.1fr 1.2fr 1fr 0.9fr 0.8fr")} sortKey={peSort.sortKey} sortDir={peSort.sortDir} onSort={peSort.onSort}
             columns={[["Investment / Manager","left","name"],["Type","left","type"],["NAV","right","nav"],["Commit / Called","right","committed"],["Dist / TVPI","right","tvpi"],["IRR","right","irr"],["Status","left","status"]]}/>
           {peSort.sortFn(filtered, (i, k) => {
             const tvpi = i.calledCapital > 0 ? (i.nav + i.distributionsReceived) / i.calledCapital : 0;
@@ -8494,8 +9016,8 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
             const tvpi = inv.calledCapital > 0 ? (inv.nav + inv.distributionsReceived) / inv.calledCapital : 0;
             const isDim = inv.status === "Written Off" || inv.status === "Realised";
             return (
-              <div key={inv.id} onClick={()=>{setSelectedInv(inv);setDrawerTab("overview");}}
-                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.1fr 1.2fr 1fr 0.9fr 0.8fr",padding:"13px 20px",borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+              <div key={inv.id} onClick={()=>navigate({screen:"privateequity",entityId:inv.id})}
+                style={{display:"grid",gridTemplateColumns:capCols("2.2fr 1fr 1.1fr 1.2fr 1fr 0.9fr 0.8fr"),columnGap:24,padding:"13px 20px",borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
                   opacity:isDim?0.55:1,background:isDim?T.sidebar:""}}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                 onMouseLeave={e=>e.currentTarget.style.background=(isDim?T.sidebar:"")}>
@@ -8534,9 +9056,12 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
         </Card>
       )}
 
-      {/* ══ INVESTMENT DETAIL DRAWER ══ */}
-      {selectedInv && (() => {
-        const inv = investments.find(i => i.id === selectedInv.id) || selectedInv;
+      </>)}
+
+      {/* ══ INVESTMENT DETAIL — full page ══ */}
+      {detailId && !detailInv && <NotFound message="This investment could not be found." onBack={goList}/>}
+      {detailInv && (() => {
+        const inv = detailInv;
         const tc = PE_TYPE_CONFIG[inv.investmentType] || {icon:"📋",color:T.muted,bg:T.inputBg};
         const txs = (inv.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
         const tvpi = inv.calledCapital > 0 ? (inv.nav + inv.distributionsReceived) / inv.calledCapital : 0;
@@ -8553,48 +9078,21 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
         const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
 
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e=>{if(e.target===e.currentTarget) setSelectedInv(null);}}>
-            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
-              {/* Header */}
-              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
-                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:16,fontWeight:700}}>{inv.name}</div>
-                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{inv.manager} · {inv.investmentType} · Vintage {inv.vintageYear}</div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <Badge bg={inv.status==="Active"?T.upBg:inv.status==="Realised"?T.inputBg:T.warnBg} color={inv.status==="Active"?T.up:inv.status==="Realised"?T.muted:T.warn}>{inv.status}</Badge>
-                    <button onClick={()=>{setEditInv(inv);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
-                    <button onClick={()=>setSelectedInv(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
-                  </div>
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:10,marginBottom:14}}>
-                  {[
-                    {l:"Current NAV",v:fmtCompact(inv.nav)},
-                    {l:"TVPI",v:`${tvpi.toFixed(2)}x`},
-                    {l:"DPI",v:`${dpi.toFixed(2)}x`},
-                    {l:"IRR",v:`${inv.irr>=0?"+":""}${inv.irr}%`},
-                  ].map(s=>(
-                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
-                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
-                      <div style={{fontSize:15,fontWeight:700,marginTop:4}}>{s.v}</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
-                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
-                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
-                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
-                      {dt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* Body */}
-              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+          <DetailPage
+            icon={tc.icon} iconBg={tc.bg}
+            title={inv.name}
+            subtitle={`${inv.manager} · ${inv.investmentType} · Vintage ${inv.vintageYear}`}
+            badges={<Badge bg={inv.status==="Active"?T.upBg:inv.status==="Realised"?T.inputBg:T.warnBg} color={inv.status==="Active"?T.up:inv.status==="Realised"?T.muted:T.warn}>{inv.status}</Badge>}
+            headerActions={<button onClick={()=>{setEditInv(inv);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>}
+            stats={[
+              {l:"Current NAV",v:fmtCompact(inv.nav)},
+              {l:"TVPI",v:`${tvpi.toFixed(2)}x`},
+              {l:"DPI",v:`${dpi.toFixed(2)}x`},
+              {l:"IRR",v:`${inv.irr>=0?"+":""}${inv.irr}%`},
+            ]}
+            tabs={[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"audit",label:"Audit"},{id:"manage",label:"Manage"}]}
+            activeTab={drawerTab} onTab={goTab} onBack={goList}>
+              <div>
                 {drawerTab === "overview" && (
                   <div style={{display:"flex",flexDirection:"column",gap:16}}>
                     {/* Capital Deployment Progress */}
@@ -8662,7 +9160,13 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
                     )}
                   </div>
                 )}
-                {drawerTab === "transactions" && (
+                {drawerTab === "transactions" && (()=>{
+                  const _q = txSearch.trim().toLowerCase();
+                  const visibleTxs = txs.filter(t =>
+                    (txFilter==="All" || t.type===txFilter) &&
+                    (!_q || (t.type||"").toLowerCase().includes(_q) || (t.notes||"").toLowerCase().includes(_q) || (t.date||"").includes(_q) || (t.ref||"").toLowerCase().includes(_q) || (t.method||"").toLowerCase().includes(_q))
+                  );
+                  return (
                   <div style={{display:"flex",flexDirection:"column",gap:14}}>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                       {(()=>{
@@ -8682,21 +9186,19 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
                         </div>
                       ))}
                     </div>
-                    {inv.status !== "Written Off" && inv.status !== "Realised" && (
-                      <div style={{display:"flex",justifyContent:"flex-end"}}>
-                        <button onClick={()=>setShowTxModal(true)} style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>+ Record Transaction</button>
-                      </div>
-                    )}
-                    {txs.length===0?(
-                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No transactions yet</div></div>
+                    <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                      filters={["All",...Array.from(new Set(txs.map(t=>t.type)))]}
+                      action={inv.status !== "Written Off" && inv.status !== "Realised" && <button onClick={()=>setShowTxModal(true)} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Record</button>}/>
+                    {visibleTxs.length===0?(
+                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>{txs.length===0?"No transactions yet":"No matching transactions"}</div></div>
                     ):(
                       <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                        {txs.map((tx,i)=>{
+                        {visibleTxs.map((tx,i)=>{
                           const isOut = ["Capital Call","Management Fee"].includes(tx.type);
                           const isIncome = ["Distribution","Income / Gain","Exit / Realisation"].includes(tx.type);
                           const icon = {"Capital Call":"📤","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Valuation Update":"📊","Exit / Realisation":"🏁"}[tx.type]||"💰";
                           return (
-                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                            <div key={tx.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                               <div style={{width:34,height:34,borderRadius:8,background:isIncome?T.upBg:isOut?T.downBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
                               <div style={{flex:1,minWidth:0}}>
                                 <div style={{fontSize:13,fontWeight:600}}>{tx.type}{tx.notes?` — ${tx.notes}`:""}</div>
@@ -8712,15 +9214,24 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
                                 </div>
                                 <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
                               </div>
+                              <TxRowActions
+                                onEdit={()=>{ setEditTx(tx); setShowTxModal(true); }}
+                                onDelete={()=>{
+                                  if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
+                                  setInvestments(prev=>prev.map(i=>i.id===inv.id?{...i,transactions:(i.transactions||[]).filter(t=>t.id!==tx.id)}:i));
+                                  if(logAudit) logAudit("pe", inv.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  showToast("Transaction deleted","success");
+                                }}/>
                             </div>
                           );
                         })}
                       </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
                 {drawerTab === "postings" && (() => {
-                  const sortedTxs = (inv.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update").slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  const sortedTxs = (inv.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update").slice().sort((a,b)=>b.date.localeCompare(a.date));
                   const journalRows = [];
                   sortedTxs.forEach(tx => {
                     if (tx.type==="Capital Call") {
@@ -8762,8 +9273,7 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
                               <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",width:hi===0||hi>=3?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
                             ))}
                           </tr></thead>
-                          <tbody>
-                            {journalRows.map((row,ri)=>(
+                          {groupByFirst(journalRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                               <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                                 <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
                                   {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
@@ -8777,8 +9287,7 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
                                   {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                                 </td>
                               </tr>
-                            ))}
-                          </tbody>
+                            ))}</tbody>))}
                         </table>
                       </div>
                       <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
@@ -8791,37 +9300,67 @@ function PEScreen({ investments, setInvestments, showToast, auditLog, logAudit }
                     </div>
                   );
                 })()}
-                {drawerTab === "history" && (
+                {drawerTab === "audit" && (
                   <AuditLogPanel auditLog={auditLog} entityType="pe" entityId={inv.id}/>
                 )}
                 {drawerTab === "manage" && (
                   <PEActionPanel inv={inv} setInvestments={setInvestments} auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
                 )}
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
       {/* Transaction modal */}
-      {showTxModal && selectedInv && (() => {
-        const inv = investments.find(i => i.id === selectedInv.id) || selectedInv;
-        return <PETxModalInner inv={inv} onSave={(tx) => {
-          const newTx = {...tx, id:"PTX"+Date.now(), status:"Complete"};
-          setInvestments(prev => prev.map(i => {
-            if (i.id !== inv.id) return i;
-            const nextTxs = [...(i.transactions||[]), newTx];
-            let patch = { transactions: nextTxs };
-            if (tx.type === "Capital Call") patch.calledCapital = (+i.calledCapital||0) + (+tx.amount||0);
-            else if (tx.type === "Distribution") patch.distributionsReceived = (+i.distributionsReceived||0) + (+tx.amount||0);
-            else if (tx.type === "Valuation Update") patch.nav = +tx.amount;
-            else if (tx.type === "Exit / Realisation") { patch.distributionsReceived = (+i.distributionsReceived||0) + (+tx.amount||0); patch.nav = 0; patch.status = "Realised"; patch.exitDate = tx.date; }
-            return { ...i, ...patch };
-          }));
-          if (logAudit) logAudit("pe", inv.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount||0}`);
-          setShowTxModal(false);
-          showToast(`${tx.type} recorded`, "success");
-        }} onClose={()=>setShowTxModal(false)}/>;
+      {showTxModal && detailInv && (() => {
+        const inv = detailInv;
+        const callEffect = (t) => t.type === "Capital Call" ? (+t.amount||0) : 0;
+        const distEffect = (t) => (t.type === "Distribution" || t.type === "Exit / Realisation") ? (+t.amount||0) : 0;
+        return <PETxModalInner inv={inv} editTx={editTx} cashAccounts={cashAccounts} onSave={(tx) => {
+          if (editTx) {
+            const upd = {...editTx, ...tx};
+            setInvestments(prev => prev.map(i => {
+              if (i.id !== inv.id) return i;
+              let patch = {
+                transactions: (i.transactions||[]).map(t=>t.id===editTx.id?upd:t),
+                calledCapital: (+i.calledCapital||0) - callEffect(editTx) + callEffect(upd),
+                distributionsReceived: (+i.distributionsReceived||0) - distEffect(editTx) + distEffect(upd),
+              };
+              if (upd.type === "Valuation Update") patch.nav = +upd.amount;
+              return { ...i, ...patch };
+            }));
+            if (logAudit) logAudit("pe", inv.id, "edit-transaction", editTx, upd, `${tx.type} · S$${tx.amount||0}`);
+            showToast(`${tx.type} updated`, "success");
+          } else {
+            const newTx = {...tx, id:"PTX"+Date.now(), status:"Complete"};
+            setInvestments(prev => prev.map(i => {
+              if (i.id !== inv.id) return i;
+              const nextTxs = [...(i.transactions||[]), newTx];
+              let patch = { transactions: nextTxs };
+              if (tx.type === "Capital Call") patch.calledCapital = (+i.calledCapital||0) + (+tx.amount||0);
+              else if (tx.type === "Distribution") patch.distributionsReceived = (+i.distributionsReceived||0) + (+tx.amount||0);
+              else if (tx.type === "Valuation Update") patch.nav = +tx.amount;
+              else if (tx.type === "Exit / Realisation") { patch.distributionsReceived = (+i.distributionsReceived||0) + (+tx.amount||0); patch.nav = 0; patch.status = "Realised"; patch.exitDate = tx.date; }
+              return { ...i, ...patch };
+            }));
+            // Bank Transfer: credit (inflow) or debit (outflow) the chosen cash account
+            // — skipped when flagged record-only (no cash flow).
+            if (!tx.recordOnly && tx.method === "Bank Transfer" && tx.cashAccountId && setAccounts) {
+              const signed = (TX_FLOW_OUT.has(tx.type) ? -1 : 1) * (+tx.amount || 0);
+              setAccounts(prev => prev.map(a => {
+                if (String(a.id) !== String(tx.cashAccountId)) return a;
+                const cur = acctBalances(a);
+                const has = cur.find(b => b.ccy === "SGD");
+                const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + signed } : b) : [...cur, { ccy:"SGD", amount: signed }];
+                const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + signed } : {};
+                return { ...a, balances: nextBals, ...nextLegacy };
+              }));
+            }
+            if (logAudit) logAudit("pe", inv.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount||0}`);
+            showToast(`${tx.type} recorded`, "success");
+          }
+          setShowTxModal(false); setEditTx(null);
+        }} onClose={()=>{setShowTxModal(false);setEditTx(null);}}/>;
       })()}
 
       {/* Add/Edit modal */}
@@ -8920,93 +9459,34 @@ const BP_INIT = [
       {id:"BTX015",date:"2025-03-15",type:"Profit Distribution",amount:9000,method:"Bank Transfer",ref:"ULJV-PD-2024",status:"Complete",notes:"FY2024 profit share"},
     ],
   },
-  {
-    id:"BP004", businessName:"Two-Hearts Wedding Studio", partnershipType:"LLP", industry:"Professional Services", role:"Managing Partner",
-    ownershipPct:50, totalPartners:2,
-    capitalContributed:30000, partnerLoans:0, distributionsReceived:85000, salaryDrawings:0,
-    bookValue:0, estimatedMarketValue:0,
-    annualRevenue:0, annualProfit:0,
-    startDate:"2019-01-15", expiryDate:"2024-08-31",
-    registrationNo:"T19LL5678B", country:"Singapore", currency:"SGD",
-    status:"Exited",
-    notes:"Co-owned wedding photography & planning studio. Exited in Aug 2024 — partner bought out my stake for $120K total (incl. $85K distributions).",
-    transactions:[
-      {id:"BTX016",date:"2019-01-20",type:"Capital Contribution",amount:30000,method:"Bank Transfer",ref:"2H-CAP-INIT",status:"Complete",notes:"Initial capital"},
-      {id:"BTX017",date:"2022-12-31",type:"Profit Distribution",amount:25000,method:"Bank Transfer",ref:"2H-PD-2022",status:"Complete",notes:"FY2022 profit share (50%)"},
-      {id:"BTX018",date:"2023-12-31",type:"Profit Distribution",amount:30000,method:"Bank Transfer",ref:"2H-PD-2023",status:"Complete",notes:"FY2023 profit share"},
-      {id:"BTX019",date:"2024-07-15",type:"Profit Distribution",amount:30000,method:"Bank Transfer",ref:"2H-PD-2024-H1",status:"Complete",notes:"H1 2024 profit share"},
-      {id:"BTX020",date:"2024-08-31",type:"Exit / Buyout",amount:85000,method:"Bank Transfer",ref:"2H-BUYOUT",status:"Complete",notes:"Partner buyout — 50% stake for $85K (goodwill + equity)"},
-    ],
-  },
-  {
-    id:"BP005", businessName:"Axis Property Trust", partnershipType:"Limited Partnership", industry:"Real Estate", role:"Limited Partner",
-    ownershipPct:15, totalPartners:8,
-    capitalContributed:75000, partnerLoans:0, distributionsReceived:9000, salaryDrawings:0,
-    bookValue:82000, estimatedMarketValue:95000,
-    annualRevenue:180000, annualProfit:45000,
-    startDate:"2023-11-01", expiryDate:"",
-    registrationNo:"T23LP9012C", country:"Singapore", currency:"SGD",
-    status:"Active",
-    notes:"Limited partnership holding a small commercial unit at Paya Lebar. 8 LPs + 1 GP. LPs receive rental income pro-rata.",
-    transactions:[
-      {id:"BTX021",date:"2023-11-10",type:"Capital Contribution",amount:75000,method:"Bank Transfer",ref:"AXIS-LP-01",status:"Complete",notes:"LP capital — 15% of $500K raise"},
-      {id:"BTX022",date:"2024-12-31",type:"Profit Distribution",amount:4500,method:"Bank Transfer",ref:"AXIS-PD-2024",status:"Complete",notes:"FY2024 net rental income distribution"},
-      {id:"BTX023",date:"2025-12-31",type:"Profit Distribution",amount:4500,method:"Bank Transfer",ref:"AXIS-PD-2025",status:"Complete",notes:"FY2025 net rental income distribution"},
-    ],
-  },
-  {
-    id:"BP006", businessName:"Nova Coffee Roasters Pte Ltd", partnershipType:"Private Limited (Pte Ltd)", industry:"F&B", role:"Board Observer",
-    ownershipPct:8, totalPartners:5,
-    capitalContributed:40000, partnerLoans:0, distributionsReceived:0, salaryDrawings:0,
-    bookValue:40000, estimatedMarketValue:55000,
-    annualRevenue:850000, annualProfit:15000,
-    startDate:"2024-03-20", expiryDate:"",
-    registrationNo:"202412345D", country:"Singapore", currency:"SGD",
-    status:"Active",
-    notes:"Angel investment in coffee roaster/distributor. Board observer rights. No dividends yet — reinvesting for growth.",
-    transactions:[
-      {id:"BTX024",date:"2024-03-25",type:"Capital Contribution",amount:40000,method:"Bank Transfer",ref:"NOVA-ANG-01",status:"Complete",notes:"Angel round — 8% stake at $500K post-money"},
-    ],
-  },
-  {
-    id:"BP007", businessName:"Harborfront E-comm", partnershipType:"General Partnership", industry:"E-commerce", role:"Silent Partner",
-    ownershipPct:30, totalPartners:2,
-    capitalContributed:25000, partnerLoans:0, distributionsReceived:8500, salaryDrawings:0,
-    bookValue:25000, estimatedMarketValue:20000,
-    annualRevenue:0, annualProfit:0,
-    startDate:"2022-08-01", expiryDate:"",
-    registrationNo:"53401234E", country:"Singapore", currency:"SGD",
-    status:"Dormant",
-    notes:"Dropshipping partnership that went dormant in mid-2024. Active partner moved overseas. Considering winding up.",
-    transactions:[
-      {id:"BTX025",date:"2022-08-10",type:"Capital Contribution",amount:25000,method:"Bank Transfer",ref:"HBF-CAP-01",status:"Complete",notes:"Initial 30% stake"},
-      {id:"BTX026",date:"2023-06-30",type:"Profit Distribution",amount:5000,method:"Bank Transfer",ref:"HBF-PD-2023",status:"Complete",notes:"H1 2023 profit share"},
-      {id:"BTX027",date:"2024-03-31",type:"Profit Distribution",amount:3500,method:"Bank Transfer",ref:"HBF-PD-2024",status:"Complete",notes:"Final distribution before dormancy"},
-    ],
-  },
 ];
 
 // ── Business Partnership Transaction Modal ────────────────────
-function BPTxModalInner({ venture, onSave, onClose }) {
+function BPTxModalInner({ venture, editTx, cashAccounts, onSave, onClose }) {
+  const isEdit = !!editTx;
   const isPteLtd = venture.partnershipType === "Private Limited (Pte Ltd)";
+  // Market-value updates live in the Manage tab (FieldUpdatePanel). The modal records cash-flow transactions only.
   const txTypes = isPteLtd
-    ? ["Capital Contribution","Dividend","Salary / Drawings","Partner Loan","Loan Repayment","Valuation Update","Exit / Buyout"]
-    : ["Capital Contribution","Profit Distribution","Salary / Drawings","Partner Loan","Loan Repayment","Capital Withdrawal","Valuation Update","Exit / Buyout"];
-  const txTypeIcon = {"Capital Contribution":"📤","Profit Distribution":"💰","Dividend":"💰","Salary / Drawings":"💵","Partner Loan":"📤","Loan Repayment":"📥","Capital Withdrawal":"📥","Valuation Update":"📊","Exit / Buyout":"🏁"};
+    ? ["Capital Contribution","Dividend","Salary / Drawings","Partner Loan","Loan Repayment","Exit / Buyout"]
+    : ["Capital Contribution","Profit Distribution","Salary / Drawings","Partner Loan","Loan Repayment","Capital Withdrawal","Exit / Buyout"];
+  const txTypeIcon = {"Capital Contribution":"📤","Profit Distribution":"💰","Dividend":"💰","Salary / Drawings":"💵","Partner Loan":"📤","Loan Repayment":"📥","Capital Withdrawal":"📥","Exit / Buyout":"🏁"};
 
-  const [f, setF] = useState({
+  const [f, setF] = useState(editTx ? { ...editTx } : {
     type: "Capital Contribution",
     date: new Date().toISOString().slice(0,10),
-    amount: 0, method: "Bank Transfer", ref: "", notes: "",
+    amount: 0, method: "Bank Transfer", ref: "", notes: "", cashAccountId: "",
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
   const isValOnly = f.type === "Valuation Update";
+  const flowOut = TX_FLOW_OUT.has(f.type);
+  const flowIn = TX_FLOW_IN.has(f.type);
+  const needsAccount = f.method === "Bank Transfer" && (flowOut || flowIn);
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <div style={{fontSize:16,fontWeight:800}}>{isEdit ? "Edit Transaction" : "Record Transaction"}</div>
           <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{venture.businessName} · {venture.partnershipType}</div>
@@ -9030,6 +9510,17 @@ function BPTxModalInner({ venture, onSave, onClose }) {
           <div><Label>Method</Label><Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Bank Transfer","GIRO","Cheque","Cash","Netting","In-Kind"]}/></div>
           <div><Label>Reference</Label><Input value={f.ref} onChange={e=>set("ref",e.target.value)} placeholder="e.g. SUN-CAP-01"/></div>
         </div>
+        {needsAccount && (
+          <div style={{marginBottom:14}}>
+            <Label required>{flowOut ? "Pay from Account" : "Credit to Account"}</Label>
+            <Sel value={f.cashAccountId||""} onChange={e=>set("cashAccountId",e.target.value)}
+              placeholder={(cashAccounts&&cashAccounts.length) ? "Select account…" : undefined}
+              options={(cashAccounts&&cashAccounts.length) ? cashAccounts.map(a => ({value:String(a.id), label:`${a.bank} · ${a.accountName}`})) : ["— No cash accounts —"]}/>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>
+              {flowOut ? `This ${f.type.toLowerCase()} will be debited from this account.` : `The ${f.type.toLowerCase()} proceeds will be credited to this account.`}
+            </div>
+          </div>
+        )}
         <div style={{marginBottom:14}}>
           <Label>Notes</Label>
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Year-end profit share, renovation loan…"
@@ -9049,9 +9540,9 @@ function BPTxModalInner({ venture, onSave, onClose }) {
         }/>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0)?0.4:1}}>
-            Record {f.type}
+          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0||(needsAccount&&!f.cashAccountId)}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0||(needsAccount&&!f.cashAccountId))?0.4:1}}>
+            {isEdit ? "Save Changes" : `Record ${f.type}`}
           </button>
         </div>
       </div>
@@ -9117,17 +9608,25 @@ function BPModal({ venture, onSave, onClose }) {
 }
 
 // ── Business Partnership Ventures Screen ──────────────────────
-function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
+function BPScreen({ ventures, setVentures, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
+  const cashAccounts = (accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
   const isMobile = useIsMobile();
-  const [selectedVenture, setSelectedVenture] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editVenture, setEditVenture] = useState(null);
   const [filterType, setFilterType] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
-  const [drawerTab, setDrawerTab] = useState("overview");
   const [showTxModal, setShowTxModal] = useState(false);
+  const [editTx, setEditTx] = useState(null);
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
   const bpSort = useSortState();
+
+  const detailId = route.entityId;
+  const detailVenture = detailId ? ventures.find(v => v.id === detailId) : null;
+  const drawerTab = route.tab || "overview";
+  const goTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goList = () => navigate({ screen: "partnerships" });
 
   const activeVentures = ventures.filter(v => v.status === "Active" || v.status === "Dormant" || v.status === "In Dispute");
   const totalCapital = activeVentures.reduce((s,v) => s + (v.capitalContributed||0) + (v.partnerLoans||0), 0);
@@ -9171,6 +9670,7 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {!detailId && (<>
       {/* Page header */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <div>
@@ -9280,7 +9780,7 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
             const value = v.estimatedMarketValue || v.bookValue || 0;
             const capital = (v.capitalContributed||0) + (v.partnerLoans||0);
             const gain = value - capital;
-            return <MobileListItem key={v.id} onClick={()=>{setSelectedVenture(v);setDrawerTab("overview");}}
+            return <MobileListItem key={v.id} onClick={()=>navigate({screen:"partnerships",entityId:v.id})}
               icon={tc.icon} iconBg={tc.bg} title={v.businessName} subtitle={`${v.role} · ${v.ownershipPct}% · ${v.industry}`}
               value={fmtCompact(value)} valueColor={T.text} valueSub={`Capital: ${fmtCompact(capital)}`}
               badge={v.status} badgeBg={v.status==="Active"?T.upBg:v.status==="Dormant"?T.warnBg:T.inputBg} badgeColor={v.status==="Active"?T.up:v.status==="Dormant"?T.warn:T.muted}
@@ -9290,7 +9790,7 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
         </Card>
       ) : (
         <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
-          <SortHeader gridCols="2.2fr 1fr 0.8fr 1.1fr 1.1fr 1fr 0.8fr" sortKey={bpSort.sortKey} sortDir={bpSort.sortDir} onSort={bpSort.onSort}
+          <SortHeader gridCols={capCols("2.2fr 1fr 0.8fr 1.1fr 1.1fr 1fr 0.8fr")} sortKey={bpSort.sortKey} sortDir={bpSort.sortDir} onSort={bpSort.onSort}
             columns={[["Business / Role","left","name"],["Type","left","type"],["Stake","right","stake"],["Capital / Book","right","capital"],["Market Value","right","value"],["Income","right","income"],["Status","left","status"]]}/>
           {bpSort.sortFn(filtered, (v, k) => {
             if (k==="name") return (v.businessName||"").toLowerCase();
@@ -9309,8 +9809,8 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
             const gain = value - capital;
             const isDim = v.status === "Exited" || v.status === "Closed";
             return (
-              <div key={v.id} onClick={()=>{setSelectedVenture(v);setDrawerTab("overview");}}
-                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 0.8fr 1.1fr 1.1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+              <div key={v.id} onClick={()=>navigate({screen:"partnerships",entityId:v.id})}
+                style={{display:"grid",gridTemplateColumns:capCols("2.2fr 1fr 0.8fr 1.1fr 1.1fr 1fr 0.8fr"),columnGap:24,padding:"13px 20px",borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
                   opacity:isDim?0.55:1,background:isDim?T.sidebar:""}}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                 onMouseLeave={e=>e.currentTarget.style.background=(isDim?T.sidebar:"")}>
@@ -9350,9 +9850,12 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
         </Card>
       )}
 
-      {/* ══ VENTURE DETAIL DRAWER ══ */}
-      {selectedVenture && (() => {
-        const venture = ventures.find(v => v.id === selectedVenture.id) || selectedVenture;
+      </>)}
+
+      {/* ══ VENTURE DETAIL — full page ══ */}
+      {detailId && !detailVenture && <NotFound message="This venture could not be found." onBack={goList}/>}
+      {detailVenture && (() => {
+        const venture = detailVenture;
         const tc = BP_TYPE_CONFIG[venture.partnershipType] || {icon:"🤝",color:T.muted,bg:T.inputBg};
         const txs = (venture.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
         const capital = (venture.capitalContributed||0) + (venture.partnerLoans||0);
@@ -9371,48 +9874,21 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
         const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
 
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e=>{if(e.target===e.currentTarget) setSelectedVenture(null);}}>
-            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
-              {/* Header */}
-              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
-                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:16,fontWeight:700}}>{venture.businessName}</div>
-                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{venture.partnershipType} · {venture.role} · {venture.ownershipPct}% stake</div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <Badge bg={venture.status==="Active"?T.upBg:venture.status==="Dormant"?T.warnBg:T.inputBg} color={venture.status==="Active"?T.up:venture.status==="Dormant"?T.warn:T.muted}>{venture.status}</Badge>
-                    <button onClick={()=>{setEditVenture(venture);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
-                    <button onClick={()=>setSelectedVenture(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
-                  </div>
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:10,marginBottom:14}}>
-                  {[
-                    {l:"Market Value",v:fmtCompact(value)},
-                    {l:"Capital Deployed",v:fmtCompact(capital)},
-                    {l:"Lifetime Income",v:fmtCompact(income)},
-                    {l:"Total Return",v:`${totalReturn>=0?"+":""}${fmtCompact(totalReturn)} (${returnPct>=0?"+":""}${returnPct.toFixed(0)}%)`},
-                  ].map(s=>(
-                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
-                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
-                      <div style={{fontSize:14,fontWeight:700,marginTop:4}}>{s.v}</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"bookvalue",label:"Book Value"},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}].map(dt=>(
-                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
-                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
-                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
-                      {dt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* Body */}
-              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+          <DetailPage
+            icon={tc.icon} iconBg={tc.bg}
+            title={venture.businessName}
+            subtitle={`${venture.partnershipType} · ${venture.role} · ${venture.ownershipPct}% stake`}
+            badges={<Badge bg={venture.status==="Active"?T.upBg:venture.status==="Dormant"?T.warnBg:T.inputBg} color={venture.status==="Active"?T.up:venture.status==="Dormant"?T.warn:T.muted}>{venture.status}</Badge>}
+            headerActions={<button onClick={()=>{setEditVenture(venture);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>}
+            stats={[
+              {l:"Market Value",v:fmtCompact(value)},
+              {l:"Capital Deployed",v:fmtCompact(capital)},
+              {l:"Lifetime Income",v:fmtCompact(income)},
+              {l:"Total Return",v:`${totalReturn>=0?"+":""}${fmtCompact(totalReturn)} (${returnPct>=0?"+":""}${returnPct.toFixed(0)}%)`},
+            ]}
+            tabs={[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"audit",label:"Audit"},{id:"manage",label:"Manage"}]}
+            activeTab={drawerTab} onTab={goTab} onBack={goList}>
+              <div>
                 {drawerTab === "overview" && (
                   <div style={{display:"flex",flexDirection:"column",gap:16}}>
                     <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
@@ -9478,7 +9954,13 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
                     )}
                   </div>
                 )}
-                {drawerTab === "transactions" && (
+                {drawerTab === "transactions" && (()=>{
+                  const _q = txSearch.trim().toLowerCase();
+                  const visibleTxs = txs.filter(t =>
+                    (txFilter==="All" || t.type===txFilter) &&
+                    (!_q || (t.type||"").toLowerCase().includes(_q) || (t.notes||"").toLowerCase().includes(_q) || (t.date||"").includes(_q) || (t.ref||"").toLowerCase().includes(_q) || (t.method||"").toLowerCase().includes(_q))
+                  );
+                  return (
                   <div style={{display:"flex",flexDirection:"column",gap:14}}>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                       {(()=>{
@@ -9498,21 +9980,19 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
                         </div>
                       ))}
                     </div>
-                    {venture.status !== "Exited" && venture.status !== "Closed" && (
-                      <div style={{display:"flex",justifyContent:"flex-end"}}>
-                        <button onClick={()=>setShowTxModal(true)} style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>+ Record Transaction</button>
-                      </div>
-                    )}
-                    {txs.length===0?(
-                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No transactions yet</div></div>
+                    <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                      filters={["All",...Array.from(new Set(txs.map(t=>t.type)))]}
+                      action={venture.status !== "Exited" && venture.status !== "Closed" && <button onClick={()=>setShowTxModal(true)} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Record</button>}/>
+                    {visibleTxs.length===0?(
+                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>{txs.length===0?"No transactions yet":"No matching transactions"}</div></div>
                     ):(
                       <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                        {txs.map((tx,i)=>{
+                        {visibleTxs.map((tx,i)=>{
                           const isOut = ["Capital Contribution","Partner Loan"].includes(tx.type);
                           const isIncome = ["Profit Distribution","Dividend","Salary / Drawings","Loan Repayment"].includes(tx.type);
                           const icon = {"Capital Contribution":"📤","Profit Distribution":"💰","Dividend":"💰","Salary / Drawings":"💵","Partner Loan":"📤","Loan Repayment":"📥","Capital Withdrawal":"📥","Valuation Update":"📊","Exit / Buyout":"🏁"}[tx.type]||"💰";
                           return (
-                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                            <div key={tx.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                               <div style={{width:34,height:34,borderRadius:8,background:isIncome?T.upBg:isOut?T.downBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
                               <div style={{flex:1,minWidth:0}}>
                                 <div style={{fontSize:13,fontWeight:600}}>{tx.type}{tx.notes?` — ${tx.notes}`:""}</div>
@@ -9528,89 +10008,24 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
                                 </div>
                                 <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
                               </div>
+                              <TxRowActions
+                                onEdit={()=>{ setEditTx(tx); setShowTxModal(true); }}
+                                onDelete={()=>{
+                                  if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
+                                  setVentures(prev=>prev.map(v=>v.id===venture.id?{...v,transactions:(v.transactions||[]).filter(t=>t.id!==tx.id)}:v));
+                                  if(logAudit) logAudit("venture", venture.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  showToast("Transaction deleted","success");
+                                }}/>
                             </div>
                           );
                         })}
                       </div>
                     )}
                   </div>
-                )}
-                {drawerTab === "bookvalue" && (() => {
-                  const bookUpdates = (auditLog || []).filter(e =>
-                    e.entityType === "venture" && e.entityId === venture.id && e.action === "update"
-                    && (e.changes||[]).some(c => c.field === "bookValue" || c.field === "estimatedMarketValue")
-                  );
-                  const valuationTxs = (venture.transactions||[]).filter(t => t.type === "Valuation Update").slice().sort((a,b)=>b.date.localeCompare(a.date));
-                  const rows = [];
-                  bookUpdates.forEach(e => {
-                    (e.changes||[]).filter(c => c.field === "bookValue" || c.field === "estimatedMarketValue").forEach(c => {
-                      const before = parseFloat(c.before) || 0;
-                      const after = parseFloat(c.after) || 0;
-                      rows.push({ ts: e.ts, field: c.field, before, after, user: e.user, source: "edit" });
-                    });
-                  });
-                  valuationTxs.forEach(tx => {
-                    const after = parseFloat(tx.amount) || 0;
-                    rows.push({ ts: tx.date, field: "estimatedMarketValue", before: null, after, user: "user", source: "transaction", notes: tx.notes });
-                  });
-                  rows.sort((a,b) => String(b.ts).localeCompare(String(a.ts)));
-                  return (
-                    <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
-                      <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <div>
-                          <div style={{fontSize:14,fontWeight:700}}>Book Value History</div>
-                          <div style={{fontSize:11,color:T.muted,marginTop:3}}>Book Value and Estimated Market Value changes</div>
-                        </div>
-                        <div style={{fontSize:11,color:T.muted}}>{rows.length} {rows.length === 1 ? "entry" : "entries"}</div>
-                      </div>
-                      {rows.length === 0 ? (
-                        <div style={{padding:"40px 20px",textAlign:"center",color:T.muted,fontSize:12}}>
-                          <div style={{fontSize:26,marginBottom:8}}>📊</div>
-                          <div style={{fontWeight:600}}>No book value changes yet</div>
-                          <div style={{fontSize:11,marginTop:3,color:T.dim}}>Edits to Book Value / Estimated Market Value and Valuation Update transactions will appear here.</div>
-                        </div>
-                      ) : (
-                        <div style={{overflowX:"auto"}}>
-                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                            <thead>
-                              <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left",background:T.inputBg}}>
-                                <th style={{padding:"9px 14px"}}>Date</th>
-                                <th style={{padding:"9px 14px"}}>Field</th>
-                                <th style={{padding:"9px 14px",textAlign:"right"}}>Old</th>
-                                <th style={{padding:"9px 14px",textAlign:"right"}}>New</th>
-                                <th style={{padding:"9px 14px",textAlign:"right"}}>Change</th>
-                                <th style={{padding:"9px 14px",textAlign:"right"}}>%</th>
-                                <th style={{padding:"9px 14px"}}>Source</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {rows.map((r, i) => {
-                                const delta = r.before == null ? null : r.after - r.before;
-                                const pct = r.before > 0 ? (delta / r.before * 100) : null;
-                                const up = delta == null ? null : delta >= 0;
-                                const fieldLabel = r.field === "bookValue" ? "Book Value" : "Market Value";
-                                const dateStr = r.source === "edit" ? new Date(r.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"}) : r.ts;
-                                return (
-                                  <tr key={i} style={{borderBottom:`1px solid ${T.border}`}}>
-                                    <td style={{padding:"10px 14px",color:T.text}}>{dateStr}</td>
-                                    <td style={{padding:"10px 14px",color:T.muted}}>{fieldLabel}</td>
-                                    <td style={{padding:"10px 14px",textAlign:"right",color:T.muted}}>{r.before == null ? "—" : "S$" + r.before.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-                                    <td style={{padding:"10px 14px",textAlign:"right",fontWeight:600,color:T.text}}>S${r.after.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-                                    <td style={{padding:"10px 14px",textAlign:"right",fontWeight:600,color:up == null ? T.muted : up ? T.up : T.down}}>{delta == null ? "—" : (up?"+":"") + delta.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-                                    <td style={{padding:"10px 14px",textAlign:"right",fontWeight:600,color:up == null ? T.muted : up ? T.up : T.down}}>{pct == null ? "—" : (up?"+":"") + pct.toFixed(2) + "%"}</td>
-                                    <td style={{padding:"10px 14px",color:T.muted,fontSize:11}}>{r.source === "edit" ? "Edit" : "Valuation Update"}{r.notes ? ` · ${r.notes}` : ""}</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
                   );
                 })()}
                 {drawerTab === "postings" && (() => {
-                  const sortedTxs = (venture.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update").slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  const sortedTxs = (venture.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update").slice().sort((a,b)=>b.date.localeCompare(a.date));
                   const journalRows = [];
                   sortedTxs.forEach(tx => {
                     if (tx.type==="Capital Contribution") {
@@ -9662,8 +10077,7 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
                               <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",width:hi===0||hi>=3?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
                             ))}
                           </tr></thead>
-                          <tbody>
-                            {journalRows.map((row,ri)=>(
+                          {groupByFirst(journalRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                               <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                                 <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
                                   {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
@@ -9677,8 +10091,7 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
                                   {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                                 </td>
                               </tr>
-                            ))}
-                          </tbody>
+                            ))}</tbody>))}
                         </table>
                       </div>
                       <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
@@ -9691,7 +10104,7 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
                     </div>
                   );
                 })()}
-                {drawerTab === "history" && (
+                {drawerTab === "audit" && (
                   <AuditLogPanel auditLog={auditLog} entityType="venture" entityId={venture.id}/>
                 )}
                 {drawerTab === "manage" && (
@@ -9710,34 +10123,74 @@ function BPScreen({ ventures, setVentures, showToast, auditLog, logAudit }) {
                     auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
                 )}
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
       {/* Transaction modal */}
-      {showTxModal && selectedVenture && (() => {
-        const venture = ventures.find(v => v.id === selectedVenture.id) || selectedVenture;
-        return <BPTxModalInner venture={venture} onSave={(tx) => {
-          const newTx = {...tx, id:"BTX"+Date.now(), status:"Complete"};
-          setVentures(prev => prev.map(v => {
-            if (v.id !== venture.id) return v;
-            const nextTxs = [...(v.transactions||[]), newTx];
-            let patch = { transactions: nextTxs };
-            if (tx.type === "Capital Contribution") patch.capitalContributed = (+v.capitalContributed||0) + (+tx.amount||0);
-            else if (tx.type === "Partner Loan") patch.partnerLoans = (+v.partnerLoans||0) + (+tx.amount||0);
-            else if (tx.type === "Loan Repayment") patch.partnerLoans = Math.max(0, (+v.partnerLoans||0) - (+tx.amount||0));
-            else if (tx.type === "Profit Distribution" || tx.type === "Dividend") patch.distributionsReceived = (+v.distributionsReceived||0) + (+tx.amount||0);
-            else if (tx.type === "Salary / Drawings") patch.salaryDrawings = (+v.salaryDrawings||0) + (+tx.amount||0);
-            else if (tx.type === "Valuation Update") patch.estimatedMarketValue = +tx.amount;
-            else if (tx.type === "Capital Withdrawal") patch.capitalContributed = Math.max(0, (+v.capitalContributed||0) - (+tx.amount||0));
-            else if (tx.type === "Exit / Buyout") { patch.status = "Exited"; patch.expiryDate = tx.date; patch.bookValue = 0; patch.estimatedMarketValue = 0; }
-            return { ...v, ...patch };
-          }));
-          if (logAudit) logAudit("venture", venture.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount||0}`);
-          setShowTxModal(false);
-          showToast(`${tx.type} recorded`, "success");
-        }} onClose={()=>setShowTxModal(false)}/>;
+      {showTxModal && detailVenture && (() => {
+        const venture = detailVenture;
+        // additive aggregate contributions of a transaction (sign-aware)
+        const aggEffect = (t) => {
+          const a = +t.amount || 0;
+          switch (t.type) {
+            case "Capital Contribution": return { capitalContributed: a };
+            case "Capital Withdrawal":   return { capitalContributed: -a };
+            case "Partner Loan":         return { partnerLoans: a };
+            case "Loan Repayment":       return { partnerLoans: -a };
+            case "Profit Distribution":
+            case "Dividend":             return { distributionsReceived: a };
+            case "Salary / Drawings":    return { salaryDrawings: a };
+            default: return {};
+          }
+        };
+        return <BPTxModalInner venture={venture} editTx={editTx} cashAccounts={cashAccounts} onSave={(tx) => {
+          if (editTx) {
+            const upd = {...editTx, ...tx};
+            const oldE = aggEffect(editTx), newE = aggEffect(upd);
+            const keys = new Set([...Object.keys(oldE), ...Object.keys(newE)]);
+            setVentures(prev => prev.map(v => {
+              if (v.id !== venture.id) return v;
+              let patch = { transactions: (v.transactions||[]).map(t=>t.id===editTx.id?upd:t) };
+              keys.forEach(k => { patch[k] = Math.max(0, (+v[k]||0) - (oldE[k]||0) + (newE[k]||0)); });
+              if (upd.type === "Valuation Update") patch.estimatedMarketValue = +upd.amount;
+              return { ...v, ...patch };
+            }));
+            if (logAudit) logAudit("venture", venture.id, "edit-transaction", editTx, upd, `${tx.type} · S$${tx.amount||0}`);
+            showToast(`${tx.type} updated`, "success");
+          } else {
+            const newTx = {...tx, id:"BTX"+Date.now(), status:"Complete"};
+            setVentures(prev => prev.map(v => {
+              if (v.id !== venture.id) return v;
+              const nextTxs = [...(v.transactions||[]), newTx];
+              let patch = { transactions: nextTxs };
+              if (tx.type === "Capital Contribution") patch.capitalContributed = (+v.capitalContributed||0) + (+tx.amount||0);
+              else if (tx.type === "Partner Loan") patch.partnerLoans = (+v.partnerLoans||0) + (+tx.amount||0);
+              else if (tx.type === "Loan Repayment") patch.partnerLoans = Math.max(0, (+v.partnerLoans||0) - (+tx.amount||0));
+              else if (tx.type === "Profit Distribution" || tx.type === "Dividend") patch.distributionsReceived = (+v.distributionsReceived||0) + (+tx.amount||0);
+              else if (tx.type === "Salary / Drawings") patch.salaryDrawings = (+v.salaryDrawings||0) + (+tx.amount||0);
+              else if (tx.type === "Valuation Update") patch.estimatedMarketValue = +tx.amount;
+              else if (tx.type === "Capital Withdrawal") patch.capitalContributed = Math.max(0, (+v.capitalContributed||0) - (+tx.amount||0));
+              else if (tx.type === "Exit / Buyout") { patch.status = "Exited"; patch.expiryDate = tx.date; patch.bookValue = 0; patch.estimatedMarketValue = 0; }
+              return { ...v, ...patch };
+            }));
+            // Bank Transfer: credit (inflow) or debit (outflow) the chosen cash account
+            if (tx.method === "Bank Transfer" && tx.cashAccountId && setAccounts) {
+              const signed = (TX_FLOW_OUT.has(tx.type) ? -1 : 1) * (+tx.amount || 0);
+              setAccounts(prev => prev.map(a => {
+                if (String(a.id) !== String(tx.cashAccountId)) return a;
+                const cur = acctBalances(a);
+                const has = cur.find(b => b.ccy === "SGD");
+                const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + signed } : b) : [...cur, { ccy:"SGD", amount: signed }];
+                const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + signed } : {};
+                return { ...a, balances: nextBals, ...nextLegacy };
+              }));
+            }
+            if (logAudit) logAudit("venture", venture.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount||0}`);
+            showToast(`${tx.type} recorded`, "success");
+          }
+          setShowTxModal(false); setEditTx(null);
+        }} onClose={()=>{setShowTxModal(false);setEditTx(null);}}/>;
       })()}
 
       {/* Add/Edit modal */}
@@ -9840,115 +10293,31 @@ const COL_INIT = [
       {id:"CTX008",date:"2025-09-15",type:"Valuation Update",amount:14000,method:"Gallery Assessment",ref:"CHG-VAL-25",status:"Complete",notes:"Gallery's current primary market range for artist"},
     ],
   },
-  {
-    id:"CL004", category:"Wine & Spirits", name:"Château Margaux 2015", brand:"Château Margaux", modelRef:"Grand Cru Classé, Margaux", serialNo:"6 bottles (OCB)",
-    year:2015, condition:"Mint", quantity:6,
-    acquisitionDate:"2020-11-08", acquisitionPrice:4800, acquisitionSource:"Crystal Wines en primeur",
-    currentValue:7200, valuationDate:"2025-10-20", valuerSource:"Liv-ex market",
-    storageLocation:"Wine Cellar", specificStorage:"Temperature-controlled cellar — The Wine Company storage",
-    insuredValue:8000, insurancePolicyRef:"INS-VAL-2026",
-    authenticated:true, certificateRef:"OCB provenance from Crystal Wines",
-    provenance:"En primeur via Crystal Wines, stored continuously",
-    currency:"SGD", status:"Active",
-    notes:"6 bottles, OCB (original case). 95+ pts Parker. Hold until 2030+ for drinking window.",
-    transactions:[
-      {id:"CTX009",date:"2020-11-08",type:"Purchase",amount:4800,method:"Bank Transfer",ref:"CW-MAR15-6",status:"Complete",notes:"En primeur 6-bottle case"},
-      {id:"CTX010",date:"2022-01-15",type:"Storage Cost",amount:180,method:"GIRO",ref:"TWC-STOR-22",status:"Complete",notes:"Annual cellar storage fee"},
-      {id:"CTX011",date:"2023-01-15",type:"Storage Cost",amount:180,method:"GIRO",ref:"TWC-STOR-23",status:"Complete",notes:"Annual cellar storage fee"},
-      {id:"CTX012",date:"2024-01-15",type:"Storage Cost",amount:200,method:"GIRO",ref:"TWC-STOR-24",status:"Complete",notes:"Annual cellar storage fee"},
-      {id:"CTX013",date:"2025-01-15",type:"Storage Cost",amount:200,method:"GIRO",ref:"TWC-STOR-25",status:"Complete",notes:"Annual cellar storage fee"},
-      {id:"CTX014",date:"2025-10-20",type:"Valuation Update",amount:7200,method:"Market Data",ref:"LIVEX-OCT25",status:"Complete",notes:"Liv-ex Fine Wine 100 index tracking"},
-    ],
-  },
-  {
-    id:"CL005", category:"Classic Cars", name:"Porsche 911T Coupé", brand:"Porsche", modelRef:"911T (2.2L)", serialNo:"911xxxxxx",
-    year:1971, condition:"Very Good", quantity:1,
-    acquisitionDate:"2022-11-30", acquisitionPrice:158000, acquisitionSource:"Private sale — UK import",
-    currentValue:185000, valuationDate:"2025-11-15", valuerSource:"Classic Car Auctions Singapore",
-    storageLocation:"Storage Facility", specificStorage:"Autobahn Garage, Loyang — climate-controlled",
-    insuredValue:200000, insurancePolicyRef:"INS-CLASSIC-2026",
-    authenticated:true, certificateRef:"Porsche Certificate of Authenticity + UK V5C",
-    provenance:"UK barn find 2018, restored 2019-2021, imported to SG 2022",
-    currency:"SGD", status:"Active",
-    notes:"Matching numbers. Gemini Blue over black leather. COE extended to 2032 via classic scheme. Concours-level interior.",
-    transactions:[
-      {id:"CTX015",date:"2022-11-30",type:"Purchase",amount:158000,method:"Bank Transfer",ref:"911T-IMPORT",status:"Complete",notes:"Private import from UK — shipping and duties included"},
-      {id:"CTX016",date:"2023-03-20",type:"Maintenance",amount:4200,method:"Credit Card",ref:"911-SERV-23",status:"Complete",notes:"Post-import full service and roadworthy check"},
-      {id:"CTX017",date:"2024-06-10",type:"Maintenance",amount:2800,method:"Credit Card",ref:"911-SERV-24",status:"Complete",notes:"Annual service + carb tune"},
-      {id:"CTX018",date:"2025-01-15",type:"Insurance Premium",amount:1850,method:"GIRO",ref:"CLS-INS-25",status:"Complete",notes:"Annual classic car insurance"},
-      {id:"CTX019",date:"2025-07-20",type:"Storage Cost",amount:1440,method:"GIRO",ref:"AGB-STOR-25",status:"Complete",notes:"Annual storage — Autobahn Garage"},
-      {id:"CTX020",date:"2025-11-15",type:"Valuation Update",amount:185000,method:"Auction Estimate",ref:"CCA-NOV25",status:"Complete",notes:"Pre-sale estimate from Classic Car Auctions SG"},
-    ],
-  },
-  {
-    id:"CL006", category:"Trading Cards", name:"Charizard Base Set Unlimited (PSA 10)", brand:"Pokémon (WOTC)", modelRef:"1999 Base Set #4/102", serialNo:"PSA cert 12345678",
-    year:1999, condition:"Mint", quantity:1,
-    acquisitionDate:"2024-01-20", acquisitionPrice:5200, acquisitionSource:"PWCC auction",
-    currentValue:4800, valuationDate:"2025-12-01", valuerSource:"PSA Auction Prices Realized",
-    storageLocation:"Bank Safe Deposit", specificStorage:"OCBC safe deposit box",
-    insuredValue:6000, insurancePolicyRef:"INS-VAL-2026",
-    authenticated:true, certificateRef:"PSA 10 Gem Mint graded",
-    provenance:"PWCC Weekly Auction #142 - January 2024",
-    currency:"SGD", status:"Active",
-    notes:"Unlimited print (non-shadowless). Market has softened ~8% from 2024 peak. Hold long-term.",
-    transactions:[
-      {id:"CTX021",date:"2024-01-20",type:"Purchase",amount:5200,method:"Bank Transfer",ref:"PWCC-WK142",status:"Complete",notes:"PWCC winning bid + buyer's premium + shipping/tax"},
-      {id:"CTX022",date:"2025-12-01",type:"Valuation Update",amount:4800,method:"Market Data",ref:"PSA-APR-NOV25",status:"Complete",notes:"PSA 10 6-month average selling price"},
-    ],
-  },
-  {
-    id:"CL007", category:"Watches", name:"Royal Oak 41 Stainless", brand:"Audemars Piguet", modelRef:"15500ST.OO.1220ST.01", serialNo:"H-series",
-    year:2021, condition:"Excellent", quantity:1,
-    acquisitionDate:"2023-02-14", acquisitionPrice:42000, acquisitionSource:"Pre-owned — Watch Century",
-    currentValue:46500, valuationDate:"2026-01-20", valuerSource:"Consignee mid-quote",
-    storageLocation:"With Consignee", specificStorage:"Watch Century consignment",
-    insuredValue:48000, insurancePolicyRef:"INS-VAL-2026",
-    authenticated:true, certificateRef:"AP warranty card (2021) + extract from archives",
-    provenance:"2nd owner, full set",
-    currency:"SGD", status:"In Consignment",
-    notes:"Blue dial. Consigned at Watch Century since Dec 2025 — asking $49K, expected net ~$46-47K after 8% commission.",
-    transactions:[
-      {id:"CTX023",date:"2023-02-14",type:"Purchase",amount:42000,method:"Bank Transfer",ref:"AP-RO-15500",status:"Complete",notes:"Pre-owned purchase from dealer"},
-      {id:"CTX024",date:"2024-07-10",type:"Maintenance",amount:1100,method:"Credit Card",ref:"AP-SERV-24",status:"Complete",notes:"Pressure test + polish (AP Service Centre)"},
-      {id:"CTX025",date:"2025-12-05",type:"Consignment Fee",amount:0,method:"Netting",ref:"WC-CONSIGN-01",status:"Complete",notes:"Consigned — fee 8% of sale price, deducted on sale"},
-      {id:"CTX026",date:"2026-01-20",type:"Valuation Update",amount:46500,method:"Consignee Quote",ref:"WC-QTE-JAN26",status:"Complete",notes:"Expected net after consignment commission"},
-    ],
-  },
-  {
-    id:"CL008", category:"Jewellery", name:"Tiffany Solitaire Diamond Ring", brand:"Tiffany & Co.", modelRef:"The Tiffany Setting 1.5ct", serialNo:"GIA 2345678901",
-    year:2024, condition:"Mint", quantity:1,
-    acquisitionDate:"2024-11-22", acquisitionPrice:28500, acquisitionSource:"Tiffany ION Orchard",
-    currentValue:28500, valuationDate:"2024-11-22", valuerSource:"Retail (at purchase)",
-    storageLocation:"Home Safe", specificStorage:"Jewellery drawer — Stockinger safe",
-    insuredValue:32000, insurancePolicyRef:"INS-VAL-2026",
-    authenticated:true, certificateRef:"Tiffany certificate + GIA report (G, VS1, Ex/Ex/Ex)",
-    provenance:"New from Tiffany flagship",
-    currency:"SGD", status:"Active",
-    notes:"Anniversary gift. Not for resale consideration — sentimental.",
-    transactions:[
-      {id:"CTX027",date:"2024-11-22",type:"Purchase",amount:28500,method:"Credit Card",ref:"TIF-SOL-15",status:"Complete",notes:"Tiffany ION — 10th anniversary"},
-    ],
-  },
 ];
 
 // ── Collectible Transaction Modal ─────────────────────────────
-function ColTxModalInner({ item, onSave, onClose }) {
-  const txTypes = ["Purchase","Sale","Valuation Update","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration"];
-  const txTypeIcon = {"Purchase":"📥","Sale":"📤","Valuation Update":"📊","Appraisal Fee":"🔍","Insurance Premium":"🛡","Maintenance":"🔧","Storage Cost":"📦","Consignment Fee":"🤝","Restoration":"🎨"};
+function ColTxModalInner({ item, editTx, cashAccounts, onSave, onClose }) {
+  const isEdit = !!editTx;
+  // Market-value updates live in the Manage tab (FieldUpdatePanel). The modal records cash-flow transactions only.
+  const txTypes = ["Purchase","Sale","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration"];
+  const txTypeIcon = {"Purchase":"📥","Sale":"📤","Appraisal Fee":"🔍","Insurance Premium":"🛡","Maintenance":"🔧","Storage Cost":"📦","Consignment Fee":"🤝","Restoration":"🎨"};
 
-  const [f, setF] = useState({
-    type: "Valuation Update",
+  const [f, setF] = useState(editTx ? { ...editTx } : {
+    type: "Purchase",
     date: new Date().toISOString().slice(0,10),
-    amount: 0, method: "Credit Card", ref: "", notes: "",
+    amount: 0, method: "Credit Card", ref: "", notes: "", cashAccountId: "",
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
   const isValOnly = f.type === "Valuation Update";
+  const flowOut = TX_FLOW_OUT.has(f.type);
+  const flowIn = TX_FLOW_IN.has(f.type);
+  const needsAccount = f.method === "Bank Transfer" && (flowOut || flowIn);
 
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bg,borderRadius:16,width:480,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <div style={{fontSize:16,fontWeight:800}}>Record Transaction</div>
+          <div style={{fontSize:16,fontWeight:800}}>{isEdit ? "Edit Transaction" : "Record Transaction"}</div>
           <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
         <div style={{fontSize:12,color:T.muted,marginBottom:20}}>{item.name} · {item.category}</div>
@@ -9972,6 +10341,17 @@ function ColTxModalInner({ item, onSave, onClose }) {
           <div><Label>Method</Label><Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Credit Card","Bank Transfer","GIRO","Cash","Cheque","Market Data","Auction Estimate","Netting"]}/></div>
           <div><Label>Reference</Label><Input value={f.ref} onChange={e=>set("ref",e.target.value)} placeholder="e.g. RLX-SERV-25"/></div>
         </div>
+        {needsAccount && (
+          <div style={{marginBottom:14}}>
+            <Label required>{flowOut ? "Pay from Account" : "Credit to Account"}</Label>
+            <Sel value={f.cashAccountId||""} onChange={e=>set("cashAccountId",e.target.value)}
+              placeholder={(cashAccounts&&cashAccounts.length) ? "Select account…" : undefined}
+              options={(cashAccounts&&cashAccounts.length) ? cashAccounts.map(a => ({value:String(a.id), label:`${a.bank} · ${a.accountName}`})) : ["— No cash accounts —"]}/>
+            <div style={{fontSize:11,color:T.dim,marginTop:4}}>
+              {flowOut ? `This ${f.type.toLowerCase()} will be debited from this account.` : `The ${f.type.toLowerCase()} proceeds will be credited to this account.`}
+            </div>
+          </div>
+        )}
         <div style={{marginBottom:14}}>
           <Label>Notes</Label>
           <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Annual service, consignment listing, revaluation…"
@@ -9991,9 +10371,9 @@ function ColTxModalInner({ item, onSave, onClose }) {
         }/>
         <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
           <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0}
-            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0)?0.4:1}}>
-            Record {f.type}
+          <button onClick={()=>onSave(f)} disabled={!f.date||f.amount<=0||(needsAccount&&!f.cashAccountId)}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.date||f.amount<=0||(needsAccount&&!f.cashAccountId))?0.4:1}}>
+            {isEdit ? "Save Changes" : `Record ${f.type}`}
           </button>
         </div>
       </div>
@@ -10030,7 +10410,7 @@ function ColModal({ item, onSave, onClose }) {
             <div><Label>Acquisition Date</Label><Input type="date" value={f.acquisitionDate} onChange={e=>set("acquisitionDate",e.target.value)}/></div>
             <div><Label>Source</Label><Input value={f.acquisitionSource} onChange={e=>set("acquisitionSource",e.target.value)} placeholder="Dealer, auction, AD…"/></div>
             <div><Label>Current Value</Label><Input type="number" prefix="S$" value={f.currentValue} onChange={e=>set("currentValue",+e.target.value)}/></div>
-            <div><Label>Valuation Date</Label><Input type="date" value={f.valuationDate} onChange={e=>set("valuationDate",e.target.value)}/></div>
+            <div><Label>Valuation Date{f.id?" (set on add only)":""}</Label><Input type="date" value={f.valuationDate} onChange={e=>set("valuationDate",e.target.value)} disabled={!!f.id}/></div>
             <div><Label>Valuer / Source</Label><Input value={f.valuerSource} onChange={e=>set("valuerSource",e.target.value)} placeholder="e.g. Chrono24, gallery"/></div>
             <div><Label>Storage Location</Label><Sel value={f.storageLocation} onChange={e=>set("storageLocation",e.target.value)} options={COL_STORAGE_OPTS}/></div>
             <div><Label>Specific Storage</Label><Input value={f.specificStorage} onChange={e=>set("specificStorage",e.target.value)} placeholder="e.g. Study room safe, OCBC box #xxxx"/></div>
@@ -10068,17 +10448,25 @@ function ColModal({ item, onSave, onClose }) {
 }
 
 // ── Collectibles Screen ───────────────────────────────────────
-function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) {
+function CollectiblesScreen({ items, setItems, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
+  const cashAccounts = (accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
   const isMobile = useIsMobile();
-  const [selectedItem, setSelectedItem] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [filterCategory, setFilterCategory] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
-  const [drawerTab, setDrawerTab] = useState("overview");
   const [showTxModal, setShowTxModal] = useState(false);
+  const [editTx, setEditTx] = useState(null);
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
   const colSort = useSortState();
+
+  const detailId = route.entityId;
+  const detailItem = detailId ? items.find(i => i.id === detailId) : null;
+  const drawerTab = route.tab || "overview";
+  const goTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goList = () => navigate({ screen: "collectibles" });
 
   const activeItems = items.filter(i => i.status === "Active" || i.status === "In Consignment");
   const totalMarketValue = activeItems.reduce((s,i) => s + (i.currentValue||0), 0);
@@ -10121,6 +10509,7 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {!detailId && (<>
       {/* Page header */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <div>
@@ -10224,7 +10613,7 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
           {filtered.map(it => {
             const tc = COL_CATEGORY_CONFIG[it.category] || {icon:"📦",color:T.muted,bg:T.inputBg};
             const pnl = (it.currentValue||0) - (it.acquisitionPrice||0);
-            return <MobileListItem key={it.id} onClick={()=>{setSelectedItem(it);setDrawerTab("overview");}}
+            return <MobileListItem key={it.id} onClick={()=>navigate({screen:"collectibles",entityId:it.id})}
               icon={tc.icon} iconBg={tc.bg} title={it.name} subtitle={`${it.brand||it.category}${it.year?` · ${it.year}`:""}${it.quantity>1?` · ${it.quantity} pcs`:""}`}
               value={fmtCompact(it.currentValue)} valueColor={T.text} valueSub={`Cost: ${fmtCompact(it.acquisitionPrice)}`}
               badge={it.status} badgeBg={it.status==="Active"?T.upBg:it.status==="In Consignment"?T.accentBg:T.inputBg} badgeColor={it.status==="Active"?T.up:it.status==="In Consignment"?T.accent:T.muted}
@@ -10234,7 +10623,7 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
         </Card>
       ) : (
         <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
-          <SortHeader gridCols="2.4fr 1fr 1fr 1.1fr 1fr 1fr 0.9fr" sortKey={colSort.sortKey} sortDir={colSort.sortDir} onSort={colSort.onSort}
+          <SortHeader gridCols={capCols("2.4fr 1fr 1fr 1.1fr 1fr 1fr 0.9fr")} sortKey={colSort.sortKey} sortDir={colSort.sortDir} onSort={colSort.onSort}
             columns={[["Item / Brand","left","name"],["Category","left","category"],["Condition","left","condition"],["Cost / Value","right","value"],["P&L","right","pnl"],["Storage","left","storage",{paddingLeft:20}],["Status","left","status"]]}/>
           {colSort.sortFn(filtered, (it, k) => {
             if (k==="name") return (it.name||"").toLowerCase();
@@ -10252,8 +10641,8 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
             const isDim = it.status === "Sold" || it.status === "Lost / Stolen" || it.status === "Damaged";
             const underIns = (it.insuredValue||0) < (it.currentValue||0);
             return (
-              <div key={it.id} onClick={()=>{setSelectedItem(it);setDrawerTab("overview");}}
-                style={{display:"grid",gridTemplateColumns:"2.4fr 1fr 1fr 1.1fr 1fr 1fr 0.9fr",padding:"13px 20px",borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+              <div key={it.id} onClick={()=>navigate({screen:"collectibles",entityId:it.id})}
+                style={{display:"grid",gridTemplateColumns:capCols("2.4fr 1fr 1fr 1.1fr 1fr 1fr 0.9fr"),columnGap:24,padding:"13px 20px",borderBottom:idx<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
                   opacity:isDim?0.55:1,background:isDim?T.sidebar:""}}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                 onMouseLeave={e=>e.currentTarget.style.background=(isDim?T.sidebar:"")}>
@@ -10291,9 +10680,12 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
         </Card>
       )}
 
-      {/* ══ ITEM DETAIL DRAWER ══ */}
-      {selectedItem && (() => {
-        const item = items.find(i => i.id === selectedItem.id) || selectedItem;
+      </>)}
+
+      {/* ══ ITEM DETAIL — full page ══ */}
+      {detailId && !detailItem && <NotFound message="This collectible could not be found." onBack={goList}/>}
+      {detailItem && (() => {
+        const item = detailItem;
         const tc = COL_CATEGORY_CONFIG[item.category] || {icon:"📦",color:T.muted,bg:T.inputBg};
         const txs = (item.transactions || []).slice().sort((a,b)=>b.date.localeCompare(a.date));
         const pnl = (item.currentValue||0) - (item.acquisitionPrice||0);
@@ -10311,51 +10703,24 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
         const daysAgo = (d) => { if (!d) return ""; const diff = Math.floor((Date.now() - new Date(d)) / 86400000); return diff === 0 ? "Today" : diff === 1 ? "1 day ago" : diff + " days ago"; };
 
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e=>{if(e.target===e.currentTarget) setSelectedItem(null);}}>
-            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
-              {/* Header */}
-              <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-                <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:14}}>
-                  <div style={{width:44,height:44,borderRadius:12,background:tc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{tc.icon}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:16,fontWeight:700,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                      {item.name}
-                      {item.authenticated && <span style={{fontSize:10,background:T.upBg,color:T.up,borderRadius:4,padding:"1px 6px",fontWeight:700}}>✓ AUTHENTICATED</span>}
-                    </div>
-                    <div style={{fontSize:12,color:T.muted,marginTop:2}}>{item.brand||item.category}{item.modelRef?` · ${item.modelRef}`:""}{item.year?` · ${item.year}`:""}</div>
-                  </div>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <Badge bg={item.status==="Active"?T.upBg:item.status==="In Consignment"?T.accentBg:T.inputBg} color={item.status==="Active"?T.up:item.status==="In Consignment"?T.accent:T.muted}>{item.status}</Badge>
-                    <button onClick={()=>{setEditItem(item);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>
-                    <button onClick={()=>setSelectedItem(null)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:16,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
-                  </div>
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:10,marginBottom:14}}>
-                  {[
-                    {l:"Market Value",v:fmtCompact(item.currentValue)},
-                    {l:"Cost Basis",v:fmtCompact(item.acquisitionPrice)},
-                    {l:"Unrealised P&L",v:`${pnl>=0?"+":""}${fmtCompact(pnl)} (${pnl>=0?"+":""}${pnlPct.toFixed(0)}%)`},
-                    {l:"Held for",v:holdingYears?`${holdingYears} yr${holdingYears!=="1.0"?"s":""}`:"—"},
-                  ].map(s=>(
-                    <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
-                      <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
-                      <div style={{fontSize:14,fontWeight:700,marginTop:4}}>{s.v}</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{display:"flex",gap:4}}>
-                  {[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"history",label:"History"}].map(dt=>(
-                    <button key={dt.id} onClick={()=>setDrawerTab(dt.id)}
-                      style={{padding:"6px 14px",borderRadius:8,border:"none",background:drawerTab===dt.id?T.selected:T.inputBg,
-                        color:drawerTab===dt.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:drawerTab===dt.id?700:400}}>
-                      {dt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* Body */}
-              <div style={{flex:1,padding:"20px 24px",overflowY:"auto",minHeight:0}}>
+          <DetailPage
+            icon={tc.icon} iconBg={tc.bg}
+            title={item.name}
+            subtitle={`${item.brand||item.category}${item.modelRef?` · ${item.modelRef}`:""}${item.year?` · ${item.year}`:""}`}
+            badges={<>
+              {item.authenticated && <span style={{fontSize:10,background:T.upBg,color:T.up,borderRadius:4,padding:"1px 6px",fontWeight:700}}>✓ AUTHENTICATED</span>}
+              <Badge bg={item.status==="Active"?T.upBg:item.status==="In Consignment"?T.accentBg:T.inputBg} color={item.status==="Active"?T.up:item.status==="In Consignment"?T.accent:T.muted}>{item.status}</Badge>
+            </>}
+            headerActions={<button onClick={()=>{setEditItem(item);setShowModal(true);}} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>}
+            stats={[
+              {l:"Market Value",v:fmtCompact(item.currentValue)},
+              {l:"Cost Basis",v:fmtCompact(item.acquisitionPrice)},
+              {l:"Unrealised P&L",v:`${pnl>=0?"+":""}${fmtCompact(pnl)} (${pnl>=0?"+":""}${pnlPct.toFixed(0)}%)`,c:pnl>=0?T.up:T.down},
+              {l:"Held for",v:holdingYears?`${holdingYears} yr${holdingYears!=="1.0"?"s":""}`:"—"},
+            ]}
+            tabs={[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"audit",label:"Audit"},{id:"manage",label:"Manage"}]}
+            activeTab={drawerTab} onTab={goTab} onBack={goList}>
+              <div>
                 {drawerTab === "overview" && (
                   <div style={{display:"flex",flexDirection:"column",gap:16}}>
                     {underIns && item.status === "Active" && (
@@ -10430,7 +10795,13 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
                     )}
                   </div>
                 )}
-                {drawerTab === "transactions" && (
+                {drawerTab === "transactions" && (()=>{
+                  const _q = txSearch.trim().toLowerCase();
+                  const visibleTxs = txs.filter(t =>
+                    (txFilter==="All" || t.type===txFilter) &&
+                    (!_q || (t.type||"").toLowerCase().includes(_q) || (t.notes||"").toLowerCase().includes(_q) || (t.date||"").includes(_q) || (t.ref||"").toLowerCase().includes(_q) || (t.method||"").toLowerCase().includes(_q))
+                  );
+                  return (
                   <div style={{display:"flex",flexDirection:"column",gap:14}}>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                       {(()=>{
@@ -10450,22 +10821,20 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
                         </div>
                       ))}
                     </div>
-                    {item.status !== "Sold" && item.status !== "Lost / Stolen" && (
-                      <div style={{display:"flex",justifyContent:"flex-end"}}>
-                        <button onClick={()=>setShowTxModal(true)} style={{padding:"7px 16px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>+ Record Transaction</button>
-                      </div>
-                    )}
-                    {txs.length===0?(
-                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No transactions yet</div></div>
+                    <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                      filters={["All",...Array.from(new Set(txs.map(t=>t.type)))]}
+                      action={item.status !== "Sold" && item.status !== "Lost / Stolen" && <button onClick={()=>setShowTxModal(true)} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Record</button>}/>
+                    {visibleTxs.length===0?(
+                      <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}><div style={{fontSize:28,marginBottom:8}}>📒</div><div style={{fontSize:13,fontWeight:600}}>{txs.length===0?"No transactions yet":"No matching transactions"}</div></div>
                     ):(
                       <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                        {txs.map((tx,i)=>{
+                        {visibleTxs.map((tx,i)=>{
                           const isOut = ["Purchase","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration"].includes(tx.type);
                           const isIn = tx.type === "Sale";
                           const isVal = tx.type === "Valuation Update";
                           const icon = {"Purchase":"📥","Sale":"📤","Valuation Update":"📊","Appraisal Fee":"🔍","Insurance Premium":"🛡","Maintenance":"🔧","Storage Cost":"📦","Consignment Fee":"🤝","Restoration":"🎨"}[tx.type]||"💰";
                           return (
-                            <div key={tx.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                            <div key={tx.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                               <div style={{width:34,height:34,borderRadius:8,background:isIn?T.upBg:isOut?T.downBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
                               <div style={{flex:1,minWidth:0}}>
                                 <div style={{fontSize:13,fontWeight:600}}>{tx.type}{tx.notes?` — ${tx.notes}`:""}</div>
@@ -10481,15 +10850,24 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
                                 </div>
                                 <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
                               </div>
+                              <TxRowActions
+                                onEdit={()=>{ setEditTx(tx); setShowTxModal(true); }}
+                                onDelete={()=>{
+                                  if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
+                                  setItems(prev=>prev.map(i=>i.id===item.id?{...i,transactions:(i.transactions||[]).filter(t=>t.id!==tx.id)}:i));
+                                  if(logAudit) logAudit("collectible", item.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  showToast("Transaction deleted","success");
+                                }}/>
                             </div>
                           );
                         })}
                       </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
                 {drawerTab === "postings" && (() => {
-                  const sortedTxs = (item.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update"&&t.amount>0).slice().sort((a,b)=>a.date.localeCompare(b.date));
+                  const sortedTxs = (item.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update"&&t.amount>0).slice().sort((a,b)=>b.date.localeCompare(a.date));
                   const journalRows = [];
                   sortedTxs.forEach(tx => {
                     if (tx.type==="Purchase") {
@@ -10526,8 +10904,7 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
                               <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",width:hi===0||hi>=3?148:undefined,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
                             ))}
                           </tr></thead>
-                          <tbody>
-                            {journalRows.map((row,ri)=>(
+                          {groupByFirst(journalRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                               <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                                 <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
                                   {row._first?(<><div style={{fontSize:13,fontFamily:inter,whiteSpace:"nowrap"}}>{row.date}</div><div style={{fontSize:11,color:T.dim,marginTop:2,fontFamily:inter}}>{daysAgo(row.date)}</div></>):null}
@@ -10541,8 +10918,7 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
                                   {!row.debit?<span style={{fontSize:13,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span>:<span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                                 </td>
                               </tr>
-                            ))}
-                          </tbody>
+                            ))}</tbody>))}
                         </table>
                       </div>
                       <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.sidebar}}>
@@ -10555,32 +10931,71 @@ function CollectiblesScreen({ items, setItems, showToast, auditLog, logAudit }) 
                     </div>
                   );
                 })()}
-                {drawerTab === "history" && (
+                {drawerTab === "audit" && (
                   <AuditLogPanel auditLog={auditLog} entityType="collectible" entityId={item.id}/>
                 )}
+                {drawerTab === "manage" && (
+                  <FieldUpdatePanel
+                    entity={item}
+                    entityType="collectible"
+                    entityLabel={item.name}
+                    fields={[
+                      { key:"currentValue", label:"Market Value",  icon:"📈", prefix:"S$", helper:"Latest estimated market value (updates valuation date)" },
+                      { key:"insuredValue", label:"Insured Value", icon:"🛡", prefix:"S$", helper:"Sum insured under your policy" },
+                    ]}
+                    onUpdate={(next)=>setItems(prev=>prev.map(x=>x.id===item.id?{...next, valuationDate: next.currentValue!==item.currentValue ? new Date().toISOString().slice(0,10) : next.valuationDate }:x))}
+                    auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+                )}
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
       {/* Transaction modal */}
-      {showTxModal && selectedItem && (() => {
-        const item = items.find(i => i.id === selectedItem.id) || selectedItem;
-        return <ColTxModalInner item={item} onSave={(tx) => {
-          const newTx = {...tx, id:"CTX"+Date.now(), status:"Complete"};
-          setItems(prev => prev.map(i => {
-            if (i.id !== item.id) return i;
-            const nextTxs = [...(i.transactions||[]), newTx];
-            let patch = { transactions: nextTxs };
-            if (tx.type === "Valuation Update") { patch.currentValue = +tx.amount; patch.valuationDate = tx.date; patch.valuerSource = tx.method||""; }
-            else if (tx.type === "Sale") { patch.status = "Sold"; patch.currentValue = +tx.amount; patch.valuationDate = tx.date; }
-            return { ...i, ...patch };
-          }));
-          if (logAudit) logAudit("collectible", item.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount||0}`);
-          setShowTxModal(false);
-          showToast(`${tx.type} recorded`, "success");
-        }} onClose={()=>setShowTxModal(false)}/>;
+      {showTxModal && detailItem && (() => {
+        const item = detailItem;
+        return <ColTxModalInner item={item} editTx={editTx} cashAccounts={cashAccounts} onSave={(tx) => {
+          if (editTx) {
+            const upd = {...editTx, ...tx};
+            setItems(prev => prev.map(i => {
+              if (i.id !== item.id) return i;
+              const nextTxs = (i.transactions||[]).map(t=>t.id===editTx.id?upd:t);
+              // re-derive current valuation from the latest valuation/sale transaction
+              const valTxs = nextTxs.filter(t=>(t.type==="Valuation Update"||t.type==="Sale")).slice().sort((a,b)=>a.date.localeCompare(b.date));
+              const latest = valTxs[valTxs.length-1];
+              let patch = { transactions: nextTxs };
+              if (latest) { patch.currentValue = +latest.amount; patch.valuationDate = latest.date; }
+              return { ...i, ...patch };
+            }));
+            if (logAudit) logAudit("collectible", item.id, "edit-transaction", editTx, upd, `${tx.type} · S$${tx.amount||0}`);
+            showToast(`${tx.type} updated`, "success");
+          } else {
+            const newTx = {...tx, id:"CTX"+Date.now(), status:"Complete"};
+            setItems(prev => prev.map(i => {
+              if (i.id !== item.id) return i;
+              const nextTxs = [...(i.transactions||[]), newTx];
+              let patch = { transactions: nextTxs };
+              if (tx.type === "Valuation Update") { patch.currentValue = +tx.amount; patch.valuationDate = tx.date; patch.valuerSource = tx.method||""; }
+              else if (tx.type === "Sale") { patch.status = "Sold"; patch.currentValue = +tx.amount; patch.valuationDate = tx.date; }
+              return { ...i, ...patch };
+            }));
+            // Bank Transfer: credit (inflow) or debit (outflow) the chosen cash account
+            if (tx.method === "Bank Transfer" && tx.cashAccountId && setAccounts) {
+              const signed = (TX_FLOW_OUT.has(tx.type) ? -1 : 1) * (+tx.amount || 0);
+              setAccounts(prev => prev.map(a => {
+                if (String(a.id) !== String(tx.cashAccountId)) return a;
+                const cur = acctBalances(a);
+                const has = cur.find(b => b.ccy === "SGD");
+                const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + signed } : b) : [...cur, { ccy:"SGD", amount: signed }];
+                const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + signed } : {};
+                return { ...a, balances: nextBals, ...nextLegacy };
+              }));
+            }
+            if (logAudit) logAudit("collectible", item.id, "add-transaction", null, newTx, `${tx.type} · S$${tx.amount||0}`);
+            showToast(`${tx.type} recorded`, "success");
+          }
+          setShowTxModal(false); setEditTx(null);
+        }} onClose={()=>{setShowTxModal(false);setEditTx(null);}}/>;
       })()}
 
       {/* Add/Edit modal */}
@@ -10811,6 +11226,56 @@ function REPropCard({ p, selPropId, onSelect, insured }) {
   );
 }
 
+// Edit an existing loan contract (Loan & Finance tab) — single source of truth for the outstanding loan.
+function EditContractModal({ contract, sym, onSave, onClose }) {
+  const [f, setF] = useState({
+    lender: contract.lender||"", loanAmount: contract.loanAmount||0,
+    interestRate: contract.interestRate||0, rateType: contract.rateType||"Floating",
+    tenureYears: contract.tenureYears||25, monthlyPayment: contract.monthlyPayment||0,
+    startDate: contract.startDate||"", maturityDate: contract.maturityDate||"", notes: contract.notes||"",
+  });
+  const set = (k,v) => setF(p=>({...p,[k]:v}));
+  const calc = calcMonthly(parseFloat(f.loanAmount)||0, parseFloat(f.interestRate)||0, parseInt(f.tenureYears)||25);
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}
+      onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:T.bg,borderRadius:16,width:"100%",maxWidth:480,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+        <div style={{padding:"20px 22px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:16,fontWeight:800}}>Edit Loan Contract</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{padding:"16px 22px",display:"flex",flexDirection:"column",gap:12}}>
+          <div><Label>Lender / Bank</Label><Input value={f.lender} onChange={e=>set("lender",e.target.value)}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div><Label>Outstanding Loan ({sym})</Label><Input type="number" value={f.loanAmount} onChange={e=>set("loanAmount",parseFloat(e.target.value)||0)}/></div>
+            <div><Label>Interest Rate (% p.a.)</Label><Input type="number" step="0.01" value={f.interestRate} onChange={e=>set("interestRate",parseFloat(e.target.value)||0)}/></div>
+            <div><Label>Rate Type</Label><Sel value={f.rateType} onChange={e=>set("rateType",e.target.value)} options={["Fixed","Floating","Hybrid"]}/></div>
+            <div><Label>Tenure (years)</Label><Input type="number" value={f.tenureYears} onChange={e=>set("tenureYears",parseInt(e.target.value)||0)}/></div>
+            <div><Label>Monthly Payment ({sym})</Label><Input type="number" value={f.monthlyPayment} onChange={e=>set("monthlyPayment",parseFloat(e.target.value)||0)}/></div>
+          </div>
+          {calc > 0 && (
+            <div style={{background:T.accentBg,border:`1px solid ${T.accent}30`,borderRadius:8,padding:"8px 12px",fontSize:12,color:T.accent}}>
+              Computed monthly at this rate/tenure: <strong>{sym}{calc.toLocaleString()}</strong>
+            </div>
+          )}
+          <MoreOptions count={3}>
+            <div><Label>Start Date</Label><Input type="date" value={f.startDate} onChange={e=>set("startDate",e.target.value)}/></div>
+            <div><Label>Maturity Date</Label><Input type="date" value={f.maturityDate} onChange={e=>set("maturityDate",e.target.value)}/></div>
+            <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+              <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2}
+                style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+            </div>
+          </MoreOptions>
+        </div>
+        <div style={{padding:"14px 22px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"flex-end",gap:10,position:"sticky",bottom:0,background:T.bg}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>💾 Save Changes</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab, showToast, onClose, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -10819,13 +11284,20 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
   const [finTab, setFinTab] = useState("contracts");
   const [showAddContract, setShowAddContract] = useState(false);
   const [showAddRepay, setShowAddRepay] = useState(false);
+  const [editRepay, setEditRepay] = useState(null);
+  const [editContract, setEditContract] = useState(null);
   const [showSold, setShowSold] = useState(false);
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
 
   const ctry = RE_COUNTRIES[p.country] || RE_COUNTRIES.Singapore;
   const sym = ctry.symbol;
   const gain = (p.currentValuation||0) - (p.purchasePrice||0);
   const gainPct = p.purchasePrice ? ((gain/p.purchasePrice)*100).toFixed(1) : "0.0";
   const monthly = p.monthlyPayment || calcMonthly(p.loanAmount, p.interestRate, p.loanTenureYears);
+  // Single source of truth for the outstanding loan: the active loan contract (falls back to legacy p.loanAmount)
+  const headerActiveContract = (p.loanContracts||[]).find(c=>c.isActive) || (p.loanContracts||[])[0];
+  const outstandingLoan = headerActiveContract ? (headerActiveContract.loanAmount||0) : (p.loanAmount||0);
   const update = (fields) => setProperties(prev => prev.map(pr => pr.id === p.id ? {...pr,...fields} : pr));
 
 
@@ -11105,6 +11577,63 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
     );
   };
 
+  // ── Edit Repayment Modal (basic fields; CPF split kept proportional) ──
+  const EditRepayModal = ({ repay, sym, onSave, onClose }) => {
+    const [f, setFL] = useState({ ...repay });
+    const upd = (k,v) => setFL(prev=>({...prev,[k]:v}));
+    const iStyle = {width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"};
+    const hasCPF = (repay.cpfAmount||0) > 0;
+    const total = parseFloat(f.totalAmount)||0;
+    const canSave = total > 0 && f.date;
+    const handleSave = () => {
+      // keep cash/CPF split proportional to the original ratio when CPF was used
+      let out = { ...f, totalAmount: total, fees: parseFloat(f.fees)||0 };
+      if (hasCPF) {
+        const ratio = (repay.cpfAmount||0) / (repay.totalAmount||1);
+        out.cpfAmount = Math.round(total * ratio * 100)/100;
+        out.cashAmount = Math.round((total - out.cpfAmount)*100)/100;
+      } else {
+        out.cashAmount = total; out.cpfAmount = 0;
+      }
+      onSave(out);
+    };
+    return (
+      <>
+        <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:400}}/>
+        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:401,background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,width:420,boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+          <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:700}}>Edit Repayment</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:2}}>{p.name}</div>
+            </div>
+            <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:17,color:T.muted}}>×</button>
+          </div>
+          <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><Label>Date</Label><input type="date" value={f.date} onChange={e=>upd("date",e.target.value)} style={iStyle}/></div>
+              <div><Label>Total Amount ({sym})</Label><input type="number" value={f.totalAmount} onChange={e=>upd("totalAmount",parseFloat(e.target.value)||0)} style={iStyle}/></div>
+            </div>
+            {hasCPF && (
+              <div style={{fontSize:11,color:T.accent,background:T.accentBg,borderRadius:7,padding:"7px 10px"}}>
+                🏛 Cash / CPF split is kept proportional to the original ({Math.round((repay.cpfAmount/repay.totalAmount)*100)}% CPF).
+              </div>
+            )}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><Label>Fees ({sym})</Label><input type="number" value={f.fees} onChange={e=>upd("fees",parseFloat(e.target.value)||0)} style={iStyle}/></div>
+              <div></div>
+            </div>
+            <div><Label>Notes</Label><textarea value={f.notes||""} onChange={e=>upd("notes",e.target.value)} rows={2} style={{...iStyle,resize:"vertical"}}/></div>
+          </div>
+          <div style={{padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.sidebar,display:"flex",gap:10}}>
+            <button disabled={!canSave} onClick={handleSave}
+              style={{flex:1,background:canSave?T.selected:T.inputBg,color:canSave?T.selectedText:T.dim,border:"none",borderRadius:9,padding:"10px",fontSize:13,fontWeight:600,cursor:canSave?"pointer":"not-allowed",fontFamily:"inherit"}}>Save Changes</button>
+            <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 16px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+          </div>
+        </div>
+      </>
+    );
+  };
+
   // ── Sold Modal ──────────────────────────────────────
   const SoldModal = ({ onClose }) => {
     const [f, setFL] = useState({ soldPrice: "", soldDate: new Date().toISOString().slice(0,10), buyerName: "" });
@@ -11149,8 +11678,8 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
     );
   };
 
-  const TABS = ["overview","financials","rental","costs","insurance","postings","history","manage"];
-  const tabLabel = {overview:"Overview",financials:"Loan & Finance",rental:"Rental",costs:"Costs & Fees",insurance:"Insurance",postings:"Postings",history:"History",manage:"Manage"};
+  const TABS = ["overview","financials","rental","insurance","postings","audit","manage"];
+  const tabLabel = {overview:"Overview",financials:"Loan & Finance",rental:"Rental",insurance:"Insurance",postings:"Postings",audit:"Audit",manage:"Manage"};
 
   const handleSave = () => {
     if (logAudit) logAudit("property", p.id, "update", p, { ...p, ...ef }, `${p.flag||""} ${p.name}`);
@@ -11177,10 +11706,10 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
   };
 
   return (
-    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+    <div style={{display:"flex",flexDirection:"column",minHeight:0}}>
       {/* Header */}
-      <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+      <div style={{padding:"18px 22px 14px",border:`1px solid ${T.border}`,borderRadius:14,background:T.sidebar,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:22}}>{ctry.flag}</span>
             <div>
@@ -11192,31 +11721,27 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
             </div>
           </div>
           <div style={{display:"flex",gap:6}}>
-            {!p.sold && propTab !== "insurance" && propTab !== "financials" && propTab !== "postings" && (
-              <>
-                <button onClick={editing ? handleSave : handleEdit}
-                  style={{padding:"6px 14px",borderRadius:8,border:`1px solid ${editing?T.up:T.border}`,background:editing?T.upBg:T.bg,color:editing?T.up:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
-                  {editing ? "💾 Save" : "✏️ Edit"}
-                </button>
-                {editing && (
-                  <button onClick={()=>setEditing(false)}
-                    style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.bg,color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12}}>
-                    Cancel
-                  </button>
-                )}
-              </>
-            )}
             {!p.sold && (
-              <button onClick={()=>setShowSold(true)}
-                style={{padding:"6px 14px",borderRadius:8,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
-                Sold
+              <button onClick={handleEdit}
+                style={{padding:"6px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:T.bg,color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
+                ✏️ Edit
               </button>
             )}
-            <button onClick={onClose}
-              style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.bg,color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12}}>
-              ✕
-            </button>
           </div>
+        </div>
+        <div className="wo-detail-stats" style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:14}}>
+          {[
+            {l:"Purchase Price",    v:`${sym}${(p.purchasePrice||0).toLocaleString()}`},
+            {l:"Current Valuation", v:`${sym}${(p.currentValuation||p.purchasePrice||0).toLocaleString()}`},
+            {l:"Capital Gain",      v:`${gain>=0?"+":""}${sym}${Math.abs(gain).toLocaleString()} (${gainPct}%)`, c:gain>=0?T.up:T.down},
+            {l:"Loan Balance",      v:outstandingLoan>0?`-${sym}${outstandingLoan.toLocaleString()}`:"No loan", c:outstandingLoan>0?T.down:T.up},
+            {l:"Equity",            v:`${sym}${((p.currentValuation||p.purchasePrice||0)-outstandingLoan).toLocaleString()}`, c:T.up},
+          ].map(s => (
+            <div key={s.l} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:9,padding:"10px 12px"}}>
+              <div style={{fontSize:11,color:T.muted,fontWeight:500}}>{s.l}</div>
+              <div style={{fontSize:14,fontWeight:700,marginTop:3,color:s.c||T.text}}>{s.v}</div>
+            </div>
+          ))}
         </div>
         <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
           {TABS.filter(t => t !== "rental" || p.isRented).map(t => (
@@ -11229,145 +11754,81 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
       </div>
 
       {/* Content */}
-      <div style={{flex:1,overflowY:"auto",minHeight:0}}><div style={{padding:"18px 20px 32px",display:"flex",flexDirection:"column",gap:14}}>
+      <div><div style={{padding:"0 0 32px",display:"flex",flexDirection:"column",gap:14}}>
 
         {/* ── OVERVIEW ── */}
         {propTab === "overview" && (
           <>
-            <div style={{background:T.selected,borderRadius:14,padding:"18px 20px"}}>
-              <div style={{fontSize:11,color:"#9CA3AF",marginBottom:12,fontWeight:600}}>PROPERTY VALUE</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-                {[
-                  {l:"Purchase Price",    v:`${sym}${(p.purchasePrice||0).toLocaleString()}`,                   c:"white"},
-                  {l:"Current Valuation", v:`${sym}${(p.currentValuation||p.purchasePrice||0).toLocaleString()}`, c:"white"},
-                  {l:"Capital Gain",      v:`${gain>=0?"+":""}${sym}${Math.abs(gain).toLocaleString()} (${gainPct}%)`, c:gain>=0?"#86EFAC":"#FCA5A5"},
-                ].map(s => (
-                  <div key={s.l}>
-                    <div style={{fontSize:10,color:"#9CA3AF"}}>{s.l}</div>
-                    <div style={{fontSize:14,fontWeight:800,color:s.c,marginTop:4}}>{s.v}</div>
-                  </div>
-                ))}
-              </div>
+            <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+              <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>📋 Property Details</div>
+              {[
+                ["Country",       `${ctry.flag} ${p.country}`],
+                ["Type",          p.type||"—"],
+                ["Tenure",        p.tenure||"—"],
+                ["Purpose",       p.purpose],
+                ["Size",          p.sizeSqft>0?`${Number(p.sizeSqft).toLocaleString()} sqft`:"—"],
+                ["Purchase Date", p.purchaseDate||"—"],
+                ["Address",       p.address||"—"],
+                ["Postal / ZIP",  p.postalCode||"—"],
+              ].map(([k,v]) => (
+                <div key={k} style={{display:"flex",justifyContent:"space-between",gap:16,padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                  <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                  <span style={{fontSize:12,fontWeight:600,textAlign:"right"}}>{v}</span>
+                </div>
+              ))}
             </div>
 
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              {editing && ef ? (
-                <>
-                  <div style={{gridColumn:"span 2"}}><Label>Property Name</Label><Input value={ef.name} onChange={e=>setEF("name",e.target.value)}/></div>
-                  <div style={{gridColumn:"span 2"}}><Label>Address</Label><Input value={ef.address} onChange={e=>setEF("address",e.target.value)}/></div>
-                  <div>
-                    <Label>Type</Label>
-                    <select value={ef.type} onChange={e=>setEF("type",e.target.value)}
-                      style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.inputBg,fontFamily:"inherit",fontSize:13,color:T.text,outline:"none"}}>
-                      {(RE_PROPERTY_TYPES[p.country]||[]).map(t=><option key={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <Label>Tenure</Label>
-                    <select value={ef.tenure} onChange={e=>setEF("tenure",e.target.value)}
-                      style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.inputBg,fontFamily:"inherit",fontSize:13,color:T.text,outline:"none"}}>
-                      {(RE_TENURES[p.country]||[]).map(t=><option key={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <Label>Purpose</Label>
-                    <select value={ef.purpose} onChange={e=>{setEF("purpose",e.target.value);setEF("isRented",e.target.value==="Investment / Rental");}}
-                      style={{width:"100%",padding:"9px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:T.inputBg,fontFamily:"inherit",fontSize:13,color:T.text,outline:"none"}}>
-                      {RE_PURPOSE.map(t=><option key={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div><Label>Size (sqft)</Label><Input type="number" value={ef.sizeSqft} onChange={e=>setEF("sizeSqft",e.target.value)}/></div>
-                  <div><Label>Purchase Date</Label><Input type="date" value={ef.purchaseDate} onChange={e=>setEF("purchaseDate",e.target.value)}/></div>
-                  <div><Label>Current Valuation ({sym})</Label><Input type="number" value={ef.currentValuation} onChange={e=>setEF("currentValuation",parseFloat(e.target.value)||0)}/></div>
-                </>
-              ) : (
-                [
-                  ["Country",       `${ctry.flag} ${p.country}`],
-                  ["Type",          p.type||"—"],
-                  ["Tenure",        p.tenure||"—"],
-                  ["Purpose",       p.purpose],
-                  ["Size",          p.sizeSqft>0?`${Number(p.sizeSqft).toLocaleString()} sqft`:"—"],
-                  ["Purchase Date", p.purchaseDate||"—"],
-                  ["Address",       p.address||"—"],
-                  ["Postal / ZIP",  p.postalCode||"—"],
-                ].map(([k,v]) => (
-                  <div key={k} style={{background:T.inputBg,borderRadius:9,padding:"10px 14px"}}>
-                    <div style={{fontSize:10,color:T.muted}}>{k}</div>
-                    <div style={{fontSize:13,fontWeight:600,marginTop:3}}>{v}</div>
-                  </div>
-                ))
-              )}
+            {/* ── COSTS & FEES (folded into Overview) ── */}
+            <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+              <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>💸 Acquisition Costs</div>
+              {[
+                [ctry.stampLabel,        p.stampDuty>0?`${sym}${p.stampDuty.toLocaleString()}`:"—"],
+                ["Agent / Legal Fee",    p.agentFee>0?`${sym}${p.agentFee.toLocaleString()}`:"—"],
+                ["Other Fees",           p.otherFees>0?`${sym}${p.otherFees.toLocaleString()}`:"—"],
+                ["Total Acquisition",    `${sym}${((p.purchasePrice||0)+(p.stampDuty||0)+(p.agentFee||0)+(p.otherFees||0)).toLocaleString()}`],
+              ].map(([k,v],i) => (
+                <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`${i===3?"2":"1"}px solid ${T.border}`,background:i===3?T.inputBg:T.bg}}>
+                  <span style={{fontSize:12,color:i===3?T.text:T.muted,fontWeight:i===3?700:400}}>{k}</span>
+                  <span style={{fontSize:12,fontWeight:700}}>{v}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+              <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>🔄 Ongoing Costs</div>
+              {[
+                [ctry.taxLabel+" (annual)", p.annualTax>0?`${sym}${p.annualTax.toLocaleString()}/yr`:"—"],
+                [ctry.maintenanceLabel,     p.mcstFee>0?`${sym}${p.mcstFee.toLocaleString()}/mo`:"—"],
+                ["Maintenance",             p.maintenanceFee>0?`${sym}${p.maintenanceFee.toLocaleString()}/mo`:"—"],
+                ["Total Annual Ongoing",    `${sym}${((p.annualTax||0)+(p.mcstFee||0)*12+(p.maintenanceFee||0)*12).toLocaleString()}/yr`],
+              ].map(([k,v],i) => (
+                <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`${i===3?"2":"1"}px solid ${T.border}`,background:i===3?T.inputBg:T.bg}}>
+                  <span style={{fontSize:12,color:i===3?T.text:T.muted,fontWeight:i===3?700:400}}>{k}</span>
+                  <span style={{fontSize:12,fontWeight:700}}>{v}</span>
+                </div>
+              ))}
             </div>
 
             <div>
               <div style={{fontSize:11,color:T.muted,marginBottom:6}}>📝 Notes</div>
-              {editing && ef ? (
-                <textarea value={ef.notes} onChange={e=>setEF("notes",e.target.value)}
-                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical",minHeight:68,lineHeight:1.6}}/>
-              ) : (
-                <div style={{background:T.inputBg,borderRadius:8,padding:"10px 14px",fontSize:13,color:p.notes?T.text:T.dim,lineHeight:1.6}}>
-                  {p.notes||"No notes"}
-                </div>
-              )}
+              <div style={{background:T.inputBg,borderRadius:8,padding:"10px 14px",fontSize:13,color:p.notes?T.text:T.dim,lineHeight:1.6}}>
+                {p.notes||"No notes"}
+              </div>
             </div>
 
             {/* ── TAGS ── */}
             <div>
               <div style={{fontSize:11,color:T.muted,marginBottom:8}}>🏷 Name Tags</div>
-              {editing && ef ? (
-                <div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
-                    {(ef.tags||[]).map(tag => (
-                      <span key={tag} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:600,padding:"4px 10px",borderRadius:20,background:T.accentBg,color:T.accent,border:`1px solid ${T.accent}40`}}>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {(p.tags||[]).length === 0
+                  ? <span style={{fontSize:12,color:T.dim}}>No tags</span>
+                  : (p.tags||[]).map(tag => (
+                      <span key={tag} style={{fontSize:12,fontWeight:600,padding:"4px 10px",borderRadius:20,background:T.accentBg,color:T.accent,border:`1px solid ${T.accent}40`}}>
                         {tag}
-                        <span onClick={()=>setEF("tags",(ef.tags||[]).filter(t=>t!==tag))}
-                          style={{cursor:"pointer",fontSize:14,lineHeight:1,color:T.muted,fontWeight:400}}>×</span>
                       </span>
-                    ))}
-                  </div>
-                  {(ef.tags||[]).length < 3 && (
-                    <div style={{display:"flex",gap:8}}>
-                      <input value={ef.tagInput||""} onChange={e=>setEF("tagInput",e.target.value)}
-                        onKeyDown={e=>{
-                          if((e.key==="Enter"||e.key===",")&&(ef.tagInput||"").trim()){
-                            e.preventDefault();
-                            const t=(ef.tagInput||"").trim();
-                            if(t&&!(ef.tags||[]).includes(t)&&(ef.tags||[]).length<3){
-                              setEF("tags",[...(ef.tags||[]),t]);
-                              setEF("tagInput","");
-                            }
-                          }
-                        }}
-                        placeholder={`Add tag (${3-(ef.tags||[]).length} left) — press Enter`}
-                        style={{flex:1,background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 12px",fontSize:12,fontFamily:"inherit",color:T.text,outline:"none"}}/>
-                      <button onClick={()=>{
-                          const t=(ef.tagInput||"").trim();
-                          if(t&&!(ef.tags||[]).includes(t)&&(ef.tags||[]).length<3){
-                            setEF("tags",[...(ef.tags||[]),t]);
-                            setEF("tagInput","");
-                          }
-                        }}
-                        style={{padding:"7px 14px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
-                        Add
-                      </button>
-                    </div>
-                  )}
-                  {(ef.tags||[]).length >= 3 && (
-                    <div style={{fontSize:11,color:T.muted}}>Maximum 3 tags reached.</div>
-                  )}
-                </div>
-              ) : (
-                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {(p.tags||[]).length === 0
-                    ? <span style={{fontSize:12,color:T.dim}}>No tags</span>
-                    : (p.tags||[]).map(tag => (
-                        <span key={tag} style={{fontSize:12,fontWeight:600,padding:"4px 10px",borderRadius:20,background:T.accentBg,color:T.accent,border:`1px solid ${T.accent}40`}}>
-                          {tag}
-                        </span>
-                      ))
-                  }
-                </div>
-              )}
+                    ))
+                }
+              </div>
             </div>
           </>
         )}
@@ -11382,36 +11843,27 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
 
           return (
             <>
-              {/* Equity snapshot */}
-              <div style={{background:T.selected,borderRadius:14,padding:"18px 20px"}}>
-                <div style={{fontSize:11,color:"#9CA3AF",marginBottom:12,fontWeight:600}}>EQUITY SNAPSHOT</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+              {/* Sub-tabs */}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",borderBottom:`1px solid ${T.border}`}}>
+                <div style={{display:"flex",gap:4}}>
                   {[
-                    {l:"Property Value", v:`${sym}${(p.currentValuation||p.purchasePrice||0).toLocaleString()}`, c:"white"},
-                    {l:"Loan Balance",   v:p.loanAmount>0?`-${sym}${p.loanAmount.toLocaleString()}`:"No loan",  c:p.loanAmount>0?"#FCA5A5":"#86EFAC"},
-                    {l:"Equity",         v:`${sym}${((p.currentValuation||p.purchasePrice||0)-(p.loanAmount||0)).toLocaleString()}`, c:"#86EFAC"},
-                  ].map(s=>(
-                    <div key={s.l}>
-                      <div style={{fontSize:10,color:"#9CA3AF"}}>{s.l}</div>
-                      <div style={{fontSize:14,fontWeight:800,color:s.c,marginTop:4}}>{s.v}</div>
-                    </div>
+                    {id:"contracts",  label:`Contracts (${loanContracts.length})`},
+                    {id:"repayments", label:`Repayments (${loanRepayments.length})`},
+                  ].map(t=>(
+                    <button key={t.id} onClick={()=>setFinTab(t.id)}
+                      style={{padding:"8px 14px",border:"none",borderBottom:`2px solid ${finTab===t.id?T.selected:"transparent"}`,
+                        background:"transparent",color:finTab===t.id?T.text:T.muted,cursor:"pointer",
+                        fontFamily:"inherit",fontSize:12,fontWeight:finTab===t.id?700:400,marginBottom:-1}}>
+                      {t.label}
+                    </button>
                   ))}
                 </div>
-              </div>
-
-              {/* Sub-tabs */}
-              <div style={{display:"flex",gap:4,borderBottom:`1px solid ${T.border}`,paddingBottom:0}}>
-                {[
-                  {id:"contracts",  label:`Contracts (${loanContracts.length})`},
-                  {id:"repayments", label:`Repayments (${loanRepayments.length})`},
-                ].map(t=>(
-                  <button key={t.id} onClick={()=>setFinTab(t.id)}
-                    style={{padding:"8px 14px",border:"none",borderBottom:`2px solid ${finTab===t.id?T.selected:"transparent"}`,
-                      background:"transparent",color:finTab===t.id?T.text:T.muted,cursor:"pointer",
-                      fontFamily:"inherit",fontSize:12,fontWeight:finTab===t.id?700:400,marginBottom:-1}}>
-                    {t.label}
+                {!p.sold && (
+                  <button onClick={()=>finTab==="repayments"?setShowAddRepay(true):setShowAddContract(true)}
+                    style={{marginBottom:6,padding:"7px 14px",borderRadius:7,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}>
+                    {finTab==="repayments" ? "+ Record Repayment" : "+ Add Loan Contract"}
                   </button>
-                ))}
+                )}
               </div>
 
               {/* ── CONTRACTS sub-tab ── */}
@@ -11435,6 +11887,12 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                           </span>
                           {c.isActive && <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:4,background:T.upBg,color:T.up}}>Active</span>}
                         </div>
+                        {!p.sold && (
+                          <button onClick={()=>setEditContract(c)}
+                            style={{padding:"5px 12px",borderRadius:7,border:`1px solid ${T.border}`,background:T.bg,color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:600}}>
+                            ✏️ Edit
+                          </button>
+                        )}
                       </div>
                       {[
                         ["Loan Amount",    `${sym}${c.loanAmount.toLocaleString()}`],
@@ -11452,17 +11910,17 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                       ))}
                     </div>
                   ))}
-                  {!p.sold && (
-                    <button onClick={()=>setShowAddContract(true)}
-                      style={{width:"100%",padding:"10px",borderRadius:10,border:`1px dashed ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600}}>
-                      + Add Loan Contract
-                    </button>
-                  )}
                 </>
               )}
 
               {/* ── REPAYMENTS sub-tab ── */}
-              {finTab === "repayments" && (
+              {finTab === "repayments" && (()=>{
+                  const _q = txSearch.trim().toLowerCase();
+                  const visibleReps = [...loanRepayments].sort((a,b)=>b.date.localeCompare(a.date)).filter(r =>
+                    (txFilter==="All" || (r.paymentType||"full")===txFilter) &&
+                    (!_q || (r.notes||"").toLowerCase().includes(_q) || (r.date||"").includes(_q) || (r.paymentType||"").toLowerCase().includes(_q))
+                  );
+                  return (
                 <>
                   {/* Summary */}
                   {loanRepayments.length > 0 && (() => {
@@ -11470,33 +11928,34 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                     const totalCPF = loanRepayments.reduce((s,r)=>s+(r.cpfAmount||0),0);
                     const totalCash = loanRepayments.reduce((s,r)=>s+(r.cashAmount||0),0);
                     return (
-                      <div style={{display:"grid",gridTemplateColumns:`1fr 1fr${cpfOK?" 1fr":""}`,gap:10}}>
-                        {[
-                          {l:"Total Repaid",   v:`${sym}${totalRepaid.toLocaleString(undefined,{minimumFractionDigits:2})}`, c:T.up},
-                          {l:"Cash Payments",  v:`${sym}${totalCash.toLocaleString(undefined,{minimumFractionDigits:2})}`,   c:T.text},
-                          cpfOK ? {l:"CPF-OA Used",  v:`${sym}${totalCPF.toLocaleString(undefined,{minimumFractionDigits:2})}`, c:T.accent} : null,
-                        ].filter(Boolean).map(s=>(
-                          <div key={s.l} style={{background:T.inputBg,borderRadius:10,padding:"12px 14px"}}>
-                            <div style={{fontSize:10,color:T.muted,marginBottom:3}}>{s.l}</div>
-                            <div style={{fontSize:14,fontWeight:800,color:s.c}}>{s.v}</div>
-                          </div>
-                        ))}
-                      </div>
+                      <StatStrip stats={[
+                        {l:"Total Repaid",   v:`${sym}${totalRepaid.toLocaleString(undefined,{minimumFractionDigits:2})}`, c:T.up},
+                        {l:"Cash Payments",  v:`${sym}${totalCash.toLocaleString(undefined,{minimumFractionDigits:2})}`,   c:T.text},
+                        cpfOK ? {l:"CPF-OA Used",  v:`${sym}${totalCPF.toLocaleString(undefined,{minimumFractionDigits:2})}`, c:T.accent} : null,
+                      ]}/>
                     );
                   })()}
 
-                  {loanRepayments.length === 0 ? (
+                  {loanRepayments.length > 0 && (
+                    <div style={{marginBottom:2}}>
+                      <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                        placeholder="Search repayments…"
+                        filters={["All",...Array.from(new Set(loanRepayments.map(r=>r.paymentType||"full")))]}/>
+                    </div>
+                  )}
+
+                  {visibleReps.length === 0 ? (
                     <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}>
                       <div style={{fontSize:28,marginBottom:8}}>💰</div>
-                      <div style={{fontSize:13,fontWeight:600}}>No repayments recorded yet</div>
+                      <div style={{fontSize:13,fontWeight:600}}>{loanRepayments.length===0?"No repayments recorded yet":"No matching repayments"}</div>
                     </div>
                   ) : (
                     <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                      {[...loanRepayments].sort((a,b)=>b.date.localeCompare(a.date)).map((r,i)=>{
+                      {visibleReps.map((r,i)=>{
                         const contract = loanContracts.find(c=>c.id===r.contractId);
                         const hasCPF = (r.cpfAmount||0) > 0;
                         return (
-                          <div key={r.id} style={{padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                          <div key={r.id} className="hov-row" style={{padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:hasCPF?6:0}}>
                               <div>
                                 <div style={{fontSize:13,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
@@ -11508,13 +11967,25 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                                     <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:4,background:T.downBg,color:T.down,border:`1px solid #FECACA`}}>Settlement</span>
                                   )}
                                 </div>
-                                <div style={{fontSize:11,color:T.muted,marginTop:1}}>
-                                  {contract ? `${contract.lender} · ${contract.loanType}` : "Loan repayment"}
-                                </div>
+                                {loanContracts.length > 1 && contract && (
+                                  <div style={{fontSize:11,color:T.muted,marginTop:1}}>
+                                    {(contract.lender && !contract.loanType.includes(contract.lender)) ? `${contract.lender} · ${contract.loanType}` : contract.loanType}
+                                  </div>
+                                )}
                               </div>
-                              <div style={{textAlign:"right"}}>
-                                <div style={{fontSize:14,fontWeight:800,color:T.up}}>{sym}{r.totalAmount.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
-                                {r.fees > 0 && <div style={{fontSize:10,color:T.warn}}>+ {sym}{r.fees} fees</div>}
+                              <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                                <div style={{textAlign:"right"}}>
+                                  <div style={{fontSize:14,fontWeight:800,color:T.up}}>{sym}{r.totalAmount.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+                                  {r.fees > 0 && <div style={{fontSize:10,color:T.warn}}>+ {sym}{r.fees} fees</div>}
+                                </div>
+                                <TxRowActions
+                                  onEdit={()=>setEditRepay(r)}
+                                  onDelete={()=>{
+                                    if(!window.confirm("Delete this repayment?")) return;
+                                    update({ loanRepayments:(p.loanRepayments||[]).filter(x=>x.id!==r.id) });
+                                    if(logAudit) logAudit("property", p.id, "delete-transaction", r, null, `Mortgage repayment · ${sym}${r.totalAmount}`);
+                                    showToast("Repayment deleted","success");
+                                  }}/>
                               </div>
                             </div>
                             {hasCPF && (
@@ -11529,13 +12000,9 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                       })}
                     </div>
                   )}
-
-                  <button onClick={()=>setShowAddRepay(true)}
-                    style={{width:"100%",padding:"10px",borderRadius:10,border:`1px dashed ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600}}>
-                    + Record Repayment
-                  </button>
                 </>
-              )}
+                  );
+              })()}
 
 
             </>
@@ -11665,7 +12132,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
           journal.sort((a, b) => {
             if (a._order === 0) return -1;
             if (b._order === 0) return 1;
-            return a.date.localeCompare(b.date);
+            return b.date.localeCompare(a.date);
           });
 
           // Flatten journal into table rows
@@ -11713,8 +12180,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                             <th style={{padding:"10px 18px",textAlign:"right",width:170,fontSize:12,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.01em"}}>Credit</th>
                           </tr>
                         </thead>
-                        <tbody>
-                          {tableRows.map((row, ri) => (
+                        {groupByFirst(tableRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                             <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                               {/* Date col — two-line when first row of txn */}
                               <td style={{padding:"12px 18px",verticalAlign:"top",width:156}}>
@@ -11746,8 +12212,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                                   : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                               </td>
                             </tr>
-                          ))}
-                        </tbody>
+                          ))}</tbody>))}
                       </table>
                     </div>
 
@@ -11769,55 +12234,25 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
         })()}
         {propTab === "rental" && p.isRented && (
           <>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-              {[
-                {l:"Monthly Rent",  v:`${sym}${(p.monthlyRent||0).toLocaleString()}`,            c:T.accent},
-                {l:"Annual Rent",   v:`${sym}${((p.monthlyRent||0)*12).toLocaleString()}`,        c:T.text},
-                {l:"Gross Yield",   v:p.currentValuation?`${((p.monthlyRent*12)/p.currentValuation*100).toFixed(2)}%`:"—", c:T.up},
-              ].map(s => (
-                <div key={s.l} style={{background:T.inputBg,borderRadius:10,padding:"14px 16px"}}>
-                  <div style={{fontSize:11,color:T.muted}}>{s.l}</div>
-                  <div style={{fontSize:17,fontWeight:800,color:s.c,marginTop:4}}>{s.v}</div>
-                </div>
-              ))}
-            </div>
+            <StatStrip stats={[
+              {l:"Monthly Rent",  v:`${sym}${(p.monthlyRent||0).toLocaleString()}`,            c:T.accent},
+              {l:"Annual Rent",   v:`${sym}${((p.monthlyRent||0)*12).toLocaleString()}`,        c:T.text},
+              {l:"Gross Yield",   v:p.currentValuation?`${((p.monthlyRent*12)/p.currentValuation*100).toFixed(2)}%`:"—", c:T.up},
+            ]}/>
 
             <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
               <div style={{padding:"11px 16px",background:T.accentBg,fontSize:13,fontWeight:700,color:T.accent}}>👤 Tenant</div>
-              {editing && ef ? (
-                <div style={{padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
-                  <div><Label>Tenant Name</Label><Input value={ef.tenantName} onChange={e=>setEF("tenantName",e.target.value)}/></div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    <div><Label>Monthly Rent ({sym})</Label><Input type="number" value={ef.monthlyRent} onChange={e=>setEF("monthlyRent",parseFloat(e.target.value)||0)}/></div>
-                    <div></div>
-                    <div><Label>Lease Start</Label><Input type="date" value={ef.leaseStart} onChange={e=>setEF("leaseStart",e.target.value)}/></div>
-                    <div><Label>Lease End</Label><Input type="date" value={ef.leaseEnd} onChange={e=>setEF("leaseEnd",e.target.value)}/></div>
-                  </div>
-                  <button onClick={()=>{
-                    setEF("isRented", false);
-                    setEF("purpose", "Vacant");
-                    setEF("monthlyRent", 0);
-                    setEF("tenantName", "");
-                    setEF("leaseStart", "");
-                    setEF("leaseEnd", "");
-                  }}
-                    style={{padding:"9px 14px",borderRadius:8,border:"1px solid #FDE68A",background:"#FFFBEB",color:"#D97706",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,textAlign:"left"}}>
-                    🏚 Mark as Vacant
-                  </button>
+              {[
+                ["Tenant Name",  p.tenantName||"—"],
+                ["Monthly Rent", `${sym}${(p.monthlyRent||0).toLocaleString()}`],
+                ["Lease Start",  p.leaseStart||"—"],
+                ["Lease End",    p.leaseEnd||"—"],
+              ].map(([k,v]) => (
+                <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                  <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                  <span style={{fontSize:12,fontWeight:600}}>{v}</span>
                 </div>
-              ) : (
-                [
-                  ["Tenant Name",  p.tenantName||"—"],
-                  ["Monthly Rent", `${sym}${(p.monthlyRent||0).toLocaleString()}`],
-                  ["Lease Start",  p.leaseStart||"—"],
-                  ["Lease End",    p.leaseEnd||"—"],
-                ].map(([k,v]) => (
-                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
-                    <span style={{fontSize:12,color:T.muted}}>{k}</span>
-                    <span style={{fontSize:12,fontWeight:600}}>{v}</span>
-                  </div>
-                ))
-              )}
+              ))}
             </div>
 
             {!editing && (
@@ -11855,60 +12290,6 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
         )}
 
         {/* ── COSTS ── */}
-        {propTab === "costs" && (
-          <>
-            <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-              <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>💸 Acquisition Costs</div>
-              {editing && ef ? (
-                <div style={{padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    <div><Label>{ctry.stampLabel} ({sym})</Label><Input type="number" value={ef.stampDuty} onChange={e=>setEF("stampDuty",parseFloat(e.target.value)||0)}/></div>
-                    <div><Label>Agent Fee ({sym})</Label><Input type="number" value={ef.agentFee} onChange={e=>setEF("agentFee",parseFloat(e.target.value)||0)}/></div>
-                    <div><Label>Other Fees ({sym})</Label><Input type="number" value={ef.otherFees} onChange={e=>setEF("otherFees",parseFloat(e.target.value)||0)}/></div>
-                  </div>
-                </div>
-              ) : (
-                [
-                  [ctry.stampLabel,        p.stampDuty>0?`${sym}${p.stampDuty.toLocaleString()}`:"—"],
-                  ["Agent / Legal Fee",    p.agentFee>0?`${sym}${p.agentFee.toLocaleString()}`:"—"],
-                  ["Other Fees",           p.otherFees>0?`${sym}${p.otherFees.toLocaleString()}`:"—"],
-                  ["Total Acquisition",    `${sym}${((p.purchasePrice||0)+(p.stampDuty||0)+(p.agentFee||0)+(p.otherFees||0)).toLocaleString()}`],
-                ].map(([k,v],i) => (
-                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`${i===3?"2":"1"}px solid ${T.border}`,background:i===3?T.inputBg:T.bg}}>
-                    <span style={{fontSize:12,color:i===3?T.text:T.muted,fontWeight:i===3?700:400}}>{k}</span>
-                    <span style={{fontSize:12,fontWeight:700}}>{v}</span>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-              <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>🔄 Ongoing Costs</div>
-              {editing && ef ? (
-                <div style={{padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    <div><Label>{ctry.taxLabel} /yr ({sym})</Label><Input type="number" value={ef.annualTax} onChange={e=>setEF("annualTax",parseFloat(e.target.value)||0)}/></div>
-                    <div><Label>{ctry.maintenanceLabel} /mo ({sym})</Label><Input type="number" value={ef.mcstFee} onChange={e=>setEF("mcstFee",parseFloat(e.target.value)||0)}/></div>
-                    <div><Label>Maintenance /mo ({sym})</Label><Input type="number" value={ef.maintenanceFee} onChange={e=>setEF("maintenanceFee",parseFloat(e.target.value)||0)}/></div>
-                  </div>
-                </div>
-              ) : (
-                [
-                  [ctry.taxLabel+" (annual)", p.annualTax>0?`${sym}${p.annualTax.toLocaleString()}/yr`:"—"],
-                  [ctry.maintenanceLabel,     p.mcstFee>0?`${sym}${p.mcstFee.toLocaleString()}/mo`:"—"],
-                  ["Maintenance",             p.maintenanceFee>0?`${sym}${p.maintenanceFee.toLocaleString()}/mo`:"—"],
-                  ["Total Annual Ongoing",    `${sym}${((p.annualTax||0)+(p.mcstFee||0)*12+(p.maintenanceFee||0)*12).toLocaleString()}/yr`],
-                ].map(([k,v],i) => (
-                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`${i===3?"2":"1"}px solid ${T.border}`,background:i===3?T.inputBg:T.bg}}>
-                    <span style={{fontSize:12,color:i===3?T.text:T.muted,fontWeight:i===3?700:400}}>{k}</span>
-                    <span style={{fontSize:12,fontWeight:700}}>{v}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </>
-        )}
-
         {/* ── INSURANCE ── */}
         {propTab === "insurance" && (() => {
           const homePolicies = (policies||[]).filter(pol =>
@@ -12043,7 +12424,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
             </div>
           );
         })()}
-        {propTab === "history" && (
+        {propTab === "audit" && (
           <AuditLogPanel auditLog={auditLog} entityType="property" entityId={p.id}/>
         )}
         {propTab === "manage" && (
@@ -12053,26 +12434,122 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
             entityLabel={`${p.flag||""} ${p.name}`}
             fields={[
               { key:"currentValuation", label:"Valuation",      icon:"🏠", prefix:"S$", helper:"Current estimated market value" },
-              { key:"monthlyRent",      label:"Monthly Rent",   icon:"🔑", prefix:"S$", helper:"Gross rent received per month" },
-              { key:"loanAmount",       label:"Outstanding Loan", icon:"🏦", prefix:"S$", helper:"Remaining mortgage principal" },
-              { key:"interestRate",     label:"Interest Rate",  icon:"📈", prefix:"",   suffix:"% p.a.", step:"0.01", helper:"Effective mortgage rate" },
+              // Monthly Rent only applies to investment/rental properties — own-stay homes have no rent
+              ...(p.purpose !== "Own Stay" ? [{ key:"monthlyRent", label:"Monthly Rent", icon:"🔑", prefix:"S$", helper:"Gross rent received per month" }] : []),
             ]}
             onUpdate={(next)=>setProperties(prev=>prev.map(x=>x.id===p.id?next:x))}
-            auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+            auditLog={auditLog} logAudit={logAudit} showToast={showToast}
+            extraActions={!p.sold && (
+              <button onClick={()=>setShowSold(true)}
+                style={{padding:"8px 16px",borderRadius:8,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>
+                🏷 Mark as Sold
+              </button>
+            )}/>
         )}
       </div></div>
       {showAddContract && <AddContractModal onClose={()=>setShowAddContract(false)}/>}
+      {editContract && <EditContractModal contract={editContract} sym={sym} onClose={()=>setEditContract(null)}
+        onSave={(upd)=>{
+          update({ loanContracts:(p.loanContracts||[]).map(c=>c.id===editContract.id?{...c,...upd}:c) });
+          if(logAudit) logAudit("property", p.id, "update", editContract, {...editContract,...upd}, `${p.name} · loan contract ${upd.lender||editContract.lender}`);
+          setEditContract(null); showToast("Loan contract updated","success");
+        }}/>}
       {showAddRepay && <AddRepayModal onClose={()=>setShowAddRepay(false)}/>}
+      {editRepay && <EditRepayModal repay={editRepay} sym={sym} onClose={()=>setEditRepay(null)}
+        onSave={(upd)=>{
+          update({ loanRepayments:(p.loanRepayments||[]).map(x=>x.id===editRepay.id?upd:x) });
+          if(logAudit) logAudit("property", p.id, "edit-transaction", editRepay, upd, `Mortgage repayment · ${sym}${upd.totalAmount}`);
+          setEditRepay(null); showToast("Repayment updated","success");
+        }}/>}
       {showSold && <SoldModal onClose={()=>setShowSold(false)}/>}
+
+      {/* Edit Property modal — consistent with other modules' edit dialogs */}
+      {editing && ef && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}
+          onClick={e=>{if(e.target===e.currentTarget)setEditing(false);}}>
+          <div style={{background:T.bg,borderRadius:16,width:"100%",maxWidth:560,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontSize:16,fontWeight:800}}>Edit Property {ctry.flag}</div>
+              <button onClick={()=>setEditing(false)} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+            </div>
+            <div style={{padding:"18px 24px 4px",display:"flex",flexDirection:"column",gap:16}}>
+              {/* Property details */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <div style={{gridColumn:"span 2"}}><Label required>Property Name</Label><Input value={ef.name} onChange={e=>setEF("name",e.target.value)}/></div>
+                <div style={{gridColumn:"span 2"}}><Label required>Address</Label><Input value={ef.address} onChange={e=>setEF("address",e.target.value)}/></div>
+                <div><Label required>Type</Label><Sel value={ef.type} onChange={e=>setEF("type",e.target.value)} options={RE_PROPERTY_TYPES[p.country]||[]}/></div>
+                <div><Label>Tenure</Label><Sel value={ef.tenure} onChange={e=>setEF("tenure",e.target.value)} options={RE_TENURES[p.country]||[]}/></div>
+                <div><Label>Purpose</Label><Sel value={ef.purpose} onChange={e=>{setEF("purpose",e.target.value);setEF("isRented",e.target.value==="Investment / Rental");}} options={RE_PURPOSE}/></div>
+                <div><Label>Size (sqft)</Label><Input type="number" value={ef.sizeSqft} onChange={e=>setEF("sizeSqft",e.target.value)}/></div>
+                <div><Label>Purchase Date</Label><Input type="date" value={ef.purchaseDate} onChange={e=>setEF("purchaseDate",e.target.value)}/></div>
+                <div><Label>Current Valuation ({sym})</Label><Input type="number" value={ef.currentValuation} onChange={e=>setEF("currentValuation",parseFloat(e.target.value)||0)}/></div>
+              </div>
+
+              <MoreOptions count={11}>
+                {/* Rental */}
+                <div style={{gridColumn:"1 / -1",fontSize:11,fontWeight:700,color:T.muted,marginTop:2}}>👤 Rental</div>
+                <div style={{gridColumn:"1 / -1"}}><Label>Tenant Name</Label><Input value={ef.tenantName} onChange={e=>setEF("tenantName",e.target.value)}/></div>
+                <div><Label>Monthly Rent ({sym})</Label><Input type="number" value={ef.monthlyRent} onChange={e=>setEF("monthlyRent",parseFloat(e.target.value)||0)}/></div>
+                <div></div>
+                <div><Label>Lease Start</Label><Input type="date" value={ef.leaseStart} onChange={e=>setEF("leaseStart",e.target.value)}/></div>
+                <div><Label>Lease End</Label><Input type="date" value={ef.leaseEnd} onChange={e=>setEF("leaseEnd",e.target.value)}/></div>
+
+                {/* Acquisition costs */}
+                <div style={{gridColumn:"1 / -1",fontSize:11,fontWeight:700,color:T.muted,marginTop:6}}>💸 Acquisition Costs</div>
+                <div><Label>{ctry.stampLabel} ({sym})</Label><Input type="number" value={ef.stampDuty} onChange={e=>setEF("stampDuty",parseFloat(e.target.value)||0)}/></div>
+                <div><Label>Agent Fee ({sym})</Label><Input type="number" value={ef.agentFee} onChange={e=>setEF("agentFee",parseFloat(e.target.value)||0)}/></div>
+                <div><Label>Other Fees ({sym})</Label><Input type="number" value={ef.otherFees} onChange={e=>setEF("otherFees",parseFloat(e.target.value)||0)}/></div>
+
+                {/* Ongoing costs */}
+                <div style={{gridColumn:"1 / -1",fontSize:11,fontWeight:700,color:T.muted,marginTop:6}}>🔄 Ongoing Costs</div>
+                <div><Label>{ctry.taxLabel} /yr ({sym})</Label><Input type="number" value={ef.annualTax} onChange={e=>setEF("annualTax",parseFloat(e.target.value)||0)}/></div>
+                <div><Label>{ctry.maintenanceLabel} /mo ({sym})</Label><Input type="number" value={ef.mcstFee} onChange={e=>setEF("mcstFee",parseFloat(e.target.value)||0)}/></div>
+                <div><Label>Maintenance /mo ({sym})</Label><Input type="number" value={ef.maintenanceFee} onChange={e=>setEF("maintenanceFee",parseFloat(e.target.value)||0)}/></div>
+
+                {/* Notes & tags */}
+                <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                  <textarea value={ef.notes} onChange={e=>setEF("notes",e.target.value)} rows={2}
+                    style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+                </div>
+                <div style={{gridColumn:"1 / -1"}}>
+                  <Label>Name Tags ({3-(ef.tags||[]).length} left)</Label>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                    {(ef.tags||[]).map(tag => (
+                      <span key={tag} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:600,padding:"4px 10px",borderRadius:20,background:T.accentBg,color:T.accent,border:`1px solid ${T.accent}40`}}>
+                        {tag}<span onClick={()=>setEF("tags",(ef.tags||[]).filter(t=>t!==tag))} style={{cursor:"pointer",fontSize:14,lineHeight:1,color:T.muted,fontWeight:400}}>×</span>
+                      </span>
+                    ))}
+                  </div>
+                  {(ef.tags||[]).length < 3 && (
+                    <input value={ef.tagInput||""} onChange={e=>setEF("tagInput",e.target.value)}
+                      onKeyDown={e=>{
+                        if((e.key==="Enter"||e.key===",")&&(ef.tagInput||"").trim()){
+                          e.preventDefault();
+                          const t=(ef.tagInput||"").trim();
+                          if(t&&!(ef.tags||[]).includes(t)&&(ef.tags||[]).length<3){ setEF("tags",[...(ef.tags||[]),t]); setEF("tagInput",""); }
+                        }
+                      }}
+                      placeholder="Add tag — press Enter"
+                      style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 12px",fontSize:12,fontFamily:"inherit",color:T.text,outline:"none"}}/>
+                  )}
+                </div>
+              </MoreOptions>
+            </div>
+            <div style={{padding:"14px 24px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"flex-end",gap:10,position:"sticky",bottom:0,background:T.bg}}>
+              <button onClick={()=>setEditing(false)} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+              <button onClick={handleSave} disabled={!ef.name||!ef.address||!ef.type}
+                style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:(!ef.name||!ef.address||!ef.type)?"not-allowed":"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!ef.name||!ef.address||!ef.type)?0.4:1}}>💾 Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ── Real Estate Screen ─────────────────────────────────────────── */
-function RealEstateScreen({ properties, setProperties, policies, accounts, setAccounts, showToast, auditLog, logAudit }) {
+function RealEstateScreen({ properties, setProperties, policies, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
   const isMobile = useIsMobile();
-  const [selectedProp, setSelectedProp] = useState(null);
-  const [propTab,    setPropTab]    = useState("overview");
   const [showAdd,    setShowAdd]    = useState(false);
   const [filterCtry, setFilterCtry] = useState("All");
   const [filterPurp, setFilterPurp] = useState("All");
@@ -12080,6 +12557,11 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
   const reSort = useSortState();
   const [addForm,    setAddForm]    = useState({...EMPTY_PROP});
   const setF = (k, v) => setAddForm(f => ({...f, [k]: v}));
+
+  const detailId = route.entityId;
+  const propTab = route.tab || "overview";
+  const setPropTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goList = () => navigate({ screen: "realestate" });
 
   const filtered = properties.filter(p => {
     if (filterCtry !== "All" && p.country !== filterCtry) return false;
@@ -12102,7 +12584,7 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
   const cp = RE_COUNTRIES[addForm.country] || RE_COUNTRIES.Singapore;
   const previewMonthly = calcMonthly(parseFloat(addForm.loanAmount)||0, parseFloat(addForm.interestRate)||0, parseInt(addForm.loanTenureYears)||25);
 
-  const selPropData = selectedProp ? properties.find(x => x.id === selectedProp.id) : null;
+  const selPropData = detailId ? properties.find(x => x.id === detailId) : null;
 
   // Value by country breakdown
   const countryBreakdown = {};
@@ -12114,6 +12596,7 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
 
+      {!detailId && (<>
       {/* ── Page header ── */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <div>
@@ -12206,7 +12689,7 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
           {filtered.map(p => {
             const ctry = RE_COUNTRIES[p.country] || RE_COUNTRIES.Singapore;
             const sc = RE_STATUS_COLORS[p.purpose] || RE_STATUS_COLORS["Vacant"];
-            return <MobileListItem key={p.id} onClick={()=>{setSelectedProp(p);setPropTab("overview");}}
+            return <MobileListItem key={p.id} onClick={()=>navigate({screen:"realestate",entityId:p.id})}
               icon={ctry.flag} iconBg={T.inputBg} title={p.name} subtitle={`${p.type||"—"} · ${p.country}`}
               value={fmtCompact(p.currentValuation||p.purchasePrice||0)} valueColor={T.text}
               valueSub={p.isRented?`+${fmtCompact(p.monthlyRent)}/mo`:(p.loanAmount>0?`Loan: ${fmtCompact(p.loanAmount)}`:"")}
@@ -12216,7 +12699,7 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
         </Card>
       ) : (
         <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
-          <SortHeader gridCols="2.2fr 1fr 1.2fr 1fr 1fr 0.8fr" sortKey={reSort.sortKey} sortDir={reSort.sortDir} onSort={reSort.onSort}
+          <SortHeader gridCols={capCols("2.2fr 1fr 1.2fr 1fr 1fr 1.5fr")} sortKey={reSort.sortKey} sortDir={reSort.sortDir} onSort={reSort.onSort}
             columns={[["Property","left","name"],["Type / Tenure","left","type"],["Valuation","right","valuation"],["Loan / Equity","right","loan"],["Rental","right","rental"],["Status","left","purpose"]]}/>
           {reSort.sortFn(filtered, (p, k) => {
             if (k==="name") return (p.name||"").toLowerCase();
@@ -12233,8 +12716,8 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
             const propEquity = (p.currentValuation||p.purchasePrice||0) - (p.loanAmount||0);
             const insured = !!(policies||[]).find(pol=>pol.id===p.linkedInsuranceId);
             return (
-              <div key={p.id} onClick={()=>{setSelectedProp(p);setPropTab("overview");}}
-                style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:i<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+              <div key={p.id} onClick={()=>navigate({screen:"realestate",entityId:p.id})}
+                style={{display:"grid",gridTemplateColumns:capCols("2.2fr 1fr 1.2fr 1fr 1fr 1.5fr"),columnGap:24,padding:"13px 20px",borderBottom:i<filtered.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
                   opacity:p.sold?0.55:1,background:p.sold?T.sidebar:""}}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                 onMouseLeave={e=>e.currentTarget.style.background=(p.sold?T.sidebar:"")}>
@@ -12278,7 +12761,7 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
                   {p.sold ? (
                     <Badge bg={T.downBg} color={T.down}>Sold</Badge>
                   ) : (
-                    <Badge bg={sc.bg} color={sc.color}>{p.purpose.length>12?p.purpose.slice(0,12)+"…":p.purpose}</Badge>
+                    <Badge bg={sc.bg} color={sc.color}>{p.purpose}</Badge>
                   )}
                   {insured && <span style={{width:7,height:7,borderRadius:"50%",background:T.up,display:"inline-block"}} title="Insured"/>}
                 </div>
@@ -12288,25 +12771,26 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
         </Card>
       )}
 
-      {/* ══ PROPERTY DETAIL DRAWER — slide-in overlay ══ */}
+      </>)}
+
+      {/* ══ PROPERTY DETAIL — full page ══ */}
+      {detailId && !selPropData && <NotFound message="This property could not be found." onBack={goList}/>}
       {selPropData && (
-        <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-          onClick={e=>{if(e.target===e.currentTarget){setSelectedProp(null);}}}>
-          <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
-            <REDrawer
-              key={selPropData.id}
-              p={selPropData}
-              properties={properties}
-              setProperties={setProperties}
-              policies={policies}
-              propTab={propTab}
-              setPropTab={setPropTab}
-              showToast={showToast}
-              onClose={()=>setSelectedProp(null)}
-              auditLog={auditLog}
-              logAudit={logAudit}
-            />
-          </div>
+        <div style={{display:"flex",flexDirection:"column"}}>
+          <button onClick={() => { if (window.history.length > 1) window.history.back(); else goList(); }} style={{alignSelf:"flex-start",background:"transparent",border:"none",color:T.muted,cursor:"pointer",fontSize:12,fontFamily:"inherit",padding:"0 0 10px",display:"flex",alignItems:"center",gap:6}}>← Back</button>
+          <REDrawer
+            key={selPropData.id}
+            p={selPropData}
+            properties={properties}
+            setProperties={setProperties}
+            policies={policies}
+            propTab={propTab}
+            setPropTab={setPropTab}
+            showToast={showToast}
+            onClose={goList}
+            auditLog={auditLog}
+            logAudit={logAudit}
+          />
         </div>
       )}
 
@@ -12499,15 +12983,19 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
   );
 }
 
-function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToast, auditLog, logAudit }) {
+function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
   const isMobile = useIsMobile();
   const [insTab, setInsTab] = useState("overview");
   const [filterType, setFilterType] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
-  const [selectedPolicy, setSelectedPolicy] = useState(null);
   const insSort = useSortState();
-  const [detailTab, setDetailTab] = useState("overview");
+
+  const detailId = route.entityId;
+  const selPolicy = detailId ? policies.find(p => String(p.id) === String(detailId)) : null;
+  const detailTab = route.tab || "overview";
+  const setDetailTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goList = () => navigate({ screen: "insurance" });
   const [showAddModal, setShowAddModal] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [claimTarget, setClaimTarget] = useState(null);
@@ -12515,6 +13003,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
   const [txFilter, setTxFilter] = useState("All");
   const [txSort, setTxSort] = useState("desc");
   const [showAddTxModal, setShowAddTxModal] = useState(false);
+  const [editTx, setEditTx] = useState(null);
   const [showClosureModal, setShowClosureModal] = useState(false);
   const [closureTarget, setClosureTarget] = useState(null);
 
@@ -12529,10 +13018,11 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
     claims: [], documents: [],
     riderInput: "", exclusionInput: "",
   };
-  const EMPTY_CLAIM = { type: "", date: "", amount: "", status: "Pending", notes: "" };
+  const EMPTY_CLAIM = { type: "", date: "", amount: "", status: "Pending", notes: "", creditAccountId: "", method: "Bank Transfer" };
   const [form, setForm] = useState(EMPTY_POLICY);
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [claimForm, setClaimForm] = useState(EMPTY_CLAIM);
+  const [editClaim, setEditClaim] = useState(null);
   const setCF = (k, v) => setClaimForm(f => ({ ...f, [k]: v }));
 
   // ── Summary stats
@@ -12570,7 +13060,6 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
       const updatedP = { ...prevP, ...form, riders: form.riders || [], exclusions: form.exclusions || [], riderInput: undefined, exclusionInput: undefined };
       setPolicies(prev => prev.map(p => p.id === form.id ? updatedP : p));
       if (logAudit) logAudit("insurance", form.id, "update", prevP, updatedP, `${updatedP.insurer} · ${updatedP.planName||updatedP.type}`);
-      if (selectedPolicy && selectedPolicy.id === form.id) setSelectedPolicy(updatedP);
       showToast("Policy updated successfully", "success");
     } else {
       const newP = { ...form, id: Date.now(), riders: form.riders || [], exclusions: form.exclusions || [], claims: [], documents: [], riderInput: undefined, exclusionInput: undefined };
@@ -12585,13 +13074,38 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
   // Add claim
   const handleAddClaim = () => {
     if (!claimForm.type || !claimForm.date) return;
-    const claim = { id: `C${Date.now()}`, ...claimForm, amount: parseFloat(claimForm.amount) || 0 };
-    setPolicies(prev => prev.map(p => p.id === claimTarget.id ? { ...p, claims: [...(p.claims || []), claim] } : p));
-    if (logAudit) logAudit("insurance", claimTarget.id, "add-transaction", null, claim, `Claim · ${claim.type} · S$${claim.amount}`);
-    if (selectedPolicy && selectedPolicy.id === claimTarget.id) setSelectedPolicy(prev => ({ ...prev, claims: [...(prev.claims || []), claim] }));
+    if (editClaim) {
+      const upd = { ...editClaim, ...claimForm, amount: parseFloat(claimForm.amount) || 0 };
+      setPolicies(prev => prev.map(p => p.id === claimTarget.id ? { ...p, claims: (p.claims || []).map(c => c.id === editClaim.id ? upd : c) } : p));
+      if (logAudit) logAudit("insurance", claimTarget.id, "edit-transaction", editClaim, upd, `Claim · ${upd.type} · S$${upd.amount}`);
+      showToast("Claim updated", "success");
+    } else {
+      const claim = { id: `C${Date.now()}`, ...claimForm, amount: parseFloat(claimForm.amount) || 0 };
+      setPolicies(prev => prev.map(p => p.id === claimTarget.id ? { ...p, claims: [...(p.claims || []), claim] } : p));
+      // A paid-out claim is money IN — credit the chosen cash account
+      if (claim.status === "Paid" && claim.creditAccountId && claim.amount > 0 && setAccounts) {
+        const signed = +claim.amount;
+        setAccounts(prev => prev.map(a => {
+          if (String(a.id) !== String(claim.creditAccountId)) return a;
+          const cur = acctBalances(a);
+          const has = cur.find(b => b.ccy === "SGD");
+          const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + signed } : b) : [...cur, { ccy:"SGD", amount: signed }];
+          const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + signed } : {};
+          return { ...a, balances: nextBals, ...nextLegacy };
+        }));
+      }
+      if (logAudit) logAudit("insurance", claimTarget.id, "add-transaction", null, claim, `Claim · ${claim.type} · S$${claim.amount}`);
+      showToast("Claim recorded", "success");
+    }
     setClaimForm(EMPTY_CLAIM);
+    setEditClaim(null);
     setShowClaimModal(false);
-    showToast("Claim recorded", "success");
+  };
+
+  const handleDeleteClaim = (pol, c) => {
+    setPolicies(prev => prev.map(p => p.id === pol.id ? { ...p, claims: (p.claims || []).filter(x => x.id !== c.id) } : p));
+    if (logAudit) logAudit("insurance", pol.id, "delete-transaction", c, null, `Claim · ${c.type} · S$${parseFloat(c.amount)||0}`);
+    showToast("Claim deleted", "success");
   };
 
   const fmtCcy = (v) => `S$${v.toLocaleString()}`;
@@ -12616,19 +13130,63 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
       : p
     ));
     if (tx.linkedAccountId && tx.status === "Paid" && setAccounts) {
-      const totalDeducted = parseFloat(tx.amount || 0) + parseFloat(tx.fees || 0);
-      setAccounts(prev => prev.map(a =>
-        a.id === tx.linkedAccountId ? { ...a, balance: Math.max(0, a.balance - totalDeducted) } : a
-      ));
+      const signed = -(parseFloat(tx.amount || 0) + parseFloat(tx.fees || 0));
+      setAccounts(prev => prev.map(a => {
+        if (String(a.id) !== String(tx.linkedAccountId)) return a;
+        const cur = acctBalances(a);
+        const has = cur.find(b => b.ccy === "SGD");
+        const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + signed } : b) : [...cur, { ccy:"SGD", amount: signed }];
+        const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + signed } : {};
+        return { ...a, balances: nextBals, ...nextLegacy };
+      }));
     }
     if (logAudit) logAudit("insurance", polId, "add-transaction", null, tx, `Premium · S$${tx.amount||0} (${tx.method||""})`);
     setShowAddTxModal(false);
     showToast("Premium payment recorded", "success");
   };
 
-  // ── Add Premium Transaction Modal ────────────────────────────
-  const AddPremiumTxModal = ({ polId, premium, onClose }) => {
-    const [f, setFLocal] = useState({
+  // ── Edit / delete premium transaction handlers ───────────────
+  const handleEditPremiumTx = (polId, prevTx, tx) => {
+    const prevPaid = prevTx.status === "Paid" ? parseFloat(prevTx.amount) || 0 : 0;
+    const nextPaid = tx.status === "Paid" ? parseFloat(tx.amount) || 0 : 0;
+    setPolicies(prev => prev.map(p => p.id === polId
+      ? { ...p,
+          premiumTransactions: (p.premiumTransactions || []).map(t => t.id === prevTx.id ? { ...t, ...tx } : t),
+          totalPremPaid: Math.max(0, (p.totalPremPaid || 0) - prevPaid + nextPaid),
+        }
+      : p
+    ));
+    if (logAudit) logAudit("insurance", polId, "edit-transaction", prevTx, tx, `Premium · S$${tx.amount||0} (${tx.method||""})`);
+    setEditTx(null);
+    showToast("Premium payment updated", "success");
+  };
+
+  const handleDeletePremiumTx = (polId, tx) => {
+    const wasPaid = tx.status === "Paid" ? parseFloat(tx.amount) || 0 : 0;
+    setPolicies(prev => prev.map(p => p.id === polId
+      ? { ...p,
+          premiumTransactions: (p.premiumTransactions || []).filter(t => t.id !== tx.id),
+          totalPremPaid: Math.max(0, (p.totalPremPaid || 0) - wasPaid),
+        }
+      : p
+    ));
+    if (logAudit) logAudit("insurance", polId, "delete-transaction", tx, null, `Premium · S$${tx.amount||0} (${tx.method||""})`);
+    showToast("Premium payment deleted", "success");
+  };
+
+  // ── Add / Edit Premium Transaction Modal ─────────────────────
+  const AddPremiumTxModal = ({ polId, premium, editTx, onClose }) => {
+    const isEdit = !!editTx;
+    const [f, setFLocal] = useState(editTx ? {
+      date: editTx.date || new Date().toISOString().slice(0,10),
+      amount: editTx.amount ?? (premium || ""),
+      fees: editTx.fees || "",
+      method: editTx.method || "GIRO",
+      linkedAccountId: editTx.linkedAccountId || "",
+      ref: editTx.ref || "",
+      status: editTx.status || "Paid",
+      notes: editTx.notes || "",
+    } : {
       date: new Date().toISOString().slice(0,10),
       amount: premium || "",
       fees: "",
@@ -12642,7 +13200,8 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
     const selectedAcc = (accounts || []).find(a => a.id === f.linkedAccountId);
     const totalCost = (parseFloat(f.amount)||0) + (parseFloat(f.fees)||0);
     const hasSufficientFunds = !selectedAcc || selectedAcc.balance >= totalCost;
-    const useAccount = f.method === "From Account";
+    // Bank-rail methods debit a cash account when actually paid; card/cheque/cash don't touch a tracked account
+    const useAccount = ["GIRO","Bank Transfer","PayNow"].includes(f.method) && f.status === "Paid";
     const iStyle = { width:"100%", boxSizing:"border-box", background:T.inputBg, border:`1px solid ${T.border}`, borderRadius:8, padding:"9px 12px", fontSize:13, fontFamily:"inherit", color:T.text, outline:"none" };
     const canSubmit = f.amount && f.date && (!useAccount || (f.linkedAccountId && hasSufficientFunds));
 
@@ -12651,7 +13210,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:500}}/>
         <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:501,background:T.bg,border:`1px solid ${T.border}`,borderRadius:16,width:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.22)"}}>
           <div style={{padding:"22px 22px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{fontSize:16,fontWeight:800}}>Record Premium Payment</div>
+            <div style={{fontSize:16,fontWeight:800}}>{isEdit ? "Edit Premium Payment" : "Record Premium Payment"}</div>
             <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
           </div>
           <div style={{padding:"18px 22px",display:"flex",flexDirection:"column",gap:13}}>
@@ -12680,16 +13239,16 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
 
             <div><Label>Payment Method</Label>
               <select value={f.method} onChange={e=>upd("method",e.target.value)} style={iStyle}>
-                {["GIRO","Bank Transfer","PayNow","Credit Card","Cheque","Cash","From Account"].map(m=><option key={m}>{m}</option>)}
+                {["GIRO","Bank Transfer","PayNow","Credit Card","Cheque","Cash"].map(m=><option key={m}>{m}</option>)}
               </select></div>
 
             {useAccount && (
               <div>
-                <Label required>Select Account</Label>
+                <Label required>Pay from Account</Label>
                 <select value={f.linkedAccountId} onChange={e=>upd("linkedAccountId",e.target.value)}
                   style={{...iStyle, borderColor: f.linkedAccountId ? T.border : "#FECACA"}}>
                   <option value="">— Choose savings or checking account —</option>
-                  {(accounts||[]).map(a=>(
+                  {(accounts||[]).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet").map(a=>(
                     <option key={a.id} value={a.id}>
                       {a.bank} {a.accountName} ({a.accountType} ••{a.last4}) — {a.currency} {a.balance.toLocaleString(undefined,{minimumFractionDigits:2})} available
                     </option>
@@ -12735,18 +13294,22 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
             <button onClick={onClose} style={{background:"transparent",color:T.muted,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 20px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
             <button
               disabled={!canSubmit}
-              onClick={()=>handleAddPremiumTx(polId, {
-                id:"TX"+Date.now(), date:f.date,
-                amount: parseFloat(f.amount)||0,
-                fees: parseFloat(f.fees)||0,
-                method: useAccount ? ("From Account (" + (selectedAcc ? selectedAcc.bank+" "+selectedAcc.accountName : "") + ")") : f.method,
-                linkedAccountId: useAccount ? f.linkedAccountId : null,
-                ref: f.ref, status: f.status, notes: f.notes,
-              })}
+              onClick={()=>{
+                const payload = {
+                  date:f.date,
+                  amount: parseFloat(f.amount)||0,
+                  fees: parseFloat(f.fees)||0,
+                  method: f.method,
+                  linkedAccountId: useAccount ? f.linkedAccountId : null,
+                  ref: f.ref, status: f.status, notes: f.notes,
+                };
+                if (isEdit) handleEditPremiumTx(polId, editTx, payload);
+                else handleAddPremiumTx(polId, { id:"TX"+Date.now(), ...payload });
+              }}
               style={{background:T.selected, color:T.selectedText,
                 border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:700,
                 cursor:canSubmit?"pointer":"not-allowed",fontFamily:"inherit",opacity:canSubmit?1:0.4}}>
-              Record Payment
+              {isEdit ? "Save Changes" : "Record Payment"}
             </button>
           </div>
         </div>
@@ -12756,6 +13319,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      {!detailId && (<>
 
       {/* ── Page header ── */}
       <div className="wo-page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -12862,7 +13426,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                     <div style={{ fontSize: 14, fontWeight: 700, color: textColor }}>S${dueAmount.toLocaleString()}</div>
                     <div style={{ fontSize: 11, color: T.dim }}>{pol.premFreq}</div>
                   </div>
-                  <button onClick={() => setSelectedPolicy(pol)} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: T.text, flexShrink: 0 }}>View</button>
+                  <button onClick={() => navigate({screen:"insurance",entityId:pol.id})} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: T.text, flexShrink: 0 }}>View</button>
                 </div>
               );
             })}
@@ -12907,7 +13471,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
           {filtered.map(pol => {
             const tc = INS_TYPES[pol.type] || {icon:"📋",color:T.muted,bg:T.inputBg};
             const annualPrem = (parseFloat(pol.premium)||0) * ({Monthly:12,Quarterly:4,"Half-Yearly":2,Yearly:1,"Single Premium":0,"N/A":0}[pol.premFreq]||1);
-            return <MobileListItem key={pol.id} onClick={()=>{setSelectedPolicy(pol);setDetailTab("overview");setTxSearch("");setTxFilter("All");setTxSort("desc");}}
+            return <MobileListItem key={pol.id} onClick={()=>navigate({screen:"insurance",entityId:pol.id})}
               icon={tc.icon} iconBg={tc.bg} title={pol.planName} subtitle={`${pol.insurer} · ${pol.policyNo}`}
               value={pol.sumAssured>0?fmtCompact(pol.sumAssured):"—"} valueSub={annualPrem>0?`S$${annualPrem.toLocaleString()}/yr`:""}
               badge={pol.status} badgeBg={pol.status==="Active"?T.upBg:pol.status==="Lapsed"?T.downBg:T.inputBg} badgeColor={pol.status==="Active"?T.up:pol.status==="Lapsed"?T.down:T.muted}
@@ -12916,7 +13480,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         </Card>
       ) : (
         <Card className="wo-table-scroll" style={{ padding: 0, overflowX: "auto" }}>
-          <SortHeader gridCols="2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.9fr" sortKey={insSort.sortKey} sortDir={insSort.sortDir} onSort={insSort.onSort}
+          <SortHeader gridCols={capCols("2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.9fr")} sortKey={insSort.sortKey} sortDir={insSort.sortDir} onSort={insSort.onSort}
             columns={[["Policy / Plan","left","planName"],["Type","left","type"],["Sum Assured","right","sumAssured"],["Premium / yr","right","premium"],["Cash Value","right","cashValue"],["Renewal","left","renewal"],["Status","left","status"]]}/>
           {insSort.sortFn(filtered, (p, k) => {
             if (k==="planName") return (p.planName||"").toLowerCase();
@@ -12932,8 +13496,8 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
             const annualPrem = (parseFloat(pol.premium)||0) * ({ Monthly:12, Quarterly:4, "Half-Yearly":2, Yearly:1, "Single Premium":0, "N/A":0 }[pol.premFreq]||1);
             const cv = (pol.cashValue||0) + (pol.ilpFundValue||0);
             return (
-              <div key={pol.id} onClick={() => { setSelectedPolicy(pol); setDetailTab("overview"); setTxSearch(""); setTxFilter("All"); setTxSort("desc"); }}
-                style={{ display: "grid", gridTemplateColumns: "2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.9fr", padding: "13px 20px", borderBottom: i < filtered.length-1 ? `1px solid ${T.border}` : "none", alignItems: "center", cursor: "pointer",
+              <div key={pol.id} onClick={() => navigate({screen:"insurance",entityId:pol.id})}
+                style={{ display: "grid", gridTemplateColumns: capCols("2.2fr 1fr 1.1fr 1.1fr 1fr 1fr 0.9fr"), columnGap: 24, padding: "13px 20px", borderBottom: i < filtered.length-1 ? `1px solid ${T.border}` : "none", alignItems: "center", cursor: "pointer",
                   opacity: pol.status === "Lapsed" || pol.status === "Cancelled" || pol.status === "Surrendered" ? 0.5 : 1,
                   background: pol.status === "Lapsed" || pol.status === "Cancelled" ? T.sidebar : "",
                 }}
@@ -12973,91 +13537,53 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         </Card>
       )}
 
-      {/* ══ POLICY DETAIL MODAL ══════════════════════════════════ */}
-      {selectedPolicy && (() => {
-        const pol = policies.find(p => p.id === selectedPolicy.id) || selectedPolicy;
+      </>)}
+
+      {/* ══ POLICY DETAIL — full page ══════════════════════════════ */}
+      {detailId && !selPolicy && <NotFound message="This policy could not be found." onBack={goList}/>}
+      {selPolicy && (() => {
+        const pol = selPolicy;
         const tc = typeConf(pol.type);
         const annualPrem = (parseFloat(pol.premium)||0) * ({ Monthly:12, Quarterly:4, "Half-Yearly":2, Yearly:1, "Single Premium":0, "N/A":0 }[pol.premFreq]||1);
         const cv = (pol.cashValue||0);
-        const DETAIL_TABS = ["overview","coverage","premiums","transactions","claims","exclusions","documents","postings","history"];
+        // Premium-payment summary (surfaced in the header stat strip)
+        const _premTxs = pol.premiumTransactions || [];
+        const _premPaid = _premTxs.filter(t => t.status === "Paid");
+        const _premTotalPaid = _premPaid.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+        const _premLast = _premPaid.length ? _premPaid[_premPaid.length - 1] : null;
+        const _premUnpaid = _premTxs.filter(t => t.status !== "Paid").length;
+        const _premOverdue = _premTxs.filter(t => t.status === "Overdue").length;
+        const DETAIL_TABS = ["overview","transactions","claims","documents","postings","audit","manage"];
 
         return (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }}
-            onClick={e => { if (e.target === e.currentTarget) { setSelectedPolicy(null); setTxSearch(""); setTxFilter("All"); setTxSort("desc"); } }}>
-            <div style={{ width: "min(960px, 95vw)", height: "100vh", background: T.bg, overflow: "hidden", boxShadow: "-4px 0 32px rgba(0,0,0,0.15)", display: "flex", flexDirection: "column" }}>
-
-              {/* Drawer header */}
-              <div style={{ padding: "20px 24px 16px", borderBottom: `1px solid ${T.border}`, background: T.sidebar, flexShrink: 0 }}>
-                <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 14 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 12, background: tc.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>{tc.icon}</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 16, fontWeight: 700 }}>{pol.planName}</div>
-                    <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>{pol.insurer} · {pol.policyNo}</div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <StatusChip status={pol.status} />
-                    <button
-                      onClick={() => { setForm({ ...EMPTY_POLICY, ...pol }); setShowAddModal(true); }}
-                      style={{ background: T.inputBg, border:"none", borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: T.text, fontFamily: "inherit" }}>
-                      Edit
-                    </button>
-                    {pol.status === "Active" && (
-                      <button
-                        onClick={() => { setClosureTarget(pol.id); setShowClosureModal(true); }}
-                        style={{ background: T.downBg, border: `1px solid #FECACA`, borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: T.down, fontFamily: "inherit" }}>
-                        Close Policy
-                      </button>
-                    )}
-                    {pol.status === "Lapsed" && (
-                      <button
-                        onClick={() => { setPolicies(prev => prev.map(p => p.id === pol.id ? { ...p, status: "Active" } : p)); showToast("Policy reactivated", "success"); }}
-                        style={{ background: T.upBg, border: `1px solid #BBF7D0`, borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: T.up, fontFamily: "inherit" }}>
-                        Reactivate
-                      </button>
-                    )}
-                    <button onClick={() => { setSelectedPolicy(null); setTxSearch(""); setTxFilter("All"); setTxSort("desc"); }} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 7, width: 30, height: 30, cursor: "pointer", fontSize: 16, color: T.muted, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
-                  </div>
-                </div>
-
-                {/* Quick stats */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-                  {[
-                    { l: "Sum Assured", v: pol.sumAssured > 0 ? fmtCcy(pol.sumAssured) : "—" },
-                    { l: "Annual Premium", v: `S$${annualPrem.toLocaleString(undefined,{maximumFractionDigits:0})}` },
-                    { l: pol.ilpFundValue > 0 ? "Fund Value" : "Cash Value", v: pol.ilpFundValue > 0 ? `S$${pol.ilpFundValue.toLocaleString()}` : cv > 0 ? `S$${cv.toLocaleString()}` : "—" },
-                  ].map(s => (
-                    <div key={s.l} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9, padding: "10px 12px" }}>
-                      <div style={{ fontSize: 11, color: T.muted }}>{s.l}</div>
-                      <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4 }}>{s.v}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Detail tabs */}
-                <div style={{ marginTop: 14, borderBottom: `1px solid ${T.border}`, overflowX: "auto", scrollbarWidth: "none" }}>
-                  <div style={{ display: "flex", gap: 0, minWidth: "max-content" }}>
-                    {DETAIL_TABS.map(dt => {
-                      const label = { transactions: "Tx History", claims: "Claims", exclusions: "Exclusions", documents: "Documents", overview: "Overview", coverage: "Coverage", premiums: "Premiums", postings: "Postings", history: "History" }[dt] || dt;
-                      const badge = dt === "claims" && (pol.claims || []).length > 0 ? pol.claims.length
-                                  : dt === "transactions" && (pol.premiumTransactions || []).length > 0 ? pol.premiumTransactions.length
-                                  : null;
-                      const active = detailTab === dt;
-                      return (
-                        <button key={dt} onClick={() => setDetailTab(dt)}
-                          style={{ display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", borderBottom: `2px solid ${active ? T.selected : "transparent"}`, padding: "9px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: active ? 600 : 400, color: active ? T.text : T.muted, marginBottom: -1, whiteSpace: "nowrap", flexShrink: 0 }}>
-                          {label}
-                          {badge !== null && (
-                            <span style={{ fontSize: 10, fontWeight: 600, background: active ? T.selected : T.border, color: active ? T.selectedText : T.muted, borderRadius: 99, padding: "1px 6px", lineHeight: 1.6 }}>{badge}</span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* Drawer body */}
-              <div style={{ flex: 1, padding: "20px 24px", overflowY: "auto", minHeight: 0 }}>
+          <DetailPage
+            icon={tc.icon} iconBg={tc.bg}
+            title={pol.planName}
+            subtitle={`${pol.insurer} · ${pol.policyNo}`}
+            badges={<StatusChip status={pol.status} />}
+            headerActions={
+              <button
+                onClick={() => { setForm({ ...EMPTY_POLICY, ...pol }); setShowAddModal(true); }}
+                style={{ background: T.inputBg, border:"none", borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: T.text, fontFamily: "inherit" }}>
+                ✏️ Edit
+              </button>
+            }
+            stats={[
+              { l: "Sum Assured", v: pol.sumAssured > 0 ? fmtCcy(pol.sumAssured) : "—" },
+              { l: "Annual Premium", v: `S$${annualPrem.toLocaleString(undefined,{maximumFractionDigits:0})}` },
+              { l: pol.ilpFundValue > 0 ? "Fund Value" : "Cash Value", v: pol.ilpFundValue > 0 ? `S$${pol.ilpFundValue.toLocaleString()}` : cv > 0 ? `S$${cv.toLocaleString()}` : "—" },
+              { l: "Total Paid", v: _premTotalPaid > 0 ? `S$${_premTotalPaid.toLocaleString()}` : "—", c: T.up },
+              { l: "Last Payment", v: _premLast ? `S$${parseFloat(_premLast.amount).toLocaleString()}` : "—" },
+              { l: "Outstanding", v: _premUnpaid > 0 ? `${_premUnpaid} unpaid` : "All clear", c: _premOverdue > 0 ? T.down : T.up },
+              { l: "Next Premium Due", v: pol.nextPremDue || "—" },
+            ]}
+            tabs={DETAIL_TABS.map(dt => {
+              const base = { transactions: "Transactions", claims: "Claims", documents: "Documents", overview: "Overview", postings: "Postings", audit: "Audit", manage: "Manage" }[dt] || dt;
+              const cnt = dt === "claims" ? (pol.claims || []).length : dt === "transactions" ? (pol.premiumTransactions || []).length : 0;
+              return { id: dt, label: cnt > 0 ? `${base} (${cnt})` : base };
+            })}
+            activeTab={detailTab} onTab={setDetailTab} onBack={goList}>
+              <div style={{ paddingBottom: 8 }}>
 
                 {/* Lapsed / closed warning banner */}
                 {(pol.status === "Lapsed" || pol.status === "Cancelled" || pol.status === "Surrendered") && (
@@ -13072,8 +13598,29 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
 
                 {/* Overview tab */}
                 {detailTab === "overview" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    {/* Premium due reminder — top of overview (like the Loan tab) */}
+                    {pol.nextPremDue && (() => {
+                      const today = new Date("2026-03-10");
+                      const due = new Date(pol.nextPremDue);
+                      const daysUntil = Math.ceil((due - today) / 86400000);
+                      const isOverdue = daysUntil < 0;
+                      const isUpcoming = daysUntil >= 0 && daysUntil <= (pol.reminderDays || 14);
+                      if (!isOverdue && !isUpcoming) return null;
+                      return (
+                        <div style={{ background: isOverdue ? T.downBg : T.warnBg, border: `1px solid ${isOverdue ? T.down : T.warn}30`, borderRadius: 10, padding: "12px 14px", display: "flex", gap: 10, alignItems: "center" }}>
+                          <span style={{ fontSize: 18 }}>{isOverdue ? "⚠️" : "🔔"}</span>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: isOverdue ? T.down : T.warn }}>
+                              {isOverdue ? `Premium overdue by ${Math.abs(daysUntil)} days` : daysUntil === 0 ? "Premium due today!" : `Premium due in ${daysUntil} days`}
+                            </div>
+                            <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>S${parseFloat(pol.premium||0).toLocaleString()} due on {pol.nextPremDue}</div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+                      <div style={{ padding: "11px 16px", background: T.inputBg, fontSize: 12, fontWeight: 700 }}>📋 Policy Details</div>
                       {[
                         ["Insurance Type", pol.type], ["Insurer", pol.insurer],
                         ["Policy Number", pol.policyNo], ["Plan Name", pol.planName],
@@ -13081,18 +13628,55 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                         ["Beneficiary", pol.beneficiary || "—"], ["Start Date", pol.startDate],
                         ["End Date", pol.endDate || "Lifetime"], ["Next Premium Due", pol.nextPremDue || "—"],
                       ].map(([label, value]) => (
-                        <div key={label} style={{ background: T.inputBg, borderRadius: 9, padding: "10px 14px" }}>
-                          <div style={{ fontSize: 11, color: T.muted, marginBottom: 3 }}>{label}</div>
-                          <div style={{ fontSize: 13, fontWeight: 500, color: T.text }}>{value}</div>
+                        <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "10px 16px", borderTop: `1px solid ${T.border}` }}>
+                          <span style={{ fontSize: 12, color: T.muted }}>{label}</span>
+                          <span style={{ fontSize: 12, fontWeight: 600, textAlign: "right", maxWidth: "60%" }}>{value}</span>
                         </div>
                       ))}
                     </div>
-                    {pol.notes && (
-                      <div style={{ background: T.accentBg, border: `1px solid ${T.accent}30`, borderRadius: 9, padding: "12px 14px" }}>
-                        <div style={{ fontSize: 11, color: T.accent, fontWeight: 600, marginBottom: 4 }}>📝 Notes</div>
-                        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{pol.notes}</div>
+                    {/* Coverage (merged from Coverage tab) */}
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+                      <div style={{ padding: "11px 16px", background: T.inputBg, fontSize: 12, fontWeight: 700 }}>🛡 Coverage</div>
+                      {[
+                        ["Sum Assured", pol.sumAssured > 0 ? `S$${pol.sumAssured.toLocaleString()}` : "—"],
+                        ["Cash Value", pol.cashValue > 0 ? `S$${pol.cashValue.toLocaleString()}` : "—"],
+                        ["Surrender Value", pol.surrenderValue > 0 ? `S$${pol.surrenderValue.toLocaleString()}` : "—"],
+                        pol.ilpFundValue > 0 ? ["ILP Fund Value", `S$${pol.ilpFundValue.toLocaleString()}`] : null,
+                        ["Coverage Period", pol.endDate ? `${pol.startDate} → ${pol.endDate}` : `${pol.startDate} → Lifetime`],
+                      ].filter(Boolean).map(([label, value]) => (
+                        <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "10px 16px", borderTop: `1px solid ${T.border}` }}>
+                          <span style={{ fontSize: 12, color: T.muted }}>{label}</span>
+                          <span style={{ fontSize: 12, fontWeight: 600, textAlign: "right", maxWidth: "60%" }}>{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {pol.ilpFundValue > 0 && pol.totalPremPaid > 0 && (
+                      <div style={{ background: pol.ilpFundValue >= pol.totalPremPaid ? T.upBg : T.downBg, border: `1px solid ${pol.ilpFundValue >= pol.totalPremPaid ? T.up : T.down}30`, borderRadius: 10, padding: "14px 16px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                          <span style={{ color: T.muted }}>ILP Gain / Loss vs Premiums Paid</span>
+                          <span style={{ fontWeight: 700, color: pol.ilpFundValue >= pol.totalPremPaid ? T.up : T.down }}>
+                            {pol.ilpFundValue >= pol.totalPremPaid ? "+" : ""}S${(pol.ilpFundValue - pol.totalPremPaid).toLocaleString()} ({((pol.ilpFundValue / pol.totalPremPaid - 1)*100).toFixed(1)}%)
+                          </span>
+                        </div>
                       </div>
                     )}
+                    {/* Premium (merged from Premiums tab) */}
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+                      <div style={{ padding: "11px 16px", background: T.inputBg, fontSize: 12, fontWeight: 700 }}>💳 Premium</div>
+                      {[
+                        ["Premium Amount", `S$${parseFloat(pol.premium||0).toLocaleString()}`],
+                        ["Frequency", pol.premFreq],
+                        ["Annual Equivalent", `S$${annualPrem.toLocaleString(undefined,{maximumFractionDigits:0})}`],
+                        ["Total Paid to Date", pol.totalPremPaid > 0 ? `S$${pol.totalPremPaid.toLocaleString()}` : "—"],
+                        ["Next Due Date", pol.nextPremDue || "—"],
+                        ["Reminder", pol.reminderEnabled ? `On · ${pol.reminderDays || 14} days before` : "Off"],
+                      ].map(([label, value]) => (
+                        <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "10px 16px", borderTop: `1px solid ${T.border}` }}>
+                          <span style={{ fontSize: 12, color: T.muted }}>{label}</span>
+                          <span style={{ fontSize: 12, fontWeight: 600, textAlign: "right", maxWidth: "60%" }}>{value}</span>
+                        </div>
+                      ))}
+                    </div>
                     {pol.closureComment && (
                       <div style={{ background: T.downBg, border: `1px solid #FECACA`, borderRadius: 9, padding: "12px 14px" }}>
                         <div style={{ fontSize: 11, color: T.down, fontWeight: 600, marginBottom: 6, display: "flex", justifyContent: "space-between" }}>
@@ -13115,11 +13699,32 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                         </div>
                       </div>
                     )}
+                    {/* Exclusions (merged from Exclusions tab) */}
+                    {(pol.exclusions || []).length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: T.muted, marginBottom: 8 }}>Exclusions</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {pol.exclusions.map((ex, i) => (
+                            <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: T.inputBg, borderRadius: 8, padding: "8px 12px" }}>
+                              <span style={{ color: T.down, fontSize: 13, flexShrink: 0, marginTop: 1 }}>✕</span>
+                              <span style={{ fontSize: 13, lineHeight: 1.5 }}>{ex}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Notes — bottom of overview */}
+                    {pol.notes && (
+                      <div style={{ background: T.accentBg, border: `1px solid ${T.accent}30`, borderRadius: 9, padding: "12px 14px" }}>
+                        <div style={{ fontSize: 11, color: T.accent, fontWeight: 600, marginBottom: 4 }}>📝 Notes</div>
+                        <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{pol.notes}</div>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {/* Coverage tab */}
-                {detailTab === "coverage" && (
+                {false && detailTab === "coverage" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                       {[
@@ -13157,7 +13762,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 )}
 
                 {/* Premiums tab */}
-                {detailTab === "premiums" && (
+                {false && detailTab === "premiums" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                     {/* Reminder status banner */}
                     {pol.nextPremDue && (() => {
@@ -13239,23 +13844,30 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 {/* Claims tab */}
                 {detailTab === "claims" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    <button onClick={() => { setClaimTarget(pol); setClaimForm(EMPTY_CLAIM); setShowClaimModal(true); }}
-                      style={{ background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 9, padding: "10px", fontSize: 13, cursor: "pointer", fontFamily: "inherit", color: T.text, fontWeight: 500 }}>
-                      + Record New Claim
-                    </button>
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <button onClick={() => { setClaimTarget(pol); setEditClaim(null); setClaimForm(EMPTY_CLAIM); setShowClaimModal(true); }}
+                        style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: T.selected, color: T.selectedText, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600 }}>
+                        + Record New Claim
+                      </button>
+                    </div>
                     {(pol.claims || []).length === 0 ? (
                       <div style={{ textAlign: "center", padding: "36px 20px" }}>
                         <div style={{ fontSize: 28, marginBottom: 10 }}>📋</div>
                         <div style={{ fontSize: 13, color: T.muted }}>No claims recorded</div>
                       </div>
                     ) : pol.claims.map((c, i) => {
-                      const claimColor = { Approved: T.up, Pending: T.warn, Rejected: T.down }[c.status] || T.muted;
-                      const claimBg = { Approved: T.upBg, Pending: T.warnBg, Rejected: T.downBg }[c.status] || T.inputBg;
+                      const claimColor = { Approved: T.up, Paid: T.up, Pending: T.warn, Rejected: T.down }[c.status] || T.muted;
+                      const claimBg = { Approved: T.upBg, Paid: T.upBg, Pending: T.warnBg, Rejected: T.downBg }[c.status] || T.inputBg;
                       return (
-                        <div key={i} style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 16px" }}>
+                        <div key={c.id||i} className="hov-row" style={{ border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 16px" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                             <div style={{ fontSize: 13, fontWeight: 600 }}>{c.type}</div>
-                            <Badge bg={claimBg} color={claimColor}>{c.status}</Badge>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              <Badge bg={claimBg} color={claimColor}>{c.status}</Badge>
+                              <TxRowActions
+                                onEdit={()=>{ setClaimTarget(pol); setEditClaim(c); setClaimForm({ type:c.type, date:c.date, amount:c.amount, status:c.status, notes:c.notes||"" }); setShowClaimModal(true); }}
+                                onDelete={()=>{ if(window.confirm("Delete this claim?")) handleDeleteClaim(pol, c); }}/>
+                            </div>
                           </div>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                             <div style={{ fontSize: 12, color: T.muted }}>Date: <span style={{ color: T.text, fontWeight: 500 }}>{c.date}</span></div>
@@ -13269,7 +13881,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 )}
 
                 {/* Exclusions tab */}
-                {detailTab === "exclusions" && (
+                {false && detailTab === "exclusions" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     <div style={{ background: T.warnBg, border: `1px solid ${T.warn}30`, borderRadius: 9, padding: "10px 14px", fontSize: 12, color: T.warn, fontWeight: 500 }}>
                       ⚠️ Review your policy document for the full and binding list of exclusions.
@@ -13291,9 +13903,6 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 {/* Transaction History tab */}
                 {detailTab === "transactions" && (() => {
                   const txs = pol.premiumTransactions || [];
-                  const paid = txs.filter(t => t.status === "Paid");
-                  const totalPaid = paid.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
-                  const lastPaid = paid.length > 0 ? paid[paid.length - 1] : null;
                   const methodIcon = { GIRO: "🏦", "Credit Card": "💳", Cheque: "📝", PayNow: "📱", Cash: "💵", "Bank Transfer": "🔄" };
 
                   const filtered = txs
@@ -13307,128 +13916,53 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                   return (
                     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
-                      {/* Summary strip */}
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                        {[
-                          { label: "Total Paid", value: `S$${totalPaid.toLocaleString()}`, sub: `${paid.length} payments`, color: T.up },
-                          { label: "Last Payment", value: lastPaid ? `S$${parseFloat(lastPaid.amount).toLocaleString()}` : "—", sub: lastPaid ? lastPaid.date : "No payments", color: T.text },
-                          { label: "Outstanding", value: txs.filter(t => t.status !== "Paid").length > 0 ? `${txs.filter(t => t.status !== "Paid").length} unpaid` : "All clear", sub: txs.filter(t => t.status === "Overdue").length > 0 ? `${txs.filter(t => t.status === "Overdue").length} overdue` : "No overdue", color: txs.filter(t => t.status === "Overdue").length > 0 ? T.down : T.up },
-                        ].map(s => (
-                          <div key={s.label} style={{ background: T.inputBg, borderRadius: 9, padding: "10px 12px" }}>
-                            <div style={{ fontSize: 11, color: T.muted }}>{s.label}</div>
-                            <div style={{ fontSize: 14, fontWeight: 700, color: s.color, marginTop: 4 }}>{s.value}</div>
-                            <div style={{ fontSize: 11, color: T.dim, marginTop: 2 }}>{s.sub}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Toolbar */}
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <div style={{ position: "relative", flex: 1 }}>
-                          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: T.dim, pointerEvents: "none" }}>🔍</span>
-                          <input value={txSearch} onChange={e => setTxSearch(e.target.value)} placeholder="Search ref, method, notes…"
-                            style={{ width: "100%", boxSizing: "border-box", background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "7px 10px 7px 30px", fontSize: 12, fontFamily: "inherit", color: T.text, outline: "none" }} />
-                        </div>
-                        {["All","Paid","Pending","Overdue"].map(f => (
-                          <button key={f} onClick={() => setTxFilter(f)}
-                            style={{ padding: "6px 11px", borderRadius: 7, border: `1px solid ${txFilter===f ? T.selected : T.border}`, background: txFilter===f ? T.selected : T.inputBg, color: txFilter===f ? T.selectedText : T.muted, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: txFilter===f ? 600 : 400 }}>
-                            {f}
-                          </button>
-                        ))}
-                        <button onClick={() => setTxSort(s => s === "desc" ? "asc" : "desc")}
-                          style={{ padding: "6px 10px", borderRadius: 7, border: `1px solid ${T.border}`, background: T.inputBg, color: T.muted, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}
-                          title="Toggle date sort">
-                          {txSort === "desc" ? "↓ Newest" : "↑ Oldest"}
-                        </button>
-                        {pol.status === "Active" && (
-                          <button onClick={() => setShowAddTxModal(true)}
-                            style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: T.selected, color: T.selectedText, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
-                            + Record
-                          </button>
-                        )}
-                      </div>
+                      <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                        filters={["All","Paid","Pending","Overdue","Waived"]}
+                        action={pol.status === "Active" && <button onClick={() => setShowAddTxModal(true)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: T.selected, color: T.selectedText, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>+ Record</button>}/>
 
                       {showAddTxModal && (
-                        <AddPremiumTxModal
-                          polId={pol.id}
-                          premium={pol.premium}
-                          onClose={() => setShowAddTxModal(false)}
-                        />
+                        <AddPremiumTxModal polId={pol.id} premium={pol.premium} onClose={() => setShowAddTxModal(false)} />
+                      )}
+                      {editTx && (
+                        <AddPremiumTxModal polId={pol.id} premium={pol.premium} editTx={editTx} onClose={() => setEditTx(null)} />
                       )}
 
-                      {/* Year-grouped transaction list */}
                       {filtered.length === 0 ? (
-                        <div style={{ textAlign: "center", padding: "36px 20px" }}>
-                          <div style={{ fontSize: 28, marginBottom: 10 }}>💳</div>
-                          <div style={{ fontSize: 13, color: T.muted }}>No transactions found</div>
+                        <div style={{ textAlign: "center", padding: "32px 20px", color: T.muted }}>
+                          <div style={{ fontSize: 28, marginBottom: 8 }}>📒</div>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>No transactions yet</div>
                         </div>
-                      ) : (() => {
-                        // Group by year
-                        const byYear = {};
-                        filtered.forEach(t => {
-                          const yr = t.date.slice(0,4);
-                          if (!byYear[yr]) byYear[yr] = [];
-                          byYear[yr].push(t);
-                        });
-                        const years = Object.keys(byYear).sort((a,b) => txSort === "desc" ? b-a : a-b);
-                        return years.map(yr => {
-                          const ytxs = byYear[yr];
-                          const yrTotal = ytxs.filter(t=>t.status==="Paid").reduce((s,t)=>s+(parseFloat(t.amount)||0),0);
-                          return (
-                            <div key={yr}>
-                              {/* Year header */}
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0 8px", borderBottom: `1px solid ${T.border}`, marginBottom: 8 }}>
-                                <span style={{ fontSize: 12, fontWeight: 700, color: T.muted, letterSpacing: "0.04em" }}>{yr}</span>
-                                <span style={{ fontSize: 11, color: T.dim }}>
-                                  {ytxs.length} payment{ytxs.length>1?"s":""} · S${yrTotal.toLocaleString()} paid
-                                </span>
-                              </div>
-                              {/* Transactions */}
-                              {ytxs.map((tx, i) => {
-                                const statusColor = { Paid: T.up, Pending: T.warn, Overdue: T.down, Waived: T.accent }[tx.status] || T.muted;
-                                const statusBg    = { Paid: T.upBg, Pending: T.warnBg, Overdue: T.downBg, Waived: T.accentBg }[tx.status] || T.inputBg;
-                                const icon = methodIcon[tx.method] || "💰";
-                                return (
-                                  <div key={tx.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "11px 0", borderBottom: i < ytxs.length-1 ? `1px solid ${T.border}` : "none" }}>
-                                    {/* Icon */}
-                                    <div style={{ width: 34, height: 34, borderRadius: 9, background: statusBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>{icon}</div>
-                                    {/* Info */}
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                                        <div>
-                                          <div style={{ fontSize: 13, fontWeight: 600 }}>{tx.method}</div>
-                                          <div style={{ fontSize: 11, color: T.dim, marginTop: 1 }}>{tx.date}</div>
-                                        </div>
-                                        <div style={{ textAlign: "right", flexShrink: 0 }}>
-                                          <div style={{ fontSize: 14, fontWeight: 700, color: tx.status === "Paid" ? T.text : statusColor }}>
-                                            {tx.status === "Waived" ? "Waived" : `S$${parseFloat(tx.amount||0).toLocaleString()}`}
-                                          </div>
-                                          <div style={{ marginTop: 3 }}>
-                                            <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 5, background: statusBg, color: statusColor }}>{tx.status}</span>
-                                          </div>
-                                        </div>
-                                      </div>
-                                      <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
-                                        <span style={{ fontSize: 10, color: T.dim, background: T.inputBg, borderRadius: 5, padding: "2px 7px", fontFamily: "monospace" }}>{tx.ref}</span>
-                                        {tx.fees > 0 && <span style={{ fontSize: 10, color: T.warn, background: T.warnBg, borderRadius: 5, padding: "2px 7px" }}>+ S${parseFloat(tx.fees).toLocaleString(undefined,{minimumFractionDigits:2})} fees</span>}
-                                        {tx.notes && <span style={{ fontSize: 11, color: T.muted, fontStyle: "italic" }}>{tx.notes}</span>}
-                                      </div>
-                                    </div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 1, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+                          {filtered.map((tx, i) => {
+                            const statusColor = { Paid: T.up, Pending: T.warn, Overdue: T.down, Waived: T.accent }[tx.status] || T.muted;
+                            const statusBg    = { Paid: T.upBg, Pending: T.warnBg, Overdue: T.downBg, Waived: T.accentBg }[tx.status] || T.inputBg;
+                            const icon = methodIcon[tx.method] || "💰";
+                            return (
+                              <div key={tx.id} className="hov-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 16px", background: i%2===0?T.bg:T.inputBg, borderTop: i>0?`1px solid ${T.border}`:"none" }}>
+                                <div style={{ width: 34, height: 34, borderRadius: 8, background: statusBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>{icon}</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 600 }}>{tx.method}{tx.notes ? ` — ${tx.notes}` : ""}</div>
+                                  <div style={{ fontSize: 11, color: T.muted, marginTop: 1, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                    <span>{tx.date}</span>
+                                    {tx.ref && <span style={{ fontSize: 10, color: T.dim, fontFamily: "monospace" }}>{tx.ref}</span>}
+                                    {tx.fees > 0 && <span style={{ fontSize: 10, color: T.warn, background: T.warnBg, borderRadius: 4, padding: "1px 6px" }}>+ S${parseFloat(tx.fees).toLocaleString(undefined,{minimumFractionDigits:2})} fees</span>}
                                   </div>
-                                );
-                              })}
-                            </div>
-                          );
-                        });
-                      })()}
-
-                      {/* Running total footer */}
-                      {filtered.length > 0 && (
-                        <div style={{ borderTop: `2px solid ${T.border}`, paddingTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontSize: 12, color: T.muted }}>{filtered.length} transaction{filtered.length>1?"s":""} shown</span>
-                          <span style={{ fontSize: 13, fontWeight: 700 }}>
-                            S${filtered.filter(t=>t.status==="Paid").reduce((s,t)=>s+(parseFloat(t.amount)||0),0).toLocaleString()} total paid
-                          </span>
+                                </div>
+                                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: tx.status === "Paid" ? T.text : statusColor }}>
+                                    {tx.status === "Waived" ? "Waived" : `- S$${parseFloat(tx.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}`}
+                                  </div>
+                                  <div style={{ marginTop: 3 }}>
+                                    <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 5, background: statusBg, color: statusColor }}>{tx.status}</span>
+                                  </div>
+                                </div>
+                                <TxRowActions
+                                  onEdit={()=>setEditTx(tx)}
+                                  onDelete={()=>{ if(window.confirm("Delete this premium payment?")) handleDeletePremiumTx(pol.id, tx); }}/>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -13484,7 +14018,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                   const allEntries = [
                     ...txs.map(tx => ({ _type: "premium", date: tx.date, tx })),
                     ...claims.map(c  => ({ _type: "claim",   date: c.date,  c  })),
-                  ].sort((a, b) => a.date.localeCompare(b.date));
+                  ].sort((a, b) => b.date.localeCompare(a.date));
 
                   allEntries.forEach(entry => {
                     if (entry._type === "premium") {
@@ -13540,8 +14074,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                               <th style={{ padding: "9px 16px", textAlign: "right", width: 148, fontSize: 11, fontWeight: 500, color: T.muted, fontFamily: inter }}>Credit</th>
                             </tr>
                           </thead>
-                          <tbody>
-                            {journalRows.map((row, ri) => (
+                          {groupByFirst(journalRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                               <tr key={ri} style={{ borderBottom: `1px solid ${T.border}` }}>
                                 <td style={{ padding: "11px 16px", verticalAlign: "top", width: 148 }}>
                                   {row._first && row.date ? (
@@ -13566,8 +14099,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                                     : <span style={{ fontSize: 13, color: T.dim, fontFamily: inter }}>—</span>}
                                 </td>
                               </tr>
-                            ))}
-                          </tbody>
+                            ))}</tbody>))}
                         </table>
                       </div>
                       <div style={{ padding: "12px 18px", borderTop: `1px solid ${T.border}`, background: T.sidebar }}>
@@ -13581,15 +14113,39 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                     </div>
                   );
                 })()}
-                {detailTab === "history" && (
+                {detailTab === "audit" && (
                   <div style={{padding:"16px 0"}}>
                     <AuditLogPanel auditLog={auditLog} entityType="insurance" entityId={pol.id}/>
                   </div>
                 )}
 
+                {detailTab === "manage" && (
+                  <div style={{padding:"16px 0"}}>
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: "18px 20px" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Policy Status</div>
+                      <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>
+                        {pol.status === "Active" ? "Close this policy to mark it as lapsed. Records are preserved." : `This policy is ${pol.status}.`}
+                      </div>
+                      {pol.status === "Active" && (
+                        <button
+                          onClick={() => { setClosureTarget(pol.id); setShowClosureModal(true); }}
+                          style={{ background: T.downBg, border: `1px solid #FECACA`, borderRadius: 8, padding: "9px 18px", cursor: "pointer", fontSize: 13, fontWeight: 600, color: T.down, fontFamily: "inherit" }}>
+                          🚫 Close Policy
+                        </button>
+                      )}
+                      {pol.status === "Lapsed" && (
+                        <button
+                          onClick={() => { setPolicies(prev => prev.map(p => p.id === pol.id ? { ...p, status: "Active" } : p)); showToast("Policy reactivated", "success"); }}
+                          style={{ background: T.upBg, border: `1px solid #BBF7D0`, borderRadius: 8, padding: "9px 18px", cursor: "pointer", fontSize: 13, fontWeight: 600, color: T.up, fontFamily: "inherit" }}>
+                          ♻️ Reactivate Policy
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
               </div>
-            </div>
-          </div>
+          </DetailPage>
         );
       })()}
 
@@ -14311,14 +14867,14 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
       {/* ══ ADD CLAIM MODAL ══════════════════════════════════════ */}
       {showClaimModal && claimTarget && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
-          onClick={e => { if (e.target === e.currentTarget) setShowClaimModal(false); }}>
+          onClick={e => { if (e.target === e.currentTarget) { setShowClaimModal(false); setEditClaim(null); } }}>
           <div style={{ background: T.bg, borderRadius: 14, width: 480, boxShadow: "0 20px 50px rgba(0,0,0,0.25)" }}>
             <div style={{ padding: "18px 22px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: T.sidebar, borderRadius: "14px 14px 0 0" }}>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Record Claim</div>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{editClaim ? "Edit Claim" : "Record Claim"}</div>
                 <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>{claimTarget.planName} · {claimTarget.policyNo}</div>
               </div>
-              <button onClick={() => setShowClaimModal(false)} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 7, padding: "4px 12px", fontSize: 13, cursor: "pointer", color: T.muted }}>×</button>
+              <button onClick={() => { setShowClaimModal(false); setEditClaim(null); }} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 7, padding: "4px 12px", fontSize: 13, cursor: "pointer", color: T.muted }}>×</button>
             </div>
             <div style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -14331,13 +14887,13 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                   <Input type="date" value={claimForm.date} onChange={e => setCF("date", e.target.value)} />
                 </div>
                 <div>
-                  <Label>Claim Amount (S$)</Label>
-                  <Input type="number" placeholder="0" value={claimForm.amount} onChange={e => setCF("amount", e.target.value)} />
+                  <Label>Claim Amount</Label>
+                  <Input type="number" placeholder="0.00" prefix="S$" value={claimForm.amount} onChange={e => setCF("amount", e.target.value)} />
                 </div>
                 <div style={{ gridColumn: "span 2" }}>
                   <Label>Status</Label>
                   <div style={{ display: "flex", gap: 8 }}>
-                    {["Pending","Approved","Rejected"].map(s => (
+                    {["Pending","Paid","Rejected"].map(s => (
                       <button key={s} onClick={() => setCF("status", s)}
                         style={{ flex: 1, padding: "8px", borderRadius: 8, border: `1px solid ${claimForm.status===s ? T.selected : T.border}`, background: claimForm.status===s ? T.selected : T.inputBg, color: claimForm.status===s ? T.selectedText : T.muted, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: claimForm.status===s ? 600 : 400 }}>
                         {s}
@@ -14345,16 +14901,42 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                     ))}
                   </div>
                 </div>
+                {claimForm.status === "Paid" && (
+                  <>
+                    <div>
+                      <Label required>Credit to Account</Label>
+                      <Sel value={claimForm.creditAccountId||""} onChange={e=>setCF("creditAccountId", e.target.value)}
+                        placeholder="Select account…"
+                        options={(accounts||[]).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet").map(a => ({value:String(a.id), label:`${a.bank} · ${a.accountName}`}))}/>
+                    </div>
+                    <div>
+                      <Label>Received via</Label>
+                      <Sel value={claimForm.method||"Bank Transfer"} onChange={e=>setCF("method", e.target.value)}
+                        options={["Bank Transfer","GIRO","PayNow","Cheque","Cash"].map(m => ({value:m, label:m}))}/>
+                    </div>
+                    <div style={{ gridColumn: "span 2", fontSize: 11, color: T.dim, marginTop: -6 }}>The claim payout will be credited to this account.</div>
+                  </>
+                )}
+                {claimForm.status === "Paid" && parseFloat(claimForm.amount) > 0 && (
+                  <div style={{ gridColumn: "span 2" }}>
+                    <FlowBanner type="Claim" amount={parseFloat(claimForm.amount)||0} flowOverride="in" label="📥 Claim payout received" style={{ marginBottom: 0 }}/>
+                  </div>
+                )}
                 <div style={{ gridColumn: "span 2" }}>
                   <Label>Notes</Label>
                   <textarea value={claimForm.notes} onChange={e => setCF("notes", e.target.value)} placeholder="Details about the claim…"
                     style={{ width: "100%", boxSizing: "border-box", background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none", resize: "vertical", minHeight: 60 }} />
                 </div>
               </div>
-              <button onClick={handleAddClaim} disabled={!claimForm.type || !claimForm.date}
-                style={{ background: (!claimForm.type||!claimForm.date) ? T.inputBg : T.selected, color: (!claimForm.type||!claimForm.date) ? T.dim : T.selectedText, border: "none", borderRadius: 9, padding: "11px", fontSize: 13, cursor: (!claimForm.type||!claimForm.date) ? "not-allowed" : "pointer", fontFamily: "inherit", fontWeight: 600 }}>
-                Save Claim
+              {(() => {
+              const claimInvalid = !claimForm.type || !claimForm.date || (claimForm.status === "Paid" && !editClaim && !claimForm.creditAccountId);
+              return (
+              <button onClick={handleAddClaim} disabled={claimInvalid}
+                style={{ background: claimInvalid ? T.inputBg : T.selected, color: claimInvalid ? T.dim : T.selectedText, border: "none", borderRadius: 9, padding: "11px", fontSize: 13, cursor: claimInvalid ? "not-allowed" : "pointer", fontFamily: "inherit", fontWeight: 600 }}>
+                {editClaim ? "Save Changes" : "Save Claim"}
               </button>
+              );
+              })()}
             </div>
           </div>
         </div>
@@ -14415,8 +14997,6 @@ const EMPTY_ACCOUNT = {
 
 const CC_ACCOUNTS_INIT = [
   { id:"ACC001", bank:"DBS",  accountName:"DBS Multiplier",      accountType:"Savings",  last4:"2341", balance:18450, currency:"SGD" },
-  { id:"ACC002", bank:"OCBC", accountName:"OCBC 360 Account",    accountType:"Savings",  last4:"8812", balance:9320,  currency:"SGD" },
-  { id:"ACC003", bank:"UOB",  accountName:"UOB One Account",     accountType:"Checking", last4:"5567", balance:6150,  currency:"SGD" },
   { id:"ACC004", bank:"HSBC", accountName:"HSBC Premier USD",    accountType:"Checking", last4:"7720", balance:4280,  currency:"USD" },
   // CPF accounts (Singapore Central Provident Fund) — restricted balances, mirror the "CPF Balances" retirement plan
   { id:"CPF001", bank:"CPF Board", accountName:"CPF Ordinary Account",   accountType:"CPF", cpfSubType:"OA", last4:"567A", balance:98000, currency:"SGD", linkedPlanId:"RT006", restricted:true, notes:"CPF OA — usable for HDB / private property (subject to LTV) and CPFIS-OA investments" },
@@ -14431,20 +15011,12 @@ const CC_ACCOUNTS_INIT = [
   { id:"BR003", bank:"Moomoo",               accountName:"Moomoo (USD)",                accountType:"Brokerage", accountNumber:"MM-77441", last4:"7441", balance:920,  currency:"USD",
     balances:[{ ccy:"USD", amount:920 },{ ccy:"HKD", amount:1800 }] },
   // Crypto wallets (linked manually — no API integration)
-  { id:"WL001", bank:"Ledger",     accountName:"Ledger Nano X",          accountType:"Crypto Wallet", walletKind:"Hardware Wallet",   chain:"Multi-chain", walletAddress:"bc1q...4m7x", last4:"4m7x", balance:0,    currency:"SGD",
+  { id:"WL001", bank:"Ledger",     accountName:"Ledger Nano X",          label:"Cold Storage", accountType:"Crypto Wallet", walletKind:"Hardware Wallet",   chain:"Multi-chain", walletAddress:"bc1q...4m7x", last4:"4m7x", balance:0,    currency:"SGD",
     balances:[] },
-  { id:"WL002", bank:"MetaMask",   accountName:"MetaMask Personal",      accountType:"Crypto Wallet", walletKind:"Hot Wallet",        chain:"Ethereum",    walletAddress:"0x742d...38a1", last4:"38a1", balance:2220, currency:"SGD",
-    balances:[{ ccy:"SGD", amount:2220 }] },
-  { id:"WL003", bank:"Binance",    accountName:"Binance Main",           accountType:"Crypto Wallet", walletKind:"Exchange (CEX)",    chain:"Multi-chain", walletAddress:"", last4:"",         balance:6390, currency:"SGD",
+  { id:"WL003", bank:"Binance",    accountName:"Binance Main",           label:"Trading", accountType:"Crypto Wallet", walletKind:"Exchange (CEX)",    chain:"Multi-chain", walletAddress:"", last4:"",         balance:6390, currency:"SGD",
     balances:[{ ccy:"SGD", amount:6390 }] },
-  { id:"WL004", bank:"Crypto.com", accountName:"Crypto.com Earn",        accountType:"Crypto Wallet", walletKind:"DeFi Protocol",     chain:"BNB Chain",   walletAddress:"", last4:"",         balance:1950, currency:"SGD",
-    balances:[{ ccy:"SGD", amount:1950 }] },
-  { id:"WL005", bank:"Lido",       accountName:"Lido stETH Staking",     accountType:"Crypto Wallet", walletKind:"DeFi Protocol",     chain:"Ethereum",    walletAddress:"0x742d...38a1", last4:"38a1", balance:0,    currency:"SGD",
+  { id:"WL005", bank:"Lido",       accountName:"Lido stETH Staking",     label:"Staking", accountType:"Crypto Wallet", walletKind:"DeFi Protocol",     chain:"Ethereum",    walletAddress:"0x742d...38a1", last4:"38a1", balance:0,    currency:"SGD",
     balances:[] },
-  { id:"WL006", bank:"Phantom",    accountName:"Phantom Solana",         accountType:"Crypto Wallet", walletKind:"Hot Wallet",        chain:"Solana",      walletAddress:"7xKw...9mP2",  last4:"9mP2",  balance:430,  currency:"SGD",
-    balances:[{ ccy:"SGD", amount:430 }] },
-  { id:"WL007", bank:"Coinbase",   accountName:"Coinbase Spot",          accountType:"Crypto Wallet", walletKind:"Exchange (CEX)",    chain:"Multi-chain", walletAddress:"", last4:"",         balance:1620, currency:"SGD",
-    balances:[{ ccy:"SGD", amount:1620 }] },
 ];
 
 // Brokerage-only metadata. PickerWithOther uses these keys for the broker dropdown.
@@ -14494,27 +15066,6 @@ const CC_CARDS_INIT = [
     notes:"Online & Contactless 5% cashback. Waived if spend S$25k/yr.",
   },
   {
-    id:"CC002", bank:"OCBC", cardName:"OCBC 365", cardType:"Credit",
-    network:"Mastercard", holderName:"dilwyn", last4:"8834", expiryMM:"11", expiryYY:"26",
-    creditLimit:20000, currentBalance:7812.00, minimumPayment:156.24, dueDayOfMonth:5,
-    apr:26.9, annualFee:192.60, linkedAccountId:null, isActive:true,
-    notes:"6% cashback on weekends. Min spend S$800/mo.",
-  },
-  {
-    id:"CC003", bank:"UOB", cardName:"UOB PRVI Miles", cardType:"Credit",
-    network:"Visa", holderName:"dilwyn", last4:"2290", expiryMM:"03", expiryYY:"28",
-    creditLimit:30000, currentBalance:1545.00, minimumPayment:30.90, dueDayOfMonth:10,
-    apr:26.9, annualFee:256.80, linkedAccountId:null, isActive:true,
-    notes:"3 miles per S$1 on overseas. Good for travel.",
-  },
-  {
-    id:"CC004", bank:"Standard Chartered", cardName:"SC Simply Cash", cardType:"Credit",
-    network:"Visa", holderName:"dilwyn", last4:"6601", expiryMM:"06", expiryYY:"27",
-    creditLimit:15000, currentBalance:0, minimumPayment:0, dueDayOfMonth:15,
-    apr:26.9, annualFee:192.60, linkedAccountId:null, isActive:true,
-    notes:"No min spend, no cap. Good everyday card.",
-  },
-  {
     id:"CC007", bank:"American Express", cardName:"Amex Business Gold", cardType:"Commercial",
     network:"Amex", holderName:"dilwyn", last4:"3008", expiryMM:"09", expiryYY:"27",
     creditLimit:50000, currentBalance:12480.00, minimumPayment:249.60, dueDayOfMonth:1,
@@ -14528,13 +15079,6 @@ const CC_CARDS_INIT = [
     creditLimit:0, currentBalance:0, minimumPayment:0, dueDayOfMonth:28,
     apr:0, annualFee:0, linkedAccountId:"ACC001", isActive:true,
     notes:"Linked to DBS Multiplier account.",
-  },
-  {
-    id:"CC006", bank:"OCBC", cardName:"OCBC Frank Debit", cardType:"Debit",
-    network:"Mastercard", holderName:"dilwyn", last4:"8812", expiryMM:"05", expiryYY:"27",
-    creditLimit:0, currentBalance:0, minimumPayment:0, dueDayOfMonth:28,
-    apr:0, annualFee:0, linkedAccountId:"ACC002", isActive:true,
-    notes:"Linked to OCBC 360 Account.",
   },
   {
     id:"CC008", bank:"HSBC", cardName:"HSBC Premier Debit (USD)", cardType:"Debit",
@@ -14551,19 +15095,8 @@ const CC_TRANSACTIONS_INIT = [
   { id:"T003", cardId:"CC001", date:"2026-03-07", description:"Cold Storage",      category:"Groceries",    amount:67.30,  type:"Debit"  },
   { id:"T004", cardId:"CC001", date:"2026-03-05", description:"Netflix",           category:"Entertainment",amount:19.98,  type:"Debit"  },
   { id:"T005", cardId:"CC001", date:"2026-03-01", description:"Payment - Thank You",category:"Other",       amount:500.00, type:"Credit" },
-  { id:"T006", cardId:"CC002", date:"2026-03-11", description:"Dining at PS Cafe", category:"Dining",       amount:148.00, type:"Debit"  },
-  { id:"T007", cardId:"CC002", date:"2026-03-09", description:"ComfortDelGro",     category:"Transport",    amount:24.60,  type:"Debit"  },
-  { id:"T008", cardId:"CC002", date:"2026-03-09", description:"NTUC FairPrice",    category:"Groceries",    amount:112.50, type:"Debit"  },
-  { id:"T009", cardId:"CC002", date:"2026-03-06", description:"Singapore Airlines",category:"Travel",       amount:1850.00,type:"Debit"  },
-  { id:"T010", cardId:"CC002", date:"2026-03-01", description:"Payment - Thank You",category:"Other",       amount:2000.00,type:"Credit" },
-  { id:"T011", cardId:"CC003", date:"2026-03-10", description:"Changi Airport T3", category:"Travel",       amount:320.00, type:"Debit"  },
-  { id:"T012", cardId:"CC003", date:"2026-03-08", description:"Wingstop",          category:"Dining",       amount:28.90,  type:"Debit"  },
-  { id:"T013", cardId:"CC003", date:"2026-03-05", description:"Lazada",            category:"Shopping",     amount:76.50,  type:"Debit"  },
-  { id:"T014", cardId:"CC004", date:"2026-03-11", description:"Uniqlo",            category:"Shopping",     amount:89.90,  type:"Debit"  },
-  { id:"T015", cardId:"CC004", date:"2026-03-10", description:"Guardian Pharmacy", category:"Healthcare",   amount:43.20,  type:"Debit"  },
   { id:"T016", cardId:"CC005", date:"2026-03-11", description:"Kopitiam",          category:"Dining",       amount:6.50,   type:"Debit"  },
   { id:"T017", cardId:"CC005", date:"2026-03-10", description:"MRT Top Up",        category:"Transport",    amount:20.00,  type:"Debit"  },
-  { id:"T018", cardId:"CC006", date:"2026-03-09", description:"Giant Hypermart",   category:"Groceries",    amount:55.80,  type:"Debit"  },
   { id:"T019", cardId:"CC008", date:"2026-03-12", description:"Amazon US",         category:"Online",       amount:48.20,  type:"Debit", currency:"USD"  },
   { id:"T020", cardId:"CC008", date:"2026-03-10", description:"AWS",               category:"Online",       amount:120.00, type:"Debit", currency:"USD"  },
 ];
@@ -14626,43 +15159,6 @@ const LOANS_INIT = [
       { id:"LRP009", date:"2026-03-01", amount:466, principal:348, interest:118, fees:0, repaymentType:"Monthly", notes:"Mar 2026" },
       { id:"LRP010", date:"2026-02-01", amount:466, principal:345, interest:121, fees:0, repaymentType:"Monthly", notes:"Feb 2026" },
       { id:"LRP011", date:"2026-01-01", amount:466, principal:342, interest:124, fees:0, repaymentType:"Monthly", notes:"Jan 2026" },
-    ],
-  },
-  {
-    id:"LN004", loanType:"Renovation Loan", lender:"UOB", borrowerName:"dilwyn",
-    principalAmount:50000, outstandingBalance:8400, interestRate:3.50, rateType:"Fixed",
-    tenureMonths:60, monthlyPayment:910, startDate:"2021-06-01", maturityDate:"2026-06-01",
-    accountNumber:"UOB-RL-60198", disbursedDate:"2021-06-10", purpose:"HDB Tampines flat full renovation — kitchen, bathrooms, flooring",
-    status:"Active", notes:"UOB renovation loan. Final repayment Jun 2026. Almost fully paid off.",
-    nextPaymentDue:"2026-03-08", reminderEnabled:true, reminderDays:14,
-    repayments:[
-      { id:"LRP012", date:"2026-03-01", amount:910, principal:885, interest:25, fees:0, repaymentType:"Monthly", notes:"Mar 2026" },
-      { id:"LRP013", date:"2026-02-01", amount:910, principal:882, interest:28, fees:0, repaymentType:"Monthly", notes:"Feb 2026" },
-      { id:"LRP014", date:"2026-01-01", amount:910, principal:879, interest:31, fees:0, repaymentType:"Monthly", notes:"Jan 2026" },
-    ],
-  },
-  {
-    id:"LN005", loanType:"Personal Loan", lender:"HSBC", borrowerName:"dilwyn",
-    principalAmount:15000, outstandingBalance:0, interestRate:4.20, rateType:"Fixed",
-    tenureMonths:24, monthlyPayment:654, startDate:"2023-09-01", maturityDate:"2025-09-01",
-    accountNumber:"HSBC-PL-77031", disbursedDate:"2023-09-05", purpose:"Emergency dental surgery and medical bills",
-    status:"Completed", notes:"Fully repaid Sep 2025. No outstanding balance.",
-    nextPaymentDue:"", reminderEnabled:false, reminderDays:14,
-    repayments:[
-      { id:"LRP015", date:"2025-09-01", amount:654, principal:650, interest:4, fees:0, repaymentType:"Full", notes:"Final repayment — Sep 2025" },
-    ],
-  },
-  {
-    id:"LN006", loanType:"Business Term Loan", lender:"DBS", borrowerName:"dilwyn",
-    principalAmount:100000, outstandingBalance:74500, interestRate:5.25, rateType:"Floating",
-    tenureMonths:60, monthlyPayment:1898, startDate:"2025-01-15", maturityDate:"2030-01-15",
-    accountNumber:"DBS-BL-10455", disbursedDate:"2025-01-20", purpose:"Working capital for Dilwyn Ventures Pte Ltd — equipment and inventory",
-    status:"Active", notes:"DBS SME term loan. SORA + 2.5%. Quarterly rate review. Secured against personal guarantee.",
-    nextPaymentDue:"2026-04-15", reminderEnabled:true, reminderDays:30,
-    repayments:[
-      { id:"LRP016", date:"2026-03-01", amount:1898, principal:1572, interest:326, fees:0, repaymentType:"Monthly", notes:"Mar 2026" },
-      { id:"LRP017", date:"2026-02-01", amount:1898, principal:1565, interest:333, fees:0, repaymentType:"Monthly", notes:"Feb 2026" },
-      { id:"LRP018", date:"2026-01-01", amount:1898, principal:1558, interest:340, fees:0, repaymentType:"Monthly", notes:"Jan 2026" },
     ],
   },
 ];
@@ -14808,8 +15304,9 @@ function LoanModal({ loan, onSave, onClose, properties }) {
 }
 
 // ── Loan Repayment Modal ──────────────────────────────────────
-function LoanRepaymentModal({ loan, onSave, onClose }) {
-  const [f, setF] = useState({
+function LoanRepaymentModal({ loan, editRep, cashAccounts, onSave, onClose }) {
+  const isEdit = !!editRep;
+  const [f, setF] = useState(editRep ? { ...editRep } : {
     date: new Date().toISOString().slice(0,10),
     repaymentType: "Monthly",
     amount: loan.monthlyPayment,
@@ -14817,8 +15314,14 @@ function LoanRepaymentModal({ loan, onSave, onClose }) {
     interest: 0,
     fees: 0,
     notes: "",
+    method: "Bank Transfer",
+    cashAccountId: (cashAccounts && cashAccounts[0]) ? String(cashAccounts[0].id) : "",
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  // A repayment is money OUT — when paid from a tracked account (not cash), show the source picker.
+  // Only require it when adding (the add path debits the account); edits don't re-adjust balances.
+  const showAccountPicker = f.method !== "Cash";
+  const needsAccount = showAccountPicker && !isEdit;
 
   // Auto-calculate principal = amount - interest - fees
   const computedPrincipal = Math.max(0, f.amount - f.interest - f.fees);
@@ -14837,7 +15340,7 @@ function LoanRepaymentModal({ loan, onSave, onClose }) {
       <div style={{ background:T.bg, borderRadius:16, width:460, maxHeight:"85vh", overflow:"auto", padding:"28px 28px 20px", border:`1px solid ${T.border}` }}
         onClick={e => e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <div style={{fontSize:16,fontWeight:800}}>Record Repayment</div>
+          <div style={{fontSize:16,fontWeight:800}}>{isEdit ? "Edit Repayment" : "Record Repayment"}</div>
           <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
         </div>
         <div style={{ fontSize:12, color:T.muted, marginBottom:20 }}>{loan.loanType} · {loan.lender} · Outstanding: S${loan.outstandingBalance.toLocaleString(undefined,{minimumFractionDigits:2})}</div>
@@ -14881,6 +15384,22 @@ function LoanRepaymentModal({ loan, onSave, onClose }) {
           </MoreOptions>
         </div>
 
+        {/* Payment method + source account */}
+        <div style={{ display:"grid", gridTemplateColumns: showAccountPicker ? "1fr 1.2fr" : "1fr", gap:14, marginBottom:16 }}>
+          <div>
+            <Label>Payment Method</Label>
+            <Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Bank Transfer","GIRO","Cash"]}/>
+          </div>
+          {showAccountPicker && (
+            <div>
+              <Label required={!isEdit}>Pay from Account</Label>
+              <Sel value={f.cashAccountId||""} onChange={e=>set("cashAccountId",e.target.value)}
+                placeholder={(cashAccounts&&cashAccounts.length) ? "Select account…" : undefined}
+                options={(cashAccounts&&cashAccounts.length) ? cashAccounts.map(a => ({value:String(a.id), label:`${a.bank} · ${a.accountName}`})) : ["— No cash accounts —"]}/>
+            </div>
+          )}
+        </div>
+
         {/* Summary */}
         <div style={{ background:T.inputBg, borderRadius:10, padding:"12px 14px", marginBottom:14, fontSize:12 }}>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
@@ -14913,9 +15432,9 @@ function LoanRepaymentModal({ loan, onSave, onClose }) {
 
         <div style={{ display:"flex", justifyContent:"flex-end", gap:10 }}>
           <button onClick={onClose} style={{ padding:"9px 20px", borderRadius:8, border:`1px solid ${T.border}`, background:"transparent", color:T.muted, cursor:"pointer", fontFamily:"inherit", fontSize:13 }}>Cancel</button>
-          <button onClick={()=>onSave({ ...f, principal:computedPrincipal })} disabled={!f.date||f.amount<=0}
-            style={{ padding:"9px 20px", borderRadius:8, border:"none", background:T.selected, color:T.selectedText, cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:700, opacity:(!f.date||f.amount<=0)?0.4:1 }}>
-            Record Payment
+          <button onClick={()=>onSave({ ...f, principal:computedPrincipal })} disabled={!f.date||f.amount<=0||(needsAccount&&!f.cashAccountId)}
+            style={{ padding:"9px 20px", borderRadius:8, border:"none", background:T.selected, color:T.selectedText, cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:700, opacity:(!f.date||f.amount<=0||(needsAccount&&!f.cashAccountId))?0.4:1 }}>
+            {isEdit ? "Save Changes" : "Record Payment"}
           </button>
         </div>
       </div>
@@ -14924,10 +15443,13 @@ function LoanRepaymentModal({ loan, onSave, onClose }) {
 }
 
 // ── Loan Drawer (right panel detail) ──────────────────────────
-function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) {
+function LoanDrawer({ loan, setLoans, accounts, setAccounts, showToast, onClose, onEdit, auditLog, logAudit, tab, setTab }) {
   const isMobile = useIsMobile();
-  const [tab, setTab] = useState("overview");
   const [showRepaymentModal, setShowRepaymentModal] = useState(false);
+  const [editRep, setEditRep] = useState(null);
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
+  const cashAccounts = (accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
   const bc = BANK_COLORS[loan.lender] || { from:"#374151", to:"#1F2937", text:"#fff" };
   const icon = LOAN_TYPE_ICONS[loan.loanType] || "💰";
   const sc = LOAN_STATUS_COLORS[loan.status] || LOAN_STATUS_COLORS.Active;
@@ -14953,7 +15475,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
   const daysUntilDue = Math.ceil((nextDueDate - today) / (1000*60*60*24));
   const nextDueDateStr = nextDueDate.toLocaleDateString("en-SG",{day:"numeric",month:"short",year:"numeric"});
 
-  const TABS = [{id:"overview",label:"Overview"},{id:"repayments",label:"Repayments"},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}];
+  const TABS = [{id:"overview",label:"Overview"},{id:"repayments",label:"Repayments"},{id:"postings",label:"Postings"},{id:"audit",label:"Audit"},{id:"manage",label:"Manage"}];
 
   const handleAddRepayment = (repayment) => {
     const newRep = { ...repayment, id:"LRP"+Date.now() };
@@ -14966,38 +15488,70 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
       status: newStatus,
     } : l));
     if (logAudit) logAudit("loan", loan.id, "add-transaction", null, newRep, `Repayment · S$${repayment.amount} (principal S$${repayment.principal})`);
+    // Debit the cash account the repayment was paid from (money out)
+    if (repayment.method !== "Cash" && repayment.cashAccountId && setAccounts) {
+      const signed = -(+repayment.amount || 0);
+      setAccounts(prev => prev.map(a => {
+        if (String(a.id) !== String(repayment.cashAccountId)) return a;
+        const cur = acctBalances(a);
+        const has = cur.find(b => b.ccy === "SGD");
+        const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + signed } : b) : [...cur, { ccy:"SGD", amount: signed }];
+        const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + signed } : {};
+        return { ...a, balances: nextBals, ...nextLegacy };
+      }));
+    }
     setShowRepaymentModal(false);
     showToast(repayment.repaymentType === "Full" ? "Loan fully repaid!" : "Repayment recorded", "success");
   };
 
-  return (
-    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-      {/* Header — matches CCDrawer: sidebar bg, name + badge, pill tabs */}
-      <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{fontSize:14,fontWeight:800}}>{icon} {loan.loanType}</div>
-            <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:sc.bg,color:sc.color}}>
-              {loan.status}
-            </span>
-          </div>
-          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
-        </div>
-        {/* Pill tabs — same style as CCDrawer */}
-        <div style={{display:"flex",gap:4}}>
-          {TABS.map(t=>(
-            <button key={t.id} onClick={()=>setTab(t.id)}
-              style={{padding:"6px 14px",borderRadius:8,border:"none",background:tab===t.id?T.selected:T.inputBg,
-                color:tab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:tab===t.id?700:400}}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
+  const handleEditRepayment = (repayment) => {
+    const upd = { ...editRep, ...repayment };
+    // adjust outstanding by the change in principal (old principal added back, new principal removed)
+    const newOutstanding = Math.max(0, loan.outstandingBalance + (editRep.principal||0) - (upd.principal||0));
+    const newStatus = newOutstanding <= 0 ? "Completed" : (loan.status === "Completed" ? "Active" : loan.status);
+    setLoans(prev => prev.map(l => l.id === loan.id ? {
+      ...l,
+      repayments: (l.repayments||[]).map(r=>r.id===editRep.id?upd:r),
+      outstandingBalance: newOutstanding,
+      status: newStatus,
+    } : l));
+    if (logAudit) logAudit("loan", loan.id, "edit-transaction", editRep, upd, `Repayment · S$${upd.amount} (principal S$${upd.principal})`);
+    setEditRep(null);
+    showToast("Repayment updated", "success");
+  };
 
-      {/* Content — scrollable, same padding as CCDrawer */}
-      <div style={{flex:1,overflowY:"auto",minHeight:0}}>
-        <div style={{padding:"18px 22px 32px",display:"flex",flexDirection:"column",gap:16}}>
+  const handleDeleteRepayment = (r) => {
+    const newOutstanding = Math.max(0, loan.outstandingBalance + (r.principal||0));
+    setLoans(prev => prev.map(l => l.id === loan.id ? {
+      ...l,
+      repayments: (l.repayments||[]).filter(x=>x.id!==r.id),
+      outstandingBalance: newOutstanding,
+      status: l.status === "Completed" && newOutstanding > 0 ? "Active" : l.status,
+    } : l));
+    if (logAudit) logAudit("loan", loan.id, "delete-transaction", r, null, `Repayment · S$${r.amount} (principal S$${r.principal})`);
+    showToast("Repayment deleted", "success");
+  };
+
+  return (
+    <>
+      <DetailPage
+        icon={icon} iconBg={T.selected}
+        title={loan.loanType}
+        subtitle={`${loan.lender}${loan.accountNumber ? " · "+loan.accountNumber : ""}`}
+        badges={<Badge bg={sc.bg} color={sc.color}>{loan.status}</Badge>}
+        headerActions={onEdit && (
+          <button onClick={onEdit} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text,fontWeight:600}}>✏️ Edit</button>
+        )}
+        stats={[
+          {l:"Original",        v:`S$${(loan.principalAmount||0).toLocaleString()}`},
+          {l:"Outstanding",     v:`S$${(loan.outstandingBalance||0).toLocaleString()}`, c:loan.outstandingBalance>0?T.down:T.up},
+          {l:"Paid",            v:`S$${totalPaid.toLocaleString()}`, c:T.up},
+          {l:"Monthly Payment", v:`S$${(loan.monthlyPayment||0).toLocaleString()}`},
+          {l:"Interest Rate",   v:`${loan.interestRate}%`, sub:loan.rateType},
+        ]}
+        tabs={TABS}
+        activeTab={tab} onTab={setTab} onBack={onClose}>
+        <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:32}}>
 
           {/* ── OVERVIEW ── */}
           {tab === "overview" && (
@@ -15156,26 +15710,27 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
           )}
 
           {/* ── REPAYMENTS — mirrors CC Transactions tab ── */}
-          {tab === "repayments" && (
-            <>
-              {loan.status !== "Completed" && (
-                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
-                  <div style={{flex:1,fontSize:13,fontWeight:600,color:T.muted}}>{repayments.length} repayment{repayments.length!==1?"s":""}</div>
-                  <button onClick={()=>setShowRepaymentModal(true)}
-                    style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>
-                    + Add Repayment
-                  </button>
-                </div>
-              )}
-              {repayments.length === 0 ? (
+          {tab === "repayments" && (()=>{
+            const _q = txSearch.trim().toLowerCase();
+            const visibleReps = repayments.filter(r =>
+              (txFilter==="All" || (r.repaymentType||"Repayment")===txFilter) &&
+              (!_q || (r.notes||"").toLowerCase().includes(_q) || (r.date||"").includes(_q) || (r.repaymentType||"").toLowerCase().includes(_q))
+            );
+            return (
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+              <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                placeholder="Search repayments…"
+                filters={["All",...Array.from(new Set(repayments.map(r=>r.repaymentType||"Repayment")))]}
+                action={loan.status !== "Completed" && <button onClick={()=>setShowRepaymentModal(true)} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Add Repayment</button>}/>
+              {visibleReps.length === 0 ? (
                 <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}>
                   <div style={{fontSize:28,marginBottom:8}}>🏦</div>
-                  <div style={{fontSize:13,fontWeight:600}}>No repayment records yet</div>
+                  <div style={{fontSize:13,fontWeight:600}}>{repayments.length===0?"No repayment records yet":"No matching repayments"}</div>
                 </div>
               ) : (
                 <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                  {repayments.map((r,i)=>(
-                    <div key={r.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,
+                  {visibleReps.map((r,i)=>(
+                    <div key={r.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,
                       borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                       <div style={{width:34,height:34,borderRadius:8,background:T.inputBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
                         💳
@@ -15195,12 +15750,16 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
                         </div>
                         <div style={{fontSize:10,color:T.dim,marginTop:1}}>{r.repaymentType || "Repayment"}</div>
                       </div>
+                      <TxRowActions
+                        onEdit={()=>setEditRep(r)}
+                        onDelete={()=>{ if(window.confirm("Delete this repayment?")) handleDeleteRepayment(r); }}/>
                     </div>
                   ))}
                 </div>
               )}
-            </>
-          )}
+            </div>
+            );
+          })()}
 
           {/* ── POSTINGS — mirrors CC Postings tab (double-entry ledger) ── */}
           {tab === "postings" && (() => {
@@ -15212,7 +15771,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
             const interestAcct = `Expenses:Interest:${loan.loanType.replace(/ /g,"")}`;
             const feesAcct = "Expenses:Fees:Loan";
 
-            const sorted = [...repayments].sort((a,b) => a.date.localeCompare(b.date));
+            const sorted = [...repayments].sort((a,b) => b.date.localeCompare(a.date));
 
             const daysAgo = (d) => {
               if (!d) return "";
@@ -15271,8 +15830,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
                         <th style={{padding:"9px 16px",textAlign:"right",width:148,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Credit</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {tableRows.map((row, ri) => (
+                    {groupByFirst(tableRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                         <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                           <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
                             {row._first ? (
@@ -15297,8 +15855,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
                               : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
+                      ))}</tbody>))}
                   </table>
                 </div>
 
@@ -15315,7 +15872,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
             );
           })()}
 
-          {tab === "history" && (
+          {tab === "audit" && (
             <div style={{padding:"16px 20px"}}>
               <AuditLogPanel auditLog={auditLog} entityType="loan" entityId={loan.id}/>
             </div>
@@ -15328,7 +15885,7 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
                 entityType="loan"
                 entityLabel={`${loan.loanType} · ${loan.lender}`}
                 fields={[
-                  { key:"outstandingBalance", label:"Outstanding Balance", icon:"💰", prefix:"S$", helper:"Remaining principal owed" },
+                  // Outstanding Balance is driven by the repayment ledger (single source of truth) — not editable here
                   { key:"interestRate",       label:"Interest Rate",       icon:"📈", prefix:"",   suffix:"% p.a.", step:"0.01", helper:"Effective rate on the loan" },
                   { key:"monthlyPayment",     label:"Monthly Payment",     icon:"📅", prefix:"S$", helper:"Scheduled monthly installment" },
                 ]}
@@ -15338,26 +15895,34 @@ function LoanDrawer({ loan, setLoans, showToast, onClose, auditLog, logAudit }) 
           )}
 
         </div>
-      </div>
+      </DetailPage>
 
       {/* Repayment modal */}
       {showRepaymentModal && (
-        <LoanRepaymentModal loan={loan} onSave={handleAddRepayment} onClose={()=>setShowRepaymentModal(false)} />
+        <LoanRepaymentModal loan={loan} cashAccounts={cashAccounts} onSave={handleAddRepayment} onClose={()=>setShowRepaymentModal(false)} />
       )}
-    </div>
+      {editRep && (
+        <LoanRepaymentModal loan={loan} editRep={editRep} cashAccounts={cashAccounts} onSave={handleEditRepayment} onClose={()=>setEditRep(null)} />
+      )}
+    </>
   );
 }
 
 // ── Loans Screen ──────────────────────────────────────────────
-function LoansScreen({ loans, setLoans, properties, setProperties, showToast, auditLog, logAudit }) {
+function LoansScreen({ loans, setLoans, properties, setProperties, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
   const isMobile = useIsMobile();
-  const [selectedLoan, setSelectedLoan] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editLoan, setEditLoan] = useState(null);
   const [filterType, setFilterType] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [searchQ, setSearchQ] = useState("");
   const lnSort = useSortState();
+
+  const detailId = route.entityId;
+  const detailLoan = detailId ? loans.find(l => String(l.id) === String(detailId)) : null;
+  const detailTab = route.tab || "overview";
+  const setDetailTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goList = () => navigate({ screen: "loans" });
 
   // Synthesise property mortgages into the loans list so they appear here
   // alongside standalone loans. Source of truth stays in properties[].loanContracts.
@@ -15480,6 +16045,7 @@ function LoansScreen({ loans, setLoans, properties, setProperties, showToast, au
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+      {!detailId && (<>
 
       {/* ── Page header ── */}
       <div className="wo-page-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
@@ -15573,7 +16139,7 @@ function LoansScreen({ loans, setLoans, properties, setProperties, showToast, au
                     <div style={{ fontSize:14, fontWeight:700, color:textColor }}>S${al.monthlyPayment.toLocaleString()}</div>
                     <div style={{ fontSize:11, color:T.dim }}>Monthly</div>
                   </div>
-                  <button onClick={() => setSelectedLoan(al)} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 12px", fontSize:12, cursor:"pointer", fontFamily:"inherit", color:T.text, flexShrink:0 }}>View</button>
+                  <button onClick={() => navigate({screen:"loans",entityId:al.id})} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 12px", fontSize:12, cursor:"pointer", fontFamily:"inherit", color:T.text, flexShrink:0 }}>View</button>
                 </div>
               );
             })}
@@ -15621,8 +16187,9 @@ function LoansScreen({ loans, setLoans, properties, setProperties, showToast, au
             const lsc = LOAN_STATUS_COLORS[loan.status] || LOAN_STATUS_COLORS.Active;
             const dUntil = loan.nextPaymentDue ? Math.ceil((new Date(loan.nextPaymentDue) - new Date()) / 86400000) : null;
             return <MobileListItem key={loan.id} onClick={()=>{
-                if (loan._propertyMortgage) { setEditLoan({...loan, _linkPropertyId: loan._propertyId}); setShowModal(true); }
-                else setSelectedLoan(loan);
+                // Mortgages live on the property — route to its Loan & Finance tab (single source of truth)
+                if (loan._propertyMortgage) navigate({screen:"realestate",entityId:loan._propertyId,tab:"financials"});
+                else navigate({screen:"loans",entityId:loan.id});
               }}
               icon={licon} iconBg={T.inputBg}
               title={loan._propertyMortgage ? `${loan.loanType} · ${loan._propertyFlag||""} ${loan._propertyName}` : loan.loanType}
@@ -15635,7 +16202,7 @@ function LoansScreen({ loans, setLoans, properties, setProperties, showToast, au
         </Card>
       ) : (
         <Card style={{ padding:0, overflow:"hidden" }}>
-          <SortHeader gridCols="2fr 1fr 1.2fr 1fr 1fr 1fr 0.8fr" sortKey={lnSort.sortKey} sortDir={lnSort.sortDir} onSort={lnSort.onSort}
+          <SortHeader gridCols={capCols("2fr 1fr 1.2fr 1fr 1fr 1fr 0.8fr")} sortKey={lnSort.sortKey} sortDir={lnSort.sortDir} onSort={lnSort.onSort}
             columns={[["Loan / Lender","left","lender"],["Type","left","rateType"],["Outstanding","right","outstanding"],["Monthly","right","monthly"],["Rate","right","rate"],["Next Due","left","nextDue"],["Status","left","status"]]}/>
           {lnSort.sortFn(filteredLoans, (l, k) => {
             if (k==="lender") return (l.lender||"").toLowerCase();
@@ -15654,14 +16221,14 @@ function LoansScreen({ loans, setLoans, properties, setProperties, showToast, au
             const dUntil = loan.nextPaymentDue ? Math.ceil((new Date(loan.nextPaymentDue) - TODAY) / 86400000) : null;
             return (
               <div key={loan.id} onClick={() => {
+                  // Mortgages live on the property — route to its Loan & Finance tab (single source of truth)
                   if (loan._propertyMortgage) {
-                    setEditLoan({ ...loan, _linkPropertyId: loan._propertyId });
-                    setShowModal(true);
+                    navigate({screen:"realestate",entityId:loan._propertyId,tab:"financials"});
                   } else {
-                    setSelectedLoan(loan);
+                    navigate({screen:"loans",entityId:loan.id});
                   }
                 }}
-                style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.2fr 1fr 1fr 1fr 0.8fr", padding:"13px 20px", borderBottom:i<filteredLoans.length-1?`1px solid ${T.border}`:"none", alignItems:"center", cursor:"pointer",
+                style={{ display:"grid", gridTemplateColumns:capCols("2fr 1fr 1.2fr 1fr 1fr 1fr 0.8fr"), columnGap:24, padding:"13px 20px", borderBottom:i<filteredLoans.length-1?`1px solid ${T.border}`:"none", alignItems:"center", cursor:"pointer",
                   opacity:loan.status==="Completed"?0.55:1, background:loan.status==="Completed"?T.sidebar:"" }}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                 onMouseLeave={e=>e.currentTarget.style.background=(loan.status==="Completed"?T.sidebar:"")}>
@@ -15715,16 +16282,16 @@ function LoansScreen({ loans, setLoans, properties, setProperties, showToast, au
         </Card>
       )}
 
-      {/* ══ LOAN DETAIL DRAWER — slide-in overlay like insurance ══ */}
-      {selectedLoan && (() => {
-        const loan = loans.find(l => l.id === selectedLoan.id) || selectedLoan;
+      </>)}
+
+      {/* ══ LOAN DETAIL — full page ══ */}
+      {detailId && !detailLoan && <NotFound message="This loan could not be found." onBack={goList}/>}
+      {detailLoan && (() => {
+        const loan = detailLoan;
         return (
-          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:200, display:"flex", alignItems:"flex-start", justifyContent:"flex-end" }}
-            onClick={e => { if (e.target === e.currentTarget) setSelectedLoan(null); }}>
-            <div style={{ width:"min(960px, 95vw)", height:"100vh", background:T.bg, overflow:"hidden", boxShadow:"-4px 0 32px rgba(0,0,0,0.15)", display:"flex", flexDirection:"column" }}>
-              <LoanDrawer loan={loan} setLoans={setLoans} showToast={showToast} onClose={() => setSelectedLoan(null)} auditLog={auditLog} logAudit={logAudit} />
-            </div>
-          </div>
+          <LoanDrawer loan={loan} setLoans={setLoans} accounts={accounts} setAccounts={setAccounts} showToast={showToast} onClose={goList}
+            onEdit={()=>{ setEditLoan(loan); setShowModal(true); }}
+            auditLog={auditLog} logAudit={logAudit} tab={detailTab} setTab={setDetailTab} />
         );
       })()}
 
@@ -15926,6 +16493,44 @@ function CCCardModal({ card, accounts, onSave, onClose }) {
 }
 
 // ── Add Transaction Modal ─────────────────────────────────────
+// ── Credit-card transaction edit modal (lightweight, no balance side effects) ──
+function CCTxnEditModal({ txn, cardSymbol, onSave, onClose }) {
+  const [f, setF] = useState({ ...txn });
+  const set = (k,v) => setF(p=>({...p,[k]:v}));
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
+      <div style={{background:T.bg,borderRadius:16,width:460,maxHeight:"85vh",overflow:"auto",padding:"28px 28px 20px",border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:800}}>Edit Transaction</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{marginBottom:14}}><Label required>Description</Label><Input value={f.description} onChange={e=>set("description",e.target.value)}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label>Category</Label><Sel value={f.category} onChange={e=>set("category",e.target.value)} options={Object.keys(CATEGORY_ICONS)}/></div>
+          <div><Label>Type</Label><Sel value={f.type} onChange={e=>set("type",e.target.value)} options={["Debit","Credit","Repayment","Refund"]}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14,marginBottom:14}}>
+          <div><Label required>Amount</Label><Input type="number" prefix={cardSymbol} value={f.amount} onChange={e=>set("amount",+e.target.value)}/></div>
+          <div><Label>Fees</Label><Input type="number" prefix={cardSymbol} value={f.fees||0} onChange={e=>set("fees",+e.target.value)}/></div>
+          <div><Label required>Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
+        </div>
+        <div style={{marginBottom:16}}>
+          <Label>Notes</Label>
+          <textarea value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={2}
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={!f.description||!f.amount||!f.date}
+            style={{padding:"9px 20px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,opacity:(!f.description||!f.amount||!f.date)?0.4:1}}>
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CCTxnModal({ cardId, card, accounts, setAccounts, setCards, baseCurrency, onSave, onClose }) {
   const [f, setFState] = useState({
     cardId, date: new Date().toISOString().slice(0,10),
@@ -16229,10 +16834,10 @@ function CCAccountModal({ account, onSave, onClose }) {
 }
 
 // ── Card Detail Drawer ────────────────────────────────────────
-function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, setCards, baseCurrency, showToast, onClose, auditLog, logAudit }) {
+function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, setCards, baseCurrency, showToast, onClose, onEdit, auditLog, logAudit, tab, setTab }) {
   const isMobile = useIsMobile();
-  const [tab, setTab] = useState("overview");
   const [showTxnModal, setShowTxnModal] = useState(false);
+  const [editTxn, setEditTxn] = useState(null);
   const [catFilter, setCatFilter] = useState("All");
   const [txnSearch, setTxnSearch] = useState("");
 
@@ -16274,11 +16879,20 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
   };
 
   const handleDeleteTxn = (tid) => {
+    const removed = transactions.find(t => t.id === tid);
     setTransactions(prev => prev.filter(t => t.id !== tid));
+    if (logAudit && removed) logAudit("creditcard", card.id, "delete-transaction", removed, null, `${removed.type} · ${removed.currency||"SGD"} ${removed.amount||0}${removed.description?` — ${removed.description}`:""}`);
     showToast("Transaction removed","success");
   };
 
-  const TABS = [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"},{id:"postings",label:"Postings"},{id:"history",label:"History"},{id:"manage",label:"Manage"}];
+  const handleEditTxn = (upd) => {
+    setTransactions(prev => prev.map(t => t.id === upd.id ? { ...t, ...upd } : t));
+    if (logAudit) logAudit("creditcard", card.id, "edit-transaction", editTxn, upd, `${upd.type} · ${upd.currency||"SGD"} ${upd.amount||0}${upd.description?` — ${upd.description}`:""}`);
+    setEditTxn(null);
+    showToast("Transaction updated","success");
+  };
+
+  const TABS = [{id:"overview",label:"Overview"},{id:"transactions",label:"Transactions"},{id:"postings",label:"Postings"},{id:"audit",label:"Audit"},{id:"manage",label:"Manage"}];
 
   const nextDueDate = (() => {
     if(!card.dueDayOfMonth) return null;
@@ -16297,46 +16911,40 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
   const hasOutstanding = !isDebit && card.currentBalance > 0;
   const isRecurringDue = hasOutstanding && card.dueDayOfMonth;
 
-  return (
-    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-      {/* Header */}
-      <div style={{padding:"18px 22px 14px",borderBottom:`1px solid ${T.border}`,background:T.sidebar,flexShrink:0}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{fontSize:14,fontWeight:800}}>{card.cardName}</div>
-            <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,
-              background: isDebit ? T.accentBg : T.upBg,
-              color: isDebit ? T.accent : T.up}}>
-              {card.cardType}
-            </span>
-            {!card.isActive && <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.downBg,color:T.down}}>Inactive</span>}
-          </div>
-          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:28,height:28,cursor:"pointer",fontSize:15,color:T.muted,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>✕</button>
-        </div>
-        {/* Tabs */}
-        <div style={{display:"flex",gap:4}}>
-          {TABS.map(t=>(
-            <button key={t.id} onClick={()=>setTab(t.id)}
-              style={{padding:"6px 14px",borderRadius:8,border:"none",background:tab===t.id?T.selected:T.inputBg,
-                color:tab===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:tab===t.id?700:400}}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
+  // Header stat strip (mirrors the Bonds detail layout)
+  const headerStats = isDebit ? [
+    { l:"Balance", v: linkedAcc ? `${linkedAcc.currency} ${linkedAcc.balance.toLocaleString(undefined,{minimumFractionDigits:2})}` : "—", c: T.up },
+    { l:"This Month", v: `${cardSymbol}${monthSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`, sub:`${monthTxns.length} txns` },
+    { l:"Total Spend", v: `${cardSymbol}${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`, sub:`${debitTxns.length} txns` },
+  ] : [
+    { l:"Balance", v: `${cardSymbol}${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})}`, c: T.down },
+    { l:"Available", v: `${cardSymbol}${(card.creditLimit-card.currentBalance).toLocaleString(undefined,{minimumFractionDigits:2})}`, c: T.up },
+    { l:"Limit", v: `${cardSymbol}${card.creditLimit.toLocaleString()}` },
+    { l:"Utilisation", v: card.creditLimit > 0 ? `${utilPct.toFixed(1)}%` : "—", c: utilColor },
+  ];
 
-      {/* Content */}
-      <div style={{flex:1,overflowY:"auto",minHeight:0}}>
-        <div style={{padding:"18px 22px 32px",display:"flex",flexDirection:"column",gap:16}}>
+  return (
+    <>
+      <DetailPage
+        icon="💳"
+        title={card.cardName}
+        subtitle={`${card.bank} · ${card.network} · •••• ${card.last4}`}
+        badges={<>
+          <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5, background: isDebit ? T.accentBg : T.upBg, color: isDebit ? T.accent : T.up}}>{card.cardType}</span>
+          {!card.isActive && <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:5,background:T.downBg,color:T.down}}>Inactive</span>}
+        </>}
+        stats={headerStats}
+        tabs={TABS}
+        activeTab={tab}
+        onTab={setTab}
+        onBack={onClose}
+        headerActions={onEdit && <button onClick={onEdit} style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit",color:T.text}}>Edit</button>}
+      >
+        <div style={{display:"flex",flexDirection:"column",gap:16}}>
 
           {/* ── OVERVIEW ── */}
           {tab === "overview" && (
             <>
-              {/* Card visual */}
-              <div style={{display:"flex",justifyContent:"center"}}>
-                <CreditCardVisual card={card} accounts={accounts}/>
-              </div>
-
               {/* Payment due alert */}
               {!isDebit && card.dueDayOfMonth && daysUntilDue !== null && daysUntilDue <= 7 && (
                 <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
@@ -16363,27 +16971,15 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                 </div>
               )}
 
-              {/* Credit utilisation gauge (credit cards only) */}
+              {/* Credit utilisation bar (credit cards only) */}
               {!isDebit && card.creditLimit > 0 && (
-                <div style={{background:T.inputBg,borderRadius:12,padding:"16px 18px"}}>
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"16px 18px"}}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
                     <div style={{fontSize:12,fontWeight:700,color:T.muted}}>CREDIT UTILISATION</div>
                     <div style={{fontSize:13,fontWeight:800,color:utilColor}}>{utilPct.toFixed(1)}%</div>
                   </div>
-                  <div style={{height:10,borderRadius:5,background:T.border,overflow:"hidden",marginBottom:10}}>
+                  <div style={{height:10,borderRadius:5,background:T.border,overflow:"hidden"}}>
                     <div style={{width:`${utilPct}%`,height:"100%",borderRadius:5,background:utilColor,transition:"width 0.4s"}}/>
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-                    {[
-                      {label:"Balance",value:`${cardSymbol}${card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.down},
-                      {label:"Available",value:`${cardSymbol}${(card.creditLimit-card.currentBalance).toLocaleString(undefined,{minimumFractionDigits:2})}`,color:T.up},
-                      {label:"Limit",value:`${cardSymbol}${card.creditLimit.toLocaleString()}`,color:T.text},
-                    ].map(s=>(
-                      <div key={s.label} style={{textAlign:"center"}}>
-                        <div style={{fontSize:10,color:T.muted,marginBottom:3}}>{s.label}</div>
-                        <div style={{fontSize:13,fontWeight:700,color:s.color}}>{s.value}</div>
-                      </div>
-                    ))}
                   </div>
                 </div>
               )}
@@ -16405,19 +17001,24 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                 </div>
               )}
 
-              {/* Spend stats */}
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                {[
-                  {label:"This Month Spend",value:`${cardSymbol}${monthSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,sub:`${monthTxns.length} transactions`},
-                  {label:"Total Spend",value:`${cardSymbol}${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,sub:`${debitTxns.length} transactions`},
-                ].map(s=>(
-                  <div key={s.label} style={{background:T.inputBg,borderRadius:10,padding:"14px 16px"}}>
-                    <div style={{fontSize:11,color:T.muted,marginBottom:4}}>{s.label}</div>
-                    <div style={{fontSize:16,fontWeight:800}}>{s.value}</div>
-                    <div style={{fontSize:11,color:T.dim,marginTop:2}}>{s.sub}</div>
-                  </div>
-                ))}
-              </div>
+              {/* Spend summary (credit — debit shows these in the header strip) */}
+              {!isDebit && (
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>💸 Spend Summary</div>
+                  {[
+                    ["This Month Spend",`${cardSymbol}${monthSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,`${monthTxns.length} transactions`],
+                    ["Total Spend",`${cardSymbol}${totalSpend.toLocaleString(undefined,{minimumFractionDigits:2})}`,`${debitTxns.length} transactions`],
+                  ].map(([k,v,sub])=>(
+                    <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                      <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontSize:13,fontWeight:700}}>{v}</div>
+                        <div style={{fontSize:10,color:T.dim}}>{sub}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Category breakdown */}
               {topCats.length > 0 && (
@@ -16500,7 +17101,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
               ) : (
                 <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
                   {filteredTxns.map((t,i)=>(
-                    <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,
+                    <div key={t.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,
                       borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                       <div style={{width:34,height:34,borderRadius:8,background:T.inputBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
                         {CATEGORY_ICONS[t.category]||"💳"}
@@ -16520,8 +17121,9 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                         </div>
                         <div style={{fontSize:10,color:T.dim,marginTop:1}}>{t.type}</div>
                       </div>
-                      <button onClick={()=>handleDeleteTxn(t.id)}
-                        style={{background:"none",border:"none",cursor:"pointer",color:T.dim,fontSize:14,padding:"2px 4px",flexShrink:0}}>✕</button>
+                      <TxRowActions
+                        onEdit={()=>setEditTxn(t)}
+                        onDelete={()=>{ if(window.confirm("Delete this transaction?")) handleDeleteTxn(t.id); }}/>
                     </div>
                   ))}
                 </div>
@@ -16544,7 +17146,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
             const repayAcct   = isDebit ? bankAcct : bankAcct; // repayment always from bank
 
             // Build PTA journal from transactions
-            const sorted = [...cardTxns].sort((a,b) => a.date.localeCompare(b.date));
+            const sorted = [...cardTxns].sort((a,b) => b.date.localeCompare(a.date));
 
             const daysAgo = (d) => {
               if (!d) return "";
@@ -16611,8 +17213,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                         <th style={{padding:"9px 16px",textAlign:"right",width:148,fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,letterSpacing:"0.02em"}}>Credit</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {tableRows.map((row, ri) => (
+                    {groupByFirst(tableRows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
                         <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
                           <td style={{padding:"11px 16px",verticalAlign:"top",width:148}}>
                             {row._first ? (
@@ -16637,8 +17238,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
                               : <span style={{fontSize:13,color:T.dim,fontFamily:inter}}>—</span>}
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
+                      ))}</tbody>))}
                   </table>
                 </div>
 
@@ -16664,45 +17264,55 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
             );
           })()}
 
-          {tab === "history" && (
-            <div style={{padding:"16px 20px"}}>
+          {tab === "audit" && (
+            <div>
               <AuditLogPanel auditLog={auditLog} entityType="creditcard" entityId={card.id}/>
             </div>
           )}
 
           {tab === "manage" && (
-            <div style={{padding:"16px 20px"}}>
-              <FieldUpdatePanel
-                entity={card}
-                entityType="creditcard"
-                entityLabel={`${card.bank} ${card.cardName}`}
-                fields={isDebit ? [
-                  { key:"currentBalance", label:"Current Balance", icon:"💰", prefix:cardSymbol, helper:"Cash balance on the linked account" },
-                ] : [
-                  { key:"creditLimit",    label:"Credit Limit",    icon:"💳", prefix:cardSymbol, helper:"Issuer-set credit limit" },
-                  { key:"currentBalance", label:"Outstanding Balance", icon:"💰", prefix:cardSymbol, helper:"Current statement balance owed" },
-                  { key:"apr",            label:"APR",             icon:"📈", prefix:"",         suffix:"%", step:"0.01", helper:"Interest rate on revolving balance" },
-                  { key:"annualFee",      label:"Annual Fee",      icon:"📅", prefix:cardSymbol, helper:"Yearly card fee" },
-                  { key:"minimumPayment", label:"Min Payment",     icon:"🔻", prefix:cardSymbol, helper:"Minimum monthly payment" },
-                ]}
-                onUpdate={(next)=>setCards(prev=>prev.map(x=>x.id===card.id?next:x))}
-                auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+            <div>
+              {isDebit ? (
+                /* Debit cards have no managed terms — the balance lives on the linked account
+                   and changes only through recorded transactions, not a manual override. */
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"16px 18px",fontSize:13,color:T.muted,lineHeight:1.6}}>
+                  Debit-card balance follows its linked account and is driven by recorded transactions — there are no manage-only fields. Edit card details from the <strong style={{color:T.text}}>Edit</strong> button.
+                </div>
+              ) : (
+                <FieldUpdatePanel
+                  entity={card}
+                  entityType="creditcard"
+                  entityLabel={`${card.bank} ${card.cardName}`}
+                  fields={[
+                    { key:"creditLimit",    label:"Credit Limit",    icon:"💳", prefix:cardSymbol, helper:"Issuer-set credit limit" },
+                    { key:"apr",            label:"APR",             icon:"📈", prefix:"",         suffix:"%", step:"0.01", helper:"Interest rate on revolving balance" },
+                    { key:"annualFee",      label:"Annual Fee",      icon:"📅", prefix:cardSymbol, helper:"Yearly card fee" },
+                    { key:"minimumPayment", label:"Min Payment",     icon:"🔻", prefix:cardSymbol, helper:"Minimum monthly payment" },
+                  ]}
+                  onUpdate={(next)=>setCards(prev=>prev.map(x=>x.id===card.id?next:x))}
+                  auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+              )}
             </div>
           )}
 
         </div>
-      </div>
+      </DetailPage>
 
       {/* Transaction modal */}
       {showTxnModal && <CCTxnModal cardId={card.id} card={card} accounts={accounts} setAccounts={setAccounts} setCards={setCards} baseCurrency={baseCurrency} onSave={handleAddTxn} onClose={()=>setShowTxnModal(false)}/>}
-    </div>
+      {editTxn && <CCTxnEditModal txn={editTxn} cardSymbol={cardSymbol} onSave={handleEditTxn} onClose={()=>setEditTxn(null)}/>}
+    </>
   );
 }
 
 // ── Main Screen ───────────────────────────────────────────────
-function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions, setTransactions, baseCurrency, goToExport, showToast, auditLog, logAudit, lockView }) {
+function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions, setTransactions, baseCurrency, goToExport, showToast, auditLog, logAudit, lockView, route, navigate }) {
   const isMobile = useIsMobile();
-  const [selectedCard, setSelectedCard] = useState(null);
+  const detailId = route.entityId;
+  const detailCard = detailId ? cards.find(c => String(c.id) === String(detailId)) : null;
+  const detailTab = route.tab || "overview";
+  const setDetailTab = (id) => navigate(r => ({ ...r, tab: id }));
+  const goList = () => navigate({ screen: route.screen });
   const [showCardModal, setShowCardModal] = useState(false);
   const [editCard, setEditCard] = useState(null);
   const [showAccModal, setShowAccModal] = useState(false);
@@ -16736,10 +17346,6 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
     }
     return true;
   });
-
-  // Spend by bank breakdown
-  const bankBreakdown = {};
-  creditCards.forEach(c => { bankBreakdown[c.bank] = (bankBreakdown[c.bank]||0) + c.currentBalance; });
 
   const handleSaveCard = (f) => {
     if(f.id) {
@@ -16783,6 +17389,7 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {!detailId && (<>
 
       {/* ── Page header ── */}
       <div className="wo-page-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -16867,36 +17474,6 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
         );
       })()}
 
-      {/* ── Utilisation by bank — only on Cards view ── */}
-      {isCardsView && Object.keys(bankBreakdown).length > 0 && (
-        <Card style={{padding:"16px 20px",marginBottom:18}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:600}}>Credit Utilisation by Bank</div>
-            <div style={{fontSize:12,color:overallUtil>70?T.down:T.up,fontWeight:700}}>{overallUtil.toFixed(1)}% overall</div>
-          </div>
-          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
-            {Object.entries(bankBreakdown).map(([bank, bal])=>{
-              const bankLimit = creditCards.filter(c=>c.bank===bank).reduce((s,c)=>s+c.creditLimit,0);
-              const pct = bankLimit > 0 ? (bal/bankLimit*100).toFixed(0) : 0;
-              const bc = BANK_COLORS[bank] || {from:"#374151",to:"#1F2937"};
-              return (
-                <div key={bank} style={{flex:"1 1 140px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-                    <span style={{fontSize:12,color:T.muted,fontWeight:500}}>{bank}</span>
-                    <span style={{fontSize:12,fontWeight:600}}>{pct}%</span>
-                  </div>
-                  <div style={{height:6,background:T.inputBg,borderRadius:3,overflow:"hidden"}}>
-                    <div style={{width:`${pct}%`,height:"100%",background:bc.from,borderRadius:3}}/>
-                  </div>
-                  <div style={{fontSize:11,color:T.dim,marginTop:4}}>{fmtCompact(bal)} / {fmtCompact(bankLimit)}</div>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      )}
-
-
       {/* ── View tabs + Filter toolbar ── */}
       <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
         <div style={{position:"relative",flex:"1 1 200px"}}>
@@ -16957,7 +17534,7 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
               const isDebit = card.cardType === "Debit";
               const utilPct = !isDebit && card.creditLimit>0 ? Math.min(100,card.currentBalance/card.creditLimit*100) : 0;
               const linkedAcc = accounts.find(a=>a.id===card.linkedAccountId);
-              return <MobileListItem key={card.id} onClick={()=>setSelectedCard(card)}
+              return <MobileListItem key={card.id} onClick={()=>navigate({screen:route.screen,entityId:card.id})}
                 icon="💳" iconBg={`linear-gradient(135deg,${bc.from},${bc.to})`} title={card.cardName}
                 subtitle={`${card.bank} · ${card.network} · ••${card.last4}`}
                 value={isDebit ? (linkedAcc ? fmtCompact(linkedAcc.balance) : "—") : fmtCompact(card.currentBalance)}
@@ -16971,8 +17548,8 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
           </Card>
         ) : (
           <Card style={{padding:0,overflow:"hidden"}}>
-            <SortHeader gridCols="2.2fr 1fr 1.2fr 1fr 1fr 0.8fr" sortKey={ccSort.sortKey} sortDir={ccSort.sortDir} onSort={ccSort.onSort}
-              columns={[["Card / Bank","left","cardName"],["Network","left","network"],["Balance / Limit","right","balance"],["Utilisation","right","util"],["Due Date","left","due"],["Status","left","cardType"]]}/>
+            <SortHeader gridCols={capCols("1.8fr 1fr 1.1fr 1.2fr 0.9fr 1fr")} sortKey={ccSort.sortKey} sortDir={ccSort.sortDir} onSort={ccSort.onSort}
+              columns={[["Card / Bank","left","cardName"],["Network","left","network"],["Balance / Limit","right","balance"],["Utilisation","right","util"],["Due Date","right","due"],["Status","right","cardType"]]}/>
             {ccSort.sortFn(filteredCards, (c, k) => {
               if (k==="cardName") return (c.cardName||"").toLowerCase();
               if (k==="network") return (c.network||"").toLowerCase();
@@ -16995,8 +17572,8 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
                 return Math.ceil((due - today)/(1000*60*60*24));
               })();
               return (
-                <div key={card.id} onClick={()=>setSelectedCard(card)}
-                  style={{display:"grid",gridTemplateColumns:"2.2fr 1fr 1.2fr 1fr 1fr 0.8fr",padding:"13px 20px",borderBottom:i<filteredCards.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
+                <div key={card.id} onClick={()=>navigate({screen:route.screen,entityId:card.id})}
+                  style={{display:"grid",gridTemplateColumns:capCols("1.8fr 1fr 1.1fr 1.2fr 0.9fr 1fr"),columnGap:24,padding:"13px 20px",borderBottom:i<filteredCards.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer",
                     opacity:card.isActive?1:0.5,background:card.isActive?"":T.sidebar}}
                   onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                   onMouseLeave={e=>e.currentTarget.style.background=(card.isActive?"":T.sidebar)}>
@@ -17023,19 +17600,19 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
                       </>
                     )}
                   </div>
-                  {/* Utilisation */}
+                  {/* Utilisation — bar turns red above 80%, otherwise grey */}
                   <div style={{textAlign:"right"}}>
                     {!isDebit && card.creditLimit > 0 ? (
-                      <div style={{display:"flex",alignItems:"center",gap:6,justifyContent:"flex-end"}}>
-                        <div style={{width:40,height:4,borderRadius:2,background:T.border,overflow:"hidden"}}>
-                          <div style={{width:`${utilPct}%`,height:"100%",background:utilPct>70?T.down:T.up}}/>
+                      <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"flex-end"}}>
+                        <div style={{width:64,height:6,borderRadius:3,background:T.inputBg,overflow:"hidden"}}>
+                          <div style={{width:`${utilPct}%`,height:"100%",borderRadius:3,background:utilPct>80?T.down:T.muted}}/>
                         </div>
-                        <span style={{fontSize:12,fontWeight:600,color:utilPct>70?T.down:T.up}}>{utilPct.toFixed(0)}%</span>
+                        <span style={{fontSize:12,fontWeight:600,color:utilPct>80?T.down:T.text,minWidth:32,textAlign:"right"}}>{utilPct.toFixed(0)}%</span>
                       </div>
                     ) : <span style={{fontSize:12,color:T.dim}}>—</span>}
                   </div>
                   {/* Due Date */}
-                  <div>
+                  <div style={{textAlign:"right"}}>
                     {!isDebit && card.dueDayOfMonth ? (
                       <>
                         <div style={{fontSize:12,color:T.text}}>Day {card.dueDayOfMonth}</div>
@@ -17046,7 +17623,7 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
                     ) : <span style={{fontSize:12,color:T.dim}}>—</span>}
                   </div>
                   {/* Status */}
-                  <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                  <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"flex-end"}}>
                     <Badge bg={isDebit?T.accentBg:card.cardType==="Commercial"?T.warnBg:T.upBg}
                       color={isDebit?T.accent:card.cardType==="Commercial"?T.warn:T.up}>
                       {card.cardType}
@@ -17091,7 +17668,7 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
           </Card>
         ) : (
         <Card style={{padding:0,overflow:"hidden"}}>
-          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1.5fr",padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`}}>
+          <div style={{display:"grid",gridTemplateColumns:capCols("2fr 1fr 1.2fr 1.6fr"),columnGap:24,padding:"9px 20px",background:T.sidebar,borderBottom:`1px solid ${T.border}`}}>
             {[["Account / Bank","left"],["Type","left"],["Balance","right"],["Linked Cards","left"]].map(([h,a])=>(
               <div key={h} style={{fontSize:11,color:T.muted,fontWeight:500,textAlign:a}}>{h}</div>
             ))}
@@ -17105,7 +17682,7 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
             const icon = isBrokerage ? "📈" : isWallet ? "🪙" : isCpf ? "🇸🇬" : "🏦";
             return (
               <div key={acc.id} onClick={()=>{setEditAcc(acc);setShowAccModal(true);}}
-                style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1.5fr",padding:"13px 20px",borderBottom:i<filteredAccounts.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer"}}
+                style={{display:"grid",gridTemplateColumns:capCols("2fr 1fr 1.2fr 1.6fr"),columnGap:24,padding:"13px 20px",borderBottom:i<filteredAccounts.length-1?`1px solid ${T.border}`:"none",alignItems:"center",cursor:"pointer"}}
                 onMouseEnter={e=>e.currentTarget.style.background=T.hover}
                 onMouseLeave={e=>e.currentTarget.style.background=""}>
                 <div style={{display:"flex",gap:10,alignItems:"center"}}>
@@ -17156,29 +17733,30 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
         );
       })()}
 
-      {/* ══ CARD DETAIL DRAWER — slide-in overlay like insurance/loans ══ */}
-      {selectedCard && (() => {
-        const card = cards.find(c => c.id === selectedCard.id) || selectedCard;
+      </>)}
+
+      {/* ══ CARD DETAIL — full page ══ */}
+      {detailId && !detailCard && <NotFound message="This card could not be found." onBack={goList}/>}
+      {detailCard && (() => {
+        const card = detailCard;
         return (
-          <div className="wo-drawer-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",alignItems:"flex-start",justifyContent:"flex-end"}}
-            onClick={e => { if (e.target === e.currentTarget) setSelectedCard(null); }}>
-            <div style={{width:"min(960px, 95vw)",height:"100vh",background:T.bg,overflow:"hidden",boxShadow:"-4px 0 32px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
-              <CCDrawer
-                key={card.id}
-                card={card}
-                accounts={accounts}
-                setAccounts={setAccounts}
-                transactions={transactions}
-                setTransactions={setTransactions}
-                setCards={setCards}
-                baseCurrency={baseCurrency}
-                showToast={showToast}
-                onClose={()=>setSelectedCard(null)}
-                auditLog={auditLog}
-                logAudit={logAudit}
-              />
-            </div>
-          </div>
+          <CCDrawer
+            key={card.id}
+            card={card}
+            accounts={accounts}
+            setAccounts={setAccounts}
+            transactions={transactions}
+            setTransactions={setTransactions}
+            setCards={setCards}
+            baseCurrency={baseCurrency}
+            showToast={showToast}
+            onClose={goList}
+            onEdit={()=>{ setEditCard(card); setShowCardModal(true); }}
+            auditLog={auditLog}
+            logAudit={logAudit}
+            tab={detailTab}
+            setTab={setDetailTab}
+          />
         );
       })()}
 
@@ -17382,6 +17960,553 @@ function downloadFile(filename, content, mime="text/plain") {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   IMPORT — Firefly III–style CSV import wizard
+   Upload / configure → map columns to roles → preview → import.
+   Routes parsed rows into the chosen module's transaction array.
+═══════════════════════════════════════════════════════════════ */
+
+// Each import target declares the roles (fields) a CSV column can map to,
+// mirroring Firefly III's "column roles" step.
+// Every importable tab. Flat targets (stocks, creditcards) commit to a global
+// transaction array; the rest are "nested" — each row is appended to a chosen
+// entity's transaction list (entityRequired → user must pick which bond/coin/…).
+const IMPORT_TARGETS = {
+  stocks: {
+    label: "Stock Trades",
+    icon: "📈",
+    sublabel: "Buy / Sell / Dividend rows → Stocks transactions",
+    entityLabel: "brokerage account",
+    roles: [
+      { id:"date",     label:"Date",        required:true },
+      { id:"txType",   label:"Type (Buy/Sell/Dividend)", required:true },
+      { id:"sym",      label:"Symbol",      required:true },
+      { id:"qty",      label:"Quantity",    required:true,  numeric:true },
+      { id:"price",    label:"Price",       required:true,  numeric:true },
+      { id:"fees",     label:"Fees",        numeric:true },
+      { id:"currency", label:"Currency" },
+      { id:"notes",    label:"Notes / Description" },
+    ],
+  },
+  creditcards: {
+    label: "Credit-Card Transactions",
+    icon: "💳",
+    sublabel: "Statement rows → Credit-Card transactions",
+    entityLabel: "card",
+    roles: [
+      { id:"date",        label:"Date",        required:true },
+      { id:"description", label:"Description", required:true },
+      { id:"amount",      label:"Amount",      required:true, numeric:true },
+      { id:"category",    label:"Category" },
+      { id:"type",        label:"Type (Debit/Credit)" },
+      { id:"fees",        label:"Fees",        numeric:true },
+      { id:"ref",         label:"Reference" },
+      { id:"notes",       label:"Notes" },
+    ],
+  },
+  bonds: {
+    label: "Bond Transactions",
+    icon: "📊",
+    sublabel: "Coupon / Purchase / Redemption rows → a bond",
+    entityLabel: "bond", entityRequired: true, txField: "transactions",
+    roles: [
+      { id:"date",   label:"Date",   required:true },
+      { id:"txType", label:"Type (Coupon/Purchase/Sale/Redemption)", required:true },
+      { id:"amount", label:"Amount", required:true, numeric:true },
+      { id:"method", label:"Method" },
+      { id:"ref",    label:"Reference" },
+      { id:"notes",  label:"Notes" },
+    ],
+  },
+  crypto: {
+    label: "Crypto Transactions",
+    icon: "🪙",
+    sublabel: "Buy / Sell / Transfer rows → a coin",
+    entityLabel: "coin", entityRequired: true, txField: "transactions",
+    roles: [
+      { id:"date",   label:"Date",   required:true },
+      { id:"txType", label:"Type (Buy/Sell/Transfer In/Airdrop…)", required:true },
+      { id:"qty",    label:"Quantity", numeric:true },
+      { id:"price",  label:"Price",  numeric:true },
+      { id:"amount", label:"Amount", required:true, numeric:true },
+      { id:"method", label:"Wallet / Venue" },
+      { id:"ref",    label:"Reference / Tx Hash" },
+      { id:"notes",  label:"Notes" },
+    ],
+  },
+  retirement: {
+    label: "Retirement Transactions",
+    icon: "🏛️",
+    sublabel: "Top-Up / Payout / Interest rows → a plan",
+    entityLabel: "plan", entityRequired: true, txField: "transactions",
+    roles: [
+      { id:"date",   label:"Date",   required:true },
+      { id:"txType", label:"Type (Top-Up/Payout/Interest…)", required:true },
+      { id:"amount", label:"Amount", required:true, numeric:true },
+      { id:"method", label:"Method" },
+      { id:"ref",    label:"Reference" },
+      { id:"notes",  label:"Notes" },
+    ],
+  },
+  pe: {
+    label: "VC/PE Transactions",
+    icon: "💼",
+    sublabel: "Capital Call / Distribution rows → an investment",
+    entityLabel: "investment", entityRequired: true, txField: "transactions",
+    roles: [
+      { id:"date",   label:"Date",   required:true },
+      { id:"txType", label:"Type (Capital Call/Distribution…)", required:true },
+      { id:"amount", label:"Amount", required:true, numeric:true },
+      { id:"method", label:"Method" },
+      { id:"ref",    label:"Reference" },
+      { id:"notes",  label:"Notes" },
+    ],
+  },
+  bp: {
+    label: "Business Venture Transactions",
+    icon: "🤝",
+    sublabel: "Contribution / Distribution rows → a venture",
+    entityLabel: "venture", entityRequired: true, txField: "transactions",
+    roles: [
+      { id:"date",   label:"Date",   required:true },
+      { id:"txType", label:"Type (Capital Contribution/Profit Distribution…)", required:true },
+      { id:"amount", label:"Amount", required:true, numeric:true },
+      { id:"method", label:"Method" },
+      { id:"ref",    label:"Reference" },
+      { id:"notes",  label:"Notes" },
+    ],
+  },
+  collectibles: {
+    label: "Collectible Transactions",
+    icon: "💎",
+    sublabel: "Purchase / Valuation / Maintenance rows → an item",
+    entityLabel: "item", entityRequired: true, txField: "transactions",
+    roles: [
+      { id:"date",   label:"Date",   required:true },
+      { id:"txType", label:"Type (Purchase/Valuation Update/Maintenance…)", required:true },
+      { id:"amount", label:"Amount", required:true, numeric:true },
+      { id:"method", label:"Method" },
+      { id:"ref",    label:"Reference" },
+      { id:"notes",  label:"Notes" },
+    ],
+  },
+  realestate: {
+    label: "Property Repayments",
+    icon: "🏠",
+    sublabel: "Mortgage repayment rows → a property",
+    entityLabel: "property", entityRequired: true, txField: "loanRepayments",
+    roles: [
+      { id:"date",       label:"Date",       required:true },
+      { id:"amount",     label:"Total Amount", required:true, numeric:true },
+      { id:"cashAmount", label:"Cash Amount", numeric:true },
+      { id:"cpfAmount",  label:"CPF Amount",  numeric:true },
+      { id:"fees",       label:"Fees",        numeric:true },
+      { id:"notes",      label:"Notes" },
+    ],
+  },
+  loans: {
+    label: "Loan Repayments",
+    icon: "🏦",
+    sublabel: "Repayment rows → a loan",
+    entityLabel: "loan", entityRequired: true, txField: "repayments",
+    roles: [
+      { id:"date",      label:"Date",      required:true },
+      { id:"amount",    label:"Amount",    required:true, numeric:true },
+      { id:"principal", label:"Principal", numeric:true },
+      { id:"interest",  label:"Interest",  numeric:true },
+      { id:"fees",      label:"Fees",      numeric:true },
+      { id:"notes",     label:"Notes" },
+    ],
+  },
+  insurance: {
+    label: "Insurance Claims",
+    icon: "🛡",
+    sublabel: "Claim rows → a policy",
+    entityLabel: "policy", entityRequired: true, txField: "claims",
+    roles: [
+      { id:"date",   label:"Date",   required:true },
+      { id:"txType", label:"Claim Type", required:true },
+      { id:"amount", label:"Amount", required:true, numeric:true },
+      { id:"status", label:"Status (Pending/Paid/Rejected)" },
+      { id:"notes",  label:"Notes" },
+    ],
+  },
+};
+
+// Lightweight CSV parser — handles quoted fields and a configurable delimiter.
+function parseCSV(text, delimiter) {
+  const rows = [];
+  let field = "", row = [], inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i+1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === delimiter) { row.push(field); field = ""; }
+    else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+    else if (ch === "\r") { /* skip */ }
+    else field += ch;
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(c => (c||"").trim() !== ""));
+}
+
+const IMPORT_SAMPLES = {
+  stocks: `Date,Type,Symbol,Quantity,Price,Fees,Currency,Notes
+2026-03-01,Buy,AAPL,10,182.50,1.20,USD,Opening position
+2026-03-04,Buy,AAPL,5,179.10,1.00,USD,Average down
+2026-03-10,Dividend,AAPL,0,2.40,0,USD,Q1 dividend`,
+  creditcards: `Date,Description,Amount,Category,Type,Fees,Reference,Notes
+2026-03-02,FairPrice Finest,84.20,Groceries,Debit,0,REF-001,Weekly shop
+2026-03-05,Shell Petrol,72.00,Transport,Debit,0,REF-002,Full tank
+2026-03-09,Statement Rebate,15.00,Rebate,Credit,0,REF-003,Cashback`,
+  bonds: `Date,Type,Amount,Method,Reference,Notes
+2026-02-01,Coupon,307.00,CDP Credit,SSB-CPN-FEB26,Semi-annual coupon
+2026-08-01,Coupon,307.00,CDP Credit,SSB-CPN-AUG26,Semi-annual coupon`,
+  crypto: `Date,Type,Quantity,Price,Amount,Wallet,Reference,Notes
+2026-03-01,Buy,0.1,88000,8800,Binance,CH-BTC-01,DCA buy
+2026-03-15,Transfer In,0.05,0,0,Ledger,0xabc,Move to cold storage`,
+  retirement: `Date,Type,Amount,Method,Reference,Notes
+2026-03-01,Top-Up,5000,Bank Transfer,SRS-TOPUP,Annual SRS contribution
+2026-03-01,Interest,120,Auto,INT-MAR26,Monthly interest`,
+  pe: `Date,Type,Amount,Method,Reference,Notes
+2026-03-01,Capital Call,40000,Wire Transfer,SEQ-CC-05,Fifth call
+2026-03-20,Distribution,15000,Wire Transfer,SEQ-DIST-02,Partial exit`,
+  bp: `Date,Type,Amount,Method,Reference,Notes
+2026-03-01,Capital Contribution,20000,Bank Transfer,CAP-Y4,Working capital
+2026-03-31,Profit Distribution,8000,Bank Transfer,PD-Q1,Q1 profit share`,
+  collectibles: `Date,Type,Amount,Method,Reference,Notes
+2026-03-01,Valuation Update,17500,Market Data,CH-MAR26,Chrono24 quote
+2026-03-10,Maintenance,450,Credit Card,SVC-26,Annual service`,
+  realestate: `Date,Total Amount,Cash Amount,CPF Amount,Fees,Notes
+2026-04-01,1421,711,710,0,Apr 2026 — half cash half CPF
+2026-05-01,1421,711,710,0,May 2026`,
+  loans: `Date,Amount,Principal,Interest,Fees,Notes
+2026-04-01,1190,985,205,0,Apr 2026
+2026-05-01,1190,990,200,0,May 2026`,
+  insurance: `Date,Claim Type,Amount,Status,Notes
+2026-03-01,Hospital Cash,1200,Pending,Daily hospital cash rider
+2026-03-15,Outpatient,340,Paid,GP visit reimbursement`,
+};
+
+function ImportScreen({ setTransactions, setCCTransactions, ccCards, holdings, baseCurrency, showToast,
+  setBondHoldings, bondHoldings, setCryptoHoldings, cryptoHoldings, setRetPlans, retPlans,
+  setPEInvestments, peInvestments, setBPVentures, bpVentures, setCollectibles, collectibles,
+  setProperties, properties, setLoans, loans, setPolicies, policies }) {
+  const [target, setTarget] = useState("stocks");
+  const [step, setStep] = useState(1);
+  const [raw, setRaw] = useState("");
+  const [delimiter, setDelimiter] = useState(",");
+  const [hasHeader, setHasHeader] = useState(true);
+  const [mapping, setMapping] = useState({});      // roleId -> column index
+  const [defaultAccountId, setDefaultAccountId] = useState("");
+  const fileRef = useRef(null);
+
+  const tgt = IMPORT_TARGETS[target];
+  const sample = IMPORT_SAMPLES[target] || IMPORT_SAMPLES.stocks;
+  const delimChar = delimiter === "\\t" ? "\t" : delimiter;
+  const grid = useMemo(() => raw.trim() ? parseCSV(raw, delimChar) : [], [raw, delimChar]);
+  const headerRow = hasHeader && grid.length ? grid[0] : (grid[0] ? grid[0].map((_,i)=>`Column ${i+1}`) : []);
+  const dataRows = hasHeader ? grid.slice(1) : grid;
+
+  // Auto-guess column → role mapping from header names
+  const autoMap = (cols) => {
+    const m = {};
+    tgt.roles.forEach(role => {
+      const idx = cols.findIndex(c => {
+        const h = (c||"").toLowerCase().replace(/[^a-z]/g,"");
+        const rid = role.id.toLowerCase();
+        const lbl = role.label.toLowerCase().replace(/[^a-z]/g,"");
+        return h === rid || h.includes(rid) || (lbl && h.includes(lbl.slice(0,4)));
+      });
+      if (idx >= 0) m[role.id] = idx;
+    });
+    return m;
+  };
+
+  const loadText = (text) => {
+    setRaw(text);
+    const g = parseCSV(text, delimChar);
+    if (g.length) setMapping(autoMap(hasHeader ? g[0] : g[0].map((_,i)=>`Column ${i+1}`)));
+  };
+
+  const onFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => loadText(String(reader.result||""));
+    reader.readAsText(file);
+  };
+
+  const setRole = (roleId, colIdx) => setMapping(prev => {
+    const next = { ...prev };
+    if (colIdx === "") delete next[roleId];
+    else next[roleId] = parseInt(colIdx);
+    return next;
+  });
+
+  const missingRequired = tgt.roles.filter(r => r.required && mapping[r.id] === undefined);
+
+  // Build preview objects from mapping
+  const previewRows = useMemo(() => dataRows.map(cols => {
+    const o = {};
+    tgt.roles.forEach(role => {
+      const idx = mapping[role.id];
+      if (idx === undefined) return;
+      let v = (cols[idx] ?? "").trim();
+      if (role.numeric) v = parseFloat(v.replace(/[^0-9.-]/g,"")) || 0;
+      o[role.id] = v;
+    });
+    return o;
+  }), [dataRows, mapping, target]);
+
+  // Stamp + append `built` rows onto the chosen entity's nested tx array.
+  const appendNested = (setter, txField, idPfx, build) => {
+    const built = previewRows.map((r,i) => ({ id: idPfx + Date.now() + "_" + i, imported: true, ...build(r,i) }));
+    setter(prev => prev.map(e => String(e.id) === String(defaultAccountId)
+      ? { ...e, [txField]: [...built, ...(e[txField] || [])] } : e));
+    return built.length;
+  };
+
+  const doImport = () => {
+    if (missingRequired.length) { showToast(`Map required columns: ${missingRequired.map(r=>r.label).join(", ")}`, "error"); return; }
+    if (tgt.entityRequired && !defaultAccountId) { showToast(`Pick which ${tgt.entityLabel} to import into`, "error"); return; }
+    let n = 0;
+    if (target === "stocks") {
+      const newTxns = previewRows.map((r,i) => ({
+        id: "ITX" + Date.now() + "_" + i,
+        date: r.date, txType: r.txType || "Buy", sym: (r.sym||"").toUpperCase(),
+        qty: +r.qty || 0, price: +r.price || 0, fees: +r.fees || 0,
+        currency: r.currency || baseCurrency || "SGD",
+        accountId: defaultAccountId || undefined,
+        notes: r.notes || "Imported", imported: true,
+      }));
+      n = newTxns.length;
+      setTransactions(prev => [...newTxns, ...prev]);
+    } else if (target === "creditcards") {
+      const newTxns = previewRows.map((r,i) => ({
+        id: "ICC" + Date.now() + "_" + i,
+        cardId: defaultAccountId || (ccCards?.[0]?.id),
+        date: r.date, description: r.description || "Imported",
+        category: r.category || "Other", amount: +r.amount || 0, fees: +r.fees || 0,
+        type: r.type || "Debit", ref: r.ref || "", notes: r.notes || "",
+        currency: baseCurrency || "SGD", imported: true,
+      }));
+      n = newTxns.length;
+      setCCTransactions(prev => [...newTxns, ...prev]);
+    } else if (target === "bonds") {
+      n = appendNested(setBondHoldings, "transactions", "IMB", r => ({
+        type: r.txType || "Coupon", date: r.date, amount: +r.amount || 0,
+        method: r.method || "Imported", ref: r.ref || "", status: "Paid", notes: r.notes || "" }));
+    } else if (target === "crypto") {
+      n = appendNested(setCryptoHoldings, "transactions", "IMCR", r => ({
+        type: r.txType || "Buy", date: r.date, qty: +r.qty || 0, price: +r.price || 0, amount: +r.amount || 0,
+        method: r.method || "Imported", ref: r.ref || "", status: "Complete", notes: r.notes || "" }));
+    } else if (target === "retirement") {
+      n = appendNested(setRetPlans, "transactions", "IMRT", r => ({
+        type: r.txType || "Top-Up", date: r.date, amount: +r.amount || 0,
+        method: r.method || "Imported", ref: r.ref || "", status: "Paid", notes: r.notes || "" }));
+    } else if (target === "pe") {
+      n = appendNested(setPEInvestments, "transactions", "IMPE", r => ({
+        type: r.txType || "Capital Call", date: r.date, amount: +r.amount || 0,
+        method: r.method || "Imported", ref: r.ref || "", status: "Complete", notes: r.notes || "" }));
+    } else if (target === "bp") {
+      n = appendNested(setBPVentures, "transactions", "IMBP", r => ({
+        type: r.txType || "Capital Contribution", date: r.date, amount: +r.amount || 0,
+        method: r.method || "Imported", ref: r.ref || "", status: "Complete", notes: r.notes || "" }));
+    } else if (target === "collectibles") {
+      n = appendNested(setCollectibles, "transactions", "IMCO", r => ({
+        type: r.txType || "Purchase", date: r.date, amount: +r.amount || 0,
+        method: r.method || "Imported", ref: r.ref || "", status: "Complete", notes: r.notes || "" }));
+    } else if (target === "realestate") {
+      const prop = (properties||[]).find(p => String(p.id) === String(defaultAccountId));
+      const contractId = prop?.loanContracts?.[0]?.id || "";
+      n = appendNested(setProperties, "loanRepayments", "IMRE", r => ({
+        contractId, date: r.date, totalAmount: +r.amount || 0,
+        cashAmount: +r.cashAmount || (+r.amount || 0), cpfAmount: +r.cpfAmount || 0,
+        fees: +r.fees || 0, notes: r.notes || "" }));
+    } else if (target === "loans") {
+      n = appendNested(setLoans, "repayments", "IMLN", r => ({
+        date: r.date, amount: +r.amount || 0, principal: +r.principal || 0, interest: +r.interest || 0,
+        fees: +r.fees || 0, repaymentType: "Monthly", notes: r.notes || "" }));
+    } else if (target === "insurance") {
+      n = appendNested(setPolicies, "claims", "IMIN", r => ({
+        type: r.txType || "Claim", date: r.date, amount: +r.amount || 0,
+        status: r.status || "Pending", notes: r.notes || "" }));
+    }
+    showToast(`Imported ${n} row${n!==1?"s":""} into ${tgt.label}`, "success");
+    // reset
+    setRaw(""); setMapping({}); setStep(1);
+  };
+
+  const card = { background:T.bg, border:`1px solid ${T.border}`, borderRadius:12, padding:"18px 20px" };
+  const ENTITY_OPTIONS = {
+    stocks: [...new Map((holdings||[]).map(h=>[h.accountId, h.broker||h.accountId])).entries()].filter(([id])=>id),
+    creditcards: (ccCards||[]).map(c=>[c.id, `${c.cardName} ••${c.last4}`]),
+    bonds: (bondHoldings||[]).map(b=>[b.id, `${b.issuer} · ${b.name}`]),
+    crypto: (cryptoHoldings||[]).map(c=>[c.id, `${c.symbol} · ${c.name} (${c.wallet})`]),
+    retirement: (retPlans||[]).map(p=>[p.id, p.planName || p.provider || p.id]),
+    pe: (peInvestments||[]).map(i=>[i.id, i.name]),
+    bp: (bpVentures||[]).map(v=>[v.id, v.name]),
+    collectibles: (collectibles||[]).map(c=>[c.id, c.name]),
+    realestate: (properties||[]).map(p=>[p.id, p.name]),
+    loans: (loans||[]).map(l=>[l.id, `${l.lender || ""}${l.lender?" · ":""}${l.loanType || l.name || l.id}`]),
+    insurance: (policies||[]).map(p=>[p.id, p.policyName || `${p.insurer || ""}${p.insurer?" · ":""}${p.type || p.id}`]),
+  };
+  const accountOptions = ENTITY_OPTIONS[target] || [];
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16,maxWidth:920}}>
+      {/* Stepper */}
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        {[[1,"Source"],[2,"Map Columns"],[3,"Preview & Import"]].map(([n,lbl],i)=>(
+          <Fragment key={n}>
+            <div style={{display:"flex",alignItems:"center",gap:8,opacity:step>=n?1:0.45}}>
+              <div style={{width:24,height:24,borderRadius:"50%",background:step>=n?T.selected:T.inputBg,color:step>=n?T.selectedText:T.muted,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>{n}</div>
+              <span style={{fontSize:13,fontWeight:step===n?700:500,color:step===n?T.text:T.muted}}>{lbl}</span>
+            </div>
+            {i<2 && <div style={{flex:1,height:1,background:T.border,maxWidth:60}}/>}
+          </Fragment>
+        ))}
+        <div style={{flex:1}}/>
+        <span style={{fontSize:11,color:T.dim}}>Firefly III–style CSV importer</span>
+      </div>
+
+      {step === 1 && (
+        <div style={card}>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>1 · Choose a target & upload your CSV</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Pick what these rows are, then upload a file or paste CSV text. Mirrors Firefly III's import: upload → configure → map.</div>
+
+          <Label>Import Into</Label>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:16}}>
+            {Object.entries(IMPORT_TARGETS).map(([id,t])=>{
+              const active = target===id;
+              return (
+                <button key={id} onClick={()=>{setTarget(id);setMapping({});setDefaultAccountId("");}}
+                  style={{flex:"1 1 200px",textAlign:"left",padding:"12px 14px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",
+                    border:`1px solid ${active?T.selected:T.border}`,background:active?T.accentBg:T.inputBg}}>
+                  <div style={{fontSize:14,fontWeight:700}}>{t.icon} {t.label}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:3}}>{t.sublabel}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+            <div>
+              <Label>Delimiter</Label>
+              <Sel value={delimiter} onChange={e=>setDelimiter(e.target.value)} options={[",",";","|","\\t"]}/>
+            </div>
+            <div style={{display:"flex",alignItems:"flex-end"}}>
+              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
+                <input type="checkbox" checked={hasHeader} onChange={e=>{setHasHeader(e.target.checked); if(raw) loadText(raw);}}/> First row is a header
+              </label>
+            </div>
+          </div>
+
+          <div style={{display:"flex",gap:10,marginBottom:12}}>
+            <button onClick={()=>fileRef.current?.click()} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${T.border}`,background:T.inputBg,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600}}>📁 Upload CSV file</button>
+            <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" onChange={onFile} style={{display:"none"}}/>
+            <button onClick={()=>loadText(sample)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Load sample data</button>
+          </div>
+
+          <Label>…or paste CSV text</Label>
+          <textarea value={raw} onChange={e=>loadText(e.target.value)} rows={7} placeholder={sample}
+            style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",fontSize:12,fontFamily:"monospace",color:T.text,outline:"none",resize:"vertical"}}/>
+
+          {grid.length>0 && <div style={{fontSize:12,color:T.up,marginTop:8}}>✓ Detected {headerRow.length} columns · {dataRows.length} data row{dataRows.length!==1?"s":""}</div>}
+
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}>
+            <button disabled={!grid.length} onClick={()=>setStep(2)}
+              style={{padding:"9px 22px",borderRadius:8,border:"none",background:grid.length?T.selected:T.inputBg,color:grid.length?T.selectedText:T.dim,cursor:grid.length?"pointer":"not-allowed",fontFamily:"inherit",fontSize:13,fontWeight:700}}>Next: Map Columns →</button>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div style={card}>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>2 · Map columns to fields</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Assign each {tgt.label} field to a column from your file (Firefly III calls these "column roles"). Required fields are marked.</div>
+
+          <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+            {tgt.roles.map(role=>(
+              <div key={role.id} style={{display:"grid",gridTemplateColumns:"1fr 1.4fr",gap:12,alignItems:"center"}}>
+                <div style={{fontSize:13}}>
+                  {role.label}{role.required && <span style={{color:T.down}}> *</span>}
+                  {role.numeric && <span style={{fontSize:10,color:T.dim,marginLeft:6}}>numeric</span>}
+                </div>
+                <select value={mapping[role.id]===undefined?"":mapping[role.id]} onChange={e=>setRole(role.id,e.target.value)}
+                  style={{width:"100%",background:T.inputBg,border:`1px solid ${mapping[role.id]===undefined&&role.required?T.down:T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                  <option value="">— skip —</option>
+                  {headerRow.map((h,idx)=><option key={idx} value={idx}>{h || `Column ${idx+1}`}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+
+          {accountOptions.length>0 && (
+            <div style={{marginBottom:16}}>
+              <Label>{`Import into ${tgt.entityLabel || "account"}`}{tgt.entityRequired ? <span style={{color:T.down}}> *</span> : " (optional)"}</Label>
+              <select value={defaultAccountId} onChange={e=>setDefaultAccountId(e.target.value)}
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${tgt.entityRequired&&!defaultAccountId?T.down:T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none"}}>
+                <option value="">{tgt.entityRequired ? `— select ${tgt.entityLabel} —` : target==="stocks" ? "— none —" : "First card"}</option>
+                {accountOptions.map(([id,lbl])=><option key={id} value={id}>{lbl}</option>)}
+              </select>
+            </div>
+          )}
+
+          {missingRequired.length>0 && <div style={{fontSize:12,color:T.down,marginBottom:12}}>⚠️ Map required fields: {missingRequired.map(r=>r.label).join(", ")}</div>}
+
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:8}}>
+            <button onClick={()=>setStep(1)} style={{padding:"9px 18px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>← Back</button>
+            <button disabled={missingRequired.length>0} onClick={()=>setStep(3)}
+              style={{padding:"9px 22px",borderRadius:8,border:"none",background:missingRequired.length?T.inputBg:T.selected,color:missingRequired.length?T.dim:T.selectedText,cursor:missingRequired.length?"not-allowed":"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>Next: Preview →</button>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div style={card}>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>3 · Preview & import</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>{previewRows.length} row{previewRows.length!==1?"s":""} ready to import into <b>{tgt.label}</b>. Review before committing.</div>
+
+          <div style={{border:`1px solid ${T.border}`,borderRadius:10,overflow:"auto",maxHeight:340}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead>
+                <tr style={{background:T.sidebar}}>
+                  {tgt.roles.filter(r=>mapping[r.id]!==undefined).map(r=>(
+                    <th key={r.id} style={{padding:"8px 12px",textAlign:r.numeric?"right":"left",fontSize:11,color:T.muted,fontWeight:600,whiteSpace:"nowrap",borderBottom:`1px solid ${T.border}`}}>{r.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {previewRows.slice(0,50).map((row,i)=>(
+                  <tr key={i} style={{borderBottom:`1px solid ${T.border}`}}>
+                    {tgt.roles.filter(r=>mapping[r.id]!==undefined).map(r=>(
+                      <td key={r.id} style={{padding:"7px 12px",textAlign:r.numeric?"right":"left",whiteSpace:"nowrap",fontFamily:r.numeric?"monospace":"inherit"}}>{String(row[r.id]??"")}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {previewRows.length>50 && <div style={{fontSize:11,color:T.dim,marginTop:8}}>Showing first 50 of {previewRows.length} rows — all will be imported.</div>}
+
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:16}}>
+            <button onClick={()=>setStep(2)} style={{padding:"9px 18px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>← Back</button>
+            {tgt.entityRequired && !defaultAccountId && <span style={{fontSize:12,color:T.down,alignSelf:"center"}}>⚠️ Go back and select a {tgt.entityLabel}</span>}
+            <button onClick={doImport} disabled={tgt.entityRequired && !defaultAccountId}
+              style={{padding:"9px 24px",borderRadius:8,border:"none",background:(tgt.entityRequired&&!defaultAccountId)?T.inputBg:T.selected,color:(tgt.entityRequired&&!defaultAccountId)?T.dim:T.selectedText,cursor:(tgt.entityRequired&&!defaultAccountId)?"not-allowed":"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>✓ Import {previewRows.length} row{previewRows.length!==1?"s":""}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExportScreen({ holdings, transactions, ccTransactions, ccCards, bondHoldings, cryptoHoldings, peInvestments, bpVentures, collectibles, loans, baseCurrency, initialTabFilter, showToast }) {
   const _ccy = baseCurrency || BASE_CURRENCY;
   void _ccy;
@@ -17391,6 +18516,11 @@ function ExportScreen({ holdings, transactions, ccTransactions, ccCards, bondHol
   const [format, setFormat] = useState("ledger");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [view, setView] = useState("new");   // "new" | "history"
+  const [exportHistory, setExportHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("wealthos.exportHistory") || "[]"); }
+    catch { return []; }
+  });
 
   const allRows = gatherTransactions({
     holdings, transactions, ccTransactions, ccCards, bondHoldings,
@@ -17420,17 +18550,67 @@ function ExportScreen({ holdings, transactions, ccTransactions, ccCards, bondHol
 
   const handleDownload = () => {
     if (filteredRows.length === 0) { showToast("No transactions in selected scope", "warn"); return; }
-    const ts = new Date().toISOString().slice(0,10);
+    const now = new Date();
+    const ts = now.toISOString().slice(0,10);
+    const filename = `wealthos-${ts}.${format === "ledger" ? "ledger" : "csv"}`;
     if (format === "ledger") {
-      downloadFile(`wealthos-${ts}.ledger`, buildLedgerExport(filteredRows), "text/plain");
+      downloadFile(filename, buildLedgerExport(filteredRows), "text/plain");
     } else {
-      downloadFile(`wealthos-${ts}.csv`, buildCSVExport(filteredRows), "text/csv");
+      downloadFile(filename, buildCSVExport(filteredRows), "text/csv");
     }
+    const entry = {
+      id: "EX" + now.getTime(),
+      at: now.toISOString(),
+      filename,
+      format,
+      count: filteredRows.length,
+      tabs: [...selectedTabs],
+      dateFrom: dateFrom || null,
+      dateTo: dateTo || null,
+    };
+    setExportHistory(prev => {
+      const next = [entry, ...prev].slice(0, 50);
+      try { localStorage.setItem("wealthos.exportHistory", JSON.stringify(next)); } catch (e) { void e; }
+      return next;
+    });
     showToast(`Exported ${filteredRows.length} transactions`, "success");
   };
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* View tabs */}
+      <div style={{display:"flex",gap:4}}>
+        {[{id:"new",label:"New Export"},{id:"history",label:`History${exportHistory.length?` (${exportHistory.length})`:""}`}].map(t=>(
+          <button key={t.id} onClick={()=>setView(t.id)}
+            style={{padding:"7px 16px",borderRadius:8,border:"none",background:view===t.id?T.selected:T.inputBg,color:view===t.id?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:view===t.id?700:500}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {view === "history" ? (
+        exportHistory.length === 0 ? (
+          <Card style={{padding:"48px 24px",textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:10}}>🗂️</div>
+            <div style={{fontSize:14,fontWeight:600}}>No exports yet</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Your downloaded exports will be listed here.</div>
+          </Card>
+        ) : (
+          <Card style={{padding:0,overflow:"hidden"}}>
+            <div style={{display:"grid",gridTemplateColumns:"1.6fr 0.8fr 0.7fr 1.2fr",padding:"10px 18px",background:T.sidebar,borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.muted,fontWeight:600}}>
+              <div>File</div><div>Format</div><div style={{textAlign:"right"}}>Rows</div><div style={{textAlign:"right"}}>Exported</div>
+            </div>
+            {exportHistory.map((h,i)=>(
+              <div key={h.id} style={{display:"grid",gridTemplateColumns:"1.6fr 0.8fr 0.7fr 1.2fr",padding:"12px 18px",borderBottom:i<exportHistory.length-1?`1px solid ${T.border}`:"none",alignItems:"center",fontSize:12}}>
+                <div style={{fontWeight:600,fontFamily:"'SF Mono',Menlo,monospace",fontSize:11,wordBreak:"break-all"}}>{h.filename}</div>
+                <div><Badge bg={T.inputBg} color={T.muted}>{h.format === "ledger" ? "Ledger" : "CSV"}</Badge></div>
+                <div style={{textAlign:"right",fontWeight:600}}>{h.count}</div>
+                <div style={{textAlign:"right",color:T.muted}}>{new Date(h.at).toLocaleString("en-SG",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+              </div>
+            ))}
+          </Card>
+        )
+      ) : (<>
       <Card style={{padding:"18px"}}>
         <div style={{fontSize:13,fontWeight:600,marginBottom:14}}>1 · Choose tabs to include</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -17504,18 +18684,19 @@ function ExportScreen({ holdings, transactions, ccTransactions, ccCards, bondHol
           📤 Download {format === "ledger" ? ".ledger" : ".csv"} ({filteredRows.length})
         </button>
       </div>
+      </>)}
     </div>
   );
 }
 
 
 const NAV = [
-  { id: "stocks", label: "Stocks", icon: "📈", group: "Investments" },
-  { id: "bonds", label: "Bonds & T-Bills", icon: "📊", group: "Investments" },
-  { id: "crypto", label: "Cryptocurrencies", icon: "🪙", group: "Investments" },
   { id: "cashaccounts", label: "Cash Accounts", icon: "💰", group: "Banking" },
   { id: "creditcards", label: "Credit Cards", icon: "💳", group: "Banking" },
   { id: "loans", label: "Loans", icon: "🏛️", group: "Banking" },
+  { id: "stocks", label: "Stocks", icon: "📈", group: "Investments" },
+  { id: "bonds", label: "Bonds & T-Bills", icon: "📊", group: "Investments" },
+  { id: "crypto", label: "Cryptocurrencies", icon: "🪙", group: "Investments" },
   { id: "realestate", label: "Real Estate", icon: "🏠", group: "Protection" },
   { id: "insurance", label: "Insurance", icon: "🛡", group: "Protection" },
   { id: "retirement", label: "Retirement", icon: "🏛️", group: "Protection" },
@@ -17523,6 +18704,7 @@ const NAV = [
   { id: "partnerships", label: "Business Ventures", icon: "🤝", group: "Private Assets" },
   { id: "collectibles", label: "Collectibles", icon: "💎", group: "Private Assets" },
   { id: "workflows", label: "Workflows", icon: "⚡", group: "Automation" },
+  { id: "import", label: "Import", icon: "📥", group: "Automation" },
   { id: "export", label: "Export", icon: "📤", group: "Automation" },
 ];
 
@@ -17540,11 +18722,26 @@ const subtitles = {
   partnerships: "Partnerships, joint ventures, Pte Ltd shareholdings and co-owned businesses",
   collectibles: "Watches, art, wine, classic cars, jewellery and other tangible assets",
   workflows: "Automate reminders, alerts and actions across your accounts",
+  import: "Import transactions from CSV with a Firefly III–style column-mapping wizard",
   export: "Export transactions across all asset tabs to PTA (Ledger) journal or CSV",
 };
 
 export default function App() {
-  const [page, setPage] = useState("stocks");
+  // ── Hash router: route state is derived from window.location.hash ──
+  const [route, setRoute] = useState(() => parseHash(typeof window !== "undefined" ? window.location.hash : ""));
+  useEffect(() => {
+    const onHash = () => setRoute(parseHash(window.location.hash));
+    window.addEventListener("hashchange", onHash);
+    if (!window.location.hash) window.history.replaceState(null, "", buildHash({ screen: DEFAULT_SCREEN }));
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  // single navigation primitive — only ever sets the hash; the listener updates state
+  const navigate = (next) => {
+    const merged = typeof next === "function" ? next(route) : next;
+    window.location.hash = buildHash({ screen: route.screen, parentId: null, entityId: null, tab: null, ...merged });
+  };
+  const page = route.screen;            // alias: keeps layout branch / titles unchanged
+  const setPage = (id) => navigate({ screen: id });
   const [baseCurrency, setBaseCurrency] = useState(() => {
     try { return localStorage.getItem("wealthos.baseCurrency") || BASE_CURRENCY; }
     catch { return BASE_CURRENCY; }
@@ -17763,10 +18960,9 @@ export default function App() {
     // Seed audit history for insurance policies
     POLICIES_INIT.forEach((pol, i) => {
       const label = `${pol.insurer||""} · ${pol.planName||pol.type||""}`;
+      // Audit tracks policy lifecycle (creation + field edits). Premium payments live in the
+      // Transactions tab and are not duplicated here as vague "transaction" rows.
       entries.push({ id:`AL_SEED_${pol.id}_C`, ts:new Date(now - (500+i*20)*dayMs).toISOString(), entityType:"insurance", entityId:pol.id, entityLabel:label, action:"create", changes:[], user:"You" });
-      entries.push({ id:`AL_SEED_${pol.id}_TX1`, ts:new Date(now - (380+i*20)*dayMs).toISOString(), entityType:"insurance", entityId:pol.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
-      entries.push({ id:`AL_SEED_${pol.id}_TX2`, ts:new Date(now - (200+i*15)*dayMs).toISOString(), entityType:"insurance", entityId:pol.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
-      entries.push({ id:`AL_SEED_${pol.id}_TX3`, ts:new Date(now - (80+i*8)*dayMs).toISOString(), entityType:"insurance", entityId:pol.id, entityLabel:label, action:"add-transaction", changes:[], user:"You" });
     });
     // Seed audit history for loans
     LOANS_INIT.forEach((ln, i) => {
@@ -17846,19 +19042,32 @@ export default function App() {
         transactions={transactions} setTransactions={setTransactions}
         manualDivs={manualDivs} setManualDivs={setManualDivs}
         accounts={ccAccounts} setAccounts={setCCAccounts}
-        showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
-    if (page === "creditcards") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} baseCurrency={baseCurrency} goToExport={goToExport} showToast={showToast} auditLog={auditLog} logAudit={logAudit} lockView="cards" />;
-    if (page === "cashaccounts") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} baseCurrency={baseCurrency} goToExport={goToExport} showToast={showToast} auditLog={auditLog} logAudit={logAudit} lockView="accounts" />;
-    if (page === "loans") return <LoansScreen loans={loans} setLoans={setLoans} properties={properties} setProperties={setProperties} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
-    if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
-    if (page === "realestate") return <RealEstateScreen properties={properties} setProperties={setProperties} policies={policies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
-    if (page === "retirement") return <RetirementScreen plans={retPlans} setPlans={setRetPlans} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
-    if (page === "bonds") return <BondsScreen bonds={bondHoldings} setBonds={setBondHoldings} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
-    if (page === "crypto") return <CryptoScreen cryptos={cryptoHoldings} setCryptos={setCryptoHoldings} accounts={ccAccounts} setAccounts={setCCAccounts} setTransactions={setTransactions} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
-    if (page === "privateequity") return <PEScreen investments={peInvestments} setInvestments={setPEInvestments} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
-    if (page === "partnerships") return <BPScreen ventures={bpVentures} setVentures={setBPVentures} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
-    if (page === "collectibles") return <CollectiblesScreen items={collectibles} setItems={setCollectibles} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+        showToast={showToast} auditLog={auditLog} logAudit={logAudit}
+        route={route} navigate={navigate} />;
+    if (page === "creditcards") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} baseCurrency={baseCurrency} goToExport={goToExport} showToast={showToast} auditLog={auditLog} logAudit={logAudit} lockView="cards" route={route} navigate={navigate} />;
+    if (page === "cashaccounts") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} baseCurrency={baseCurrency} goToExport={goToExport} showToast={showToast} auditLog={auditLog} logAudit={logAudit} lockView="accounts" route={route} navigate={navigate} />;
+    if (page === "loans") return <LoansScreen loans={loans} setLoans={setLoans} properties={properties} setProperties={setProperties} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "realestate") return <RealEstateScreen properties={properties} setProperties={setProperties} policies={policies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "retirement") return <RetirementScreen plans={retPlans} setPlans={setRetPlans} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "bonds") return <BondsScreen bonds={bondHoldings} setBonds={setBondHoldings} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "crypto") return <CryptoScreen cryptos={cryptoHoldings} setCryptos={setCryptoHoldings} accounts={ccAccounts} setAccounts={setCCAccounts} setTransactions={setTransactions} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "privateequity") return <PEScreen investments={peInvestments} setInvestments={setPEInvestments} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "partnerships") return <BPScreen ventures={bpVentures} setVentures={setBPVentures} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "collectibles") return <CollectiblesScreen items={collectibles} setItems={setCollectibles} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
     if (page === "workflows") return <WorkflowsScreen workflows={workflows} setWorkflows={setWorkflows} showToast={showToast} auditLog={auditLog} logAudit={logAudit} />;
+    if (page === "import") return <ImportScreen
+        setTransactions={setTransactions} setCCTransactions={setCCTransactions}
+        ccCards={ccCards} holdings={holdings} baseCurrency={baseCurrency} showToast={showToast}
+        setBondHoldings={setBondHoldings} bondHoldings={bondHoldings}
+        setCryptoHoldings={setCryptoHoldings} cryptoHoldings={cryptoHoldings}
+        setRetPlans={setRetPlans} retPlans={retPlans}
+        setPEInvestments={setPEInvestments} peInvestments={peInvestments}
+        setBPVentures={setBPVentures} bpVentures={bpVentures}
+        setCollectibles={setCollectibles} collectibles={collectibles}
+        setProperties={setProperties} properties={properties}
+        setLoans={setLoans} loans={loans}
+        setPolicies={setPolicies} policies={policies} />;
     if (page === "export") return <ExportScreen
         holdings={holdings} transactions={transactions}
         ccTransactions={ccTransactions} ccCards={ccCards}
@@ -17983,7 +19192,7 @@ export default function App() {
         </div>
 
         {/* Page content */}
-        {page === "stocks" || page === "realestate" || page === "creditcards" || page === "cashaccounts" || page === "insurance" || page === "loans" || page === "retirement" || page === "bonds" || page === "crypto" || page === "privateequity" || page === "partnerships" || page === "collectibles" || page === "workflows" || page === "export" ? (
+        {page === "stocks" || page === "realestate" || page === "creditcards" || page === "cashaccounts" || page === "insurance" || page === "loans" || page === "retirement" || page === "bonds" || page === "crypto" || page === "privateequity" || page === "partnerships" || page === "collectibles" || page === "workflows" || page === "import" || page === "export" ? (
           <div style={{ flex: 1, overflowY: "auto", minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
               <h1 className="wo-main-title" style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
