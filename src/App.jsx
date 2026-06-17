@@ -2575,35 +2575,111 @@ const WORKFLOW_TRIGGER_KINDS = [
   { id:"scheduled",      label:"Scheduled",            sublabel:"Fires on a recurring schedule",          needsCron:true,   entityTypes:["any"] },
 ];
 
+// Full Firefly III rule-action catalog (+ WealthOS Notify extensions).
+// `group` drives the optgroups in the editor; `needsArg` shows an argument input.
 const WORKFLOW_ACTION_KINDS = [
-  // Notify / track
+  // Notify / track — WealthOS extension (Firefly only mutates transactions)
   { id:"reminder",      label:"In-App Reminder",       sublabel:"Show a banner inside WealthOS",                group:"Notify" },
   { id:"notification",  label:"Push Notification",     sublabel:"Send a push notification (mock)",             group:"Notify" },
   { id:"email",         label:"Email",                 sublabel:"Send an email (mock)",                        group:"Notify" },
   { id:"task",          label:"Create Task",           sublabel:"Add a task to your to-do list",               group:"Notify" },
   { id:"record",        label:"Record Money Flow",     sublabel:"Log an IN / OUT / RECORD money movement",     group:"Notify" },
   { id:"log",           label:"Log Only",              sublabel:"Just record that the trigger fired",          group:"Notify" },
-  // Firefly III–style transaction-mutating actions
-  { id:"set_category",  label:"Set Category",          sublabel:"Firefly: set the transaction category",       group:"Transform", needsArg:"category" },
-  { id:"add_tag",       label:"Add Tag",               sublabel:"Firefly: append a tag to the transaction",    group:"Transform", needsArg:"tag" },
-  { id:"set_budget",    label:"Set Budget",            sublabel:"Firefly: assign the transaction to a budget", group:"Transform", needsArg:"budget" },
-  { id:"set_description",label:"Set Description",      sublabel:"Firefly: overwrite the transaction description",group:"Transform", needsArg:"description" },
-  { id:"convert_transfer",label:"Convert to Transfer", sublabel:"Firefly: reclassify as an account transfer",  group:"Transform", needsArg:"account" },
-  { id:"clear_category",label:"Clear Category",        sublabel:"Firefly: remove the transaction category",    group:"Transform" },
+  // Firefly: Category & Budget
+  { id:"set_category",   label:"Set category",         sublabel:"Set the transaction category",                group:"Category & Budget", needsArg:"category" },
+  { id:"clear_category", label:"Clear category",       sublabel:"Remove the transaction category",             group:"Category & Budget" },
+  { id:"set_budget",     label:"Set budget",           sublabel:"Assign the transaction to a budget",          group:"Category & Budget", needsArg:"budget" },
+  { id:"clear_budget",   label:"Clear budget",         sublabel:"Remove the transaction budget",               group:"Category & Budget" },
+  // Firefly: Tags
+  { id:"add_tag",        label:"Add tag",              sublabel:"Append a tag to the transaction",             group:"Tags", needsArg:"tag" },
+  { id:"remove_tag",     label:"Remove tag",           sublabel:"Remove a specific tag",                       group:"Tags", needsArg:"tag" },
+  { id:"clear_tags",     label:"Clear all tags",       sublabel:"Remove every tag from the transaction",       group:"Tags" },
+  // Firefly: Text
+  { id:"set_description",    label:"Set description",     sublabel:"Overwrite the transaction description",    group:"Text", needsArg:"text" },
+  { id:"append_description", label:"Append to description", sublabel:"Add text to the end of the description", group:"Text", needsArg:"text" },
+  { id:"prepend_description",label:"Prepend to description",sublabel:"Add text to the start of the description",group:"Text", needsArg:"text" },
+  { id:"set_notes",          label:"Set notes",           sublabel:"Overwrite the transaction notes",          group:"Text", needsArg:"text" },
+  { id:"append_notes",       label:"Append to notes",     sublabel:"Add text to the end of the notes",         group:"Text", needsArg:"text" },
+  { id:"prepend_notes",      label:"Prepend to notes",    sublabel:"Add text to the start of the notes",       group:"Text", needsArg:"text" },
+  // Firefly: Accounts
+  { id:"set_source",         label:"Set source account",      sublabel:"Set the source account",              group:"Accounts", needsArg:"account" },
+  { id:"set_destination",    label:"Set destination account", sublabel:"Set the destination account",         group:"Accounts", needsArg:"account" },
+  { id:"swap_accounts",      label:"Swap source & destination", sublabel:"Swap the source and destination",   group:"Accounts" },
+  { id:"source_to_cash",     label:"Set source to cash",      sublabel:"Set the source to the cash account",  group:"Accounts" },
+  { id:"destination_to_cash",label:"Set destination to cash", sublabel:"Set the destination to the cash account", group:"Accounts" },
+  // Firefly: Type conversion
+  { id:"convert_withdrawal", label:"Convert to withdrawal",  sublabel:"Reclassify as a withdrawal",           group:"Type", needsArg:"account" },
+  { id:"convert_deposit",    label:"Convert to deposit",     sublabel:"Reclassify as a deposit",              group:"Type", needsArg:"account" },
+  { id:"convert_transfer",   label:"Convert to transfer",    sublabel:"Reclassify as an account transfer",    group:"Type", needsArg:"account" },
+  // Firefly: Links
+  { id:"link_subscription",  label:"Link to subscription",   sublabel:"Associate with a subscription",        group:"Links", needsArg:"name" },
+  { id:"link_piggybank",     label:"Link to piggy bank",     sublabel:"Connect to a piggy bank",              group:"Links", needsArg:"name" },
+  // Firefly: Destructive
+  { id:"delete_transaction", label:"Delete transaction",     sublabel:"⚠️ Permanently delete the transaction",group:"Destructive" },
+];
+// Action editor optgroup order
+const WORKFLOW_ACTION_GROUPS = ["Notify","Category & Budget","Tags","Text","Accounts","Type","Links","Destructive"];
+
+// Firefly III rule operators, tagged by which field type they apply to.
+const WORKFLOW_CONDITION_OPS = [
+  { id:"=",        label:"is",          types:["text","amount","choice","date"] },
+  { id:"!=",       label:"is not",      types:["text","choice"] },
+  { id:"contains", label:"contains",    types:["text"] },
+  { id:"starts",   label:"starts with", types:["text"] },
+  { id:"ends",     label:"ends with",   types:["text"] },
+  { id:">",        label:"more than",   types:["amount"] },
+  { id:">=",       label:"at least",    types:["amount"] },
+  { id:"<",        label:"less than",   types:["amount"] },
+  { id:"<=",       label:"at most",     types:["amount"] },
+  { id:"before",   label:"before",      types:["date"] },
+  { id:"after",    label:"after",       types:["date"] },
+  { id:"is_set",   label:"is set",      types:["bool"] },
+  { id:"is_unset", label:"is not set",  types:["bool"] },
 ];
 
-// Firefly III rule operators (strict matching set)
-const WORKFLOW_CONDITION_OPS = [
-  { id:"=",          label:"is" },
-  { id:"!=",         label:"is not" },
-  { id:"contains",   label:"contains" },
-  { id:"starts",     label:"starts with" },
-  { id:"ends",       label:"ends with" },
-  { id:">",          label:"more than" },
-  { id:">=",         label:"at least" },
-  { id:"<",          label:"less than" },
-  { id:"<=",         label:"at most" },
+// Firefly III rule-trigger catalog — the fields a condition can match on.
+// type drives the applicable operators and the value input widget.
+const WORKFLOW_CONDITION_FIELDS = [
+  // Content
+  { id:"description", label:"Description", type:"text",   group:"Content" },
+  { id:"notes",       label:"Notes",      type:"text",   group:"Content" },
+  // Amount
+  { id:"amount",         label:"Amount",          type:"amount", group:"Amount" },
+  { id:"foreign_amount", label:"Foreign amount",  type:"amount", group:"Amount" },
+  { id:"currency",       label:"Currency",        type:"text",   group:"Amount" },
+  // Type
+  { id:"transaction_type", label:"Transaction type", type:"choice", options:["Withdrawal","Deposit","Transfer"], group:"Type" },
+  // Accounts
+  { id:"source_account",      label:"Source account",      type:"text", group:"Accounts" },
+  { id:"destination_account", label:"Destination account", type:"text", group:"Accounts" },
+  // Metadata
+  { id:"category",           label:"Category",           type:"text", group:"Metadata" },
+  { id:"budget",             label:"Budget",             type:"text", group:"Metadata" },
+  { id:"tag",                label:"Tag",                type:"text", group:"Metadata" },
+  { id:"external_id",        label:"External ID",        type:"text", group:"Metadata" },
+  { id:"internal_reference", label:"Internal reference", type:"text", group:"Metadata" },
+  // Existence (boolean)
+  { id:"has_category",    label:"Has a category",   type:"bool", group:"Existence" },
+  { id:"has_budget",      label:"Has a budget",     type:"bool", group:"Existence" },
+  { id:"has_any_tag",     label:"Has any tag",      type:"bool", group:"Existence" },
+  { id:"has_notes",       label:"Has notes",        type:"bool", group:"Existence" },
+  { id:"has_attachments", label:"Has attachments",  type:"bool", group:"Existence" },
+  // Dates
+  { id:"transaction_date", label:"Transaction date", type:"date", group:"Dates" },
+  { id:"book_date",        label:"Book date",        type:"date", group:"Dates" },
+  { id:"process_date",     label:"Process date",     type:"date", group:"Dates" },
+  { id:"due_date",         label:"Due date",         type:"date", group:"Dates" },
+  { id:"payment_date",     label:"Payment date",     type:"date", group:"Dates" },
+  { id:"invoice_date",     label:"Invoice date",     type:"date", group:"Dates" },
+  // WealthOS entity fields (event-trigger conditions — kept for the WealthOS triggers)
+  { id:"currentBalance", label:"Current balance", type:"amount", group:"WealthOS entity" },
+  { id:"status",         label:"Status",          type:"text",   group:"WealthOS entity" },
+  { id:"accountType",    label:"Account type",    type:"text",   group:"WealthOS entity" },
 ];
+const WORKFLOW_FIELD_GROUPS = ["Content","Amount","Type","Accounts","Metadata","Existence","Dates","WealthOS entity"];
+// Helper: resolve a field def (falls back to a text field so unknown/custom values still work)
+const wfFieldDef = (id) => WORKFLOW_CONDITION_FIELDS.find(f => f.id === id) || { id, label: id, type: "text" };
+const wfOpsForField = (id) => { const t = wfFieldDef(id).type; return WORKFLOW_CONDITION_OPS.filter(o => o.types.includes(t)); };
 
 // Firefly III "strict" (ALL) vs "non-strict" (ANY) rule matching
 const WORKFLOW_MATCH_MODES = [
@@ -2627,21 +2703,21 @@ const WORKFLOW_ENTITY_LABELS = {
 
 const WORKFLOWS_INIT = [
   { id:"WF001", name:"Credit Card Due Reminder", description:"Notify 3 days before any credit card payment is due",
-    enabled:true, runCount:12, lastRunAt:"2026-05-20T08:00:00.000Z",
+    enabled:true, runCount:12, lastRunAt:"2026-05-20T08:00:00.000Z", group:"Reminders",
     trigger:{ kind:"before_due", days:3, entityType:"creditcard" },
     conditions:[{ field:"currentBalance", op:">", value:0 }],
     actions:[{ kind:"reminder", message:"Credit card payment due in 3 days" }],
     createdAt:"2025-12-01T10:00:00.000Z",
   },
   { id:"WF002", name:"Loan Repayment Heads-Up", description:"Alert 7 days before active loan repayment due dates",
-    enabled:true, runCount:6, lastRunAt:"2026-05-15T08:00:00.000Z",
+    enabled:true, runCount:6, lastRunAt:"2026-05-15T08:00:00.000Z", group:"Reminders",
     trigger:{ kind:"before_due", days:7, entityType:"loan" },
     conditions:[{ field:"status", op:"=", value:"Active" }],
     actions:[{ kind:"reminder", message:"Loan payment due in a week" }, { kind:"email", to:"dilwyn@betawerkz.com.sg" }],
     createdAt:"2026-01-10T10:00:00.000Z",
   },
   { id:"WF003", name:"Low Cash Alert", description:"Alert when any cash account drops below S$1,000",
-    enabled:false, runCount:0, lastRunAt:null,
+    enabled:false, runCount:0, lastRunAt:null, group:"Alerts",
     trigger:{ kind:"balance_below", value:1000, entityType:"account" },
     conditions:[{ field:"accountType", op:"!=", value:"Brokerage" }],
     actions:[{ kind:"notification", message:"Cash balance is low" }],
@@ -2649,17 +2725,26 @@ const WORKFLOWS_INIT = [
   },
   { id:"WF004", name:"Auto-categorise Grab rides", description:"Firefly-style rule: tag & categorise large card spend at Grab",
     enabled:true, runCount:23, lastRunAt:"2026-06-10T20:14:00.000Z",
-    moneyFlow:"out", matchMode:"all", stopProcessing:true,
+    moneyFlow:"out", matchMode:"all", stopProcessing:true, group:"Spending rules",
     trigger:{ kind:"transaction_over", value:0, entityType:"creditcard" },
     conditions:[{ field:"description", op:"contains", value:"GRAB" }, { field:"amount", op:">", value:15 }],
     actions:[{ kind:"set_category", arg:"Transport" }, { kind:"add_tag", arg:"ride-hailing" }],
     createdAt:"2026-05-02T10:00:00.000Z",
+  },
+  { id:"WF005", name:"Salary → income & savings tag", description:"Firefly-style rule: categorise monthly salary deposits and tag for savings tracking",
+    enabled:true, runCount:8, lastRunAt:"2026-06-01T09:02:00.000Z",
+    moneyFlow:"in", matchMode:"all", stopProcessing:false, group:"Spending rules",
+    trigger:{ kind:"transaction_over", value:0, entityType:"account" },
+    conditions:[{ field:"transaction_type", op:"=", value:"Deposit" }, { field:"description", op:"contains", value:"SALARY" }, { field:"amount", op:">=", value:3000 }],
+    actions:[{ kind:"set_category", arg:"Salary" }, { kind:"add_tag", arg:"income" }, { kind:"append_notes", arg:"Auto-tagged by salary rule" }],
+    createdAt:"2026-05-28T10:00:00.000Z",
   },
 ];
 
 const EMPTY_WORKFLOW = {
   id:"", name:"", description:"", enabled:true, runCount:0, lastRunAt:null,
   moneyFlow:"none",
+  group:"Default",        // Firefly III rule group
   matchMode:"all",        // Firefly III strict (ALL) vs non-strict (ANY)
   stopProcessing:false,   // Firefly III "stop processing other rules after a match"
   trigger:{ kind:"before_due", days:3, entityType:"creditcard" },
@@ -2785,8 +2870,18 @@ function WorkflowsScreen({ workflows, setWorkflows, showToast, auditLog, logAudi
           <div style={{fontSize:12,color:T.muted,marginTop:4}}>Create your first automation to get reminders, alerts and actions</div>
         </Card>
       ) : (
-        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill, minmax(380px, 1fr))",gap:14}}>
-          {filtered.map(wf => {
+        <div style={{display:"flex",flexDirection:"column",gap:22}}>
+          {[...new Set(filtered.map(w=>w.group||"Default"))].map(groupName => {
+            const groupWfs = filtered.filter(w => (w.group||"Default")===groupName);
+            return (
+            <div key={groupName}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                <span style={{fontSize:13,fontWeight:700}}>📁 {groupName}</span>
+                <span style={{fontSize:11,color:T.muted}}>{groupWfs.length} rule{groupWfs.length!==1?"s":""} · {groupWfs.filter(w=>w.enabled).length} active</span>
+                <div style={{flex:1,height:1,background:T.border}}/>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill, minmax(380px, 1fr))",gap:14}}>
+          {groupWfs.map(wf => {
             const sum = workflowSummary(wf);
             return (
               <Card key={wf.id} style={{padding:0,overflow:"hidden",opacity:wf.enabled?1:0.65}}>
@@ -2817,7 +2912,8 @@ function WorkflowsScreen({ workflows, setWorkflows, showToast, auditLog, logAudi
                         <div style={{fontSize:10,fontWeight:600,color:T.muted,letterSpacing:0.3,textTransform:"uppercase"}}>If {wf.conditions.length>1 ? `· match ${(wf.matchMode||"all")==="any"?"ANY":"ALL"}` : ""}</div>
                         <div style={{fontSize:12,marginTop:2}}>{wf.conditions.map(c=>{
                           const opLabel = (WORKFLOW_CONDITION_OPS.find(o=>o.id===c.op)||{}).label || c.op;
-                          return `${c.field} ${opLabel} ${c.value}`;
+                          const fLabel = wfFieldDef(c.field).label;
+                          return wfFieldDef(c.field).type==="bool" ? `${fLabel} ${opLabel}` : `${fLabel} ${opLabel} ${c.value}`;
                         }).join((wf.matchMode||"all")==="any"?" OR ":" AND ")}</div>
                       </div>
                     </div>
@@ -2853,11 +2949,16 @@ function WorkflowsScreen({ workflows, setWorkflows, showToast, auditLog, logAudi
               </Card>
             );
           })}
+              </div>
+            </div>
+            );
+          })}
         </div>
       )}
 
       {showModal && editWF && (
-        <WorkflowModal workflow={editWF} onSave={handleSave} onClose={()=>{setShowModal(false);setEditWF(null);}}/>
+        <WorkflowModal workflow={editWF} onSave={handleSave} onClose={()=>{setShowModal(false);setEditWF(null);}}
+          groups={[...new Set(workflows.map(w=>w.group||"Default"))]}/>
       )}
 
       {historyWF && (
@@ -2881,8 +2982,8 @@ function WorkflowsScreen({ workflows, setWorkflows, showToast, auditLog, logAudi
   );
 }
 
-function WorkflowModal({ workflow, onSave, onClose }) {
-  const [f, setFState] = useState({ ...workflow, conditions: workflow.conditions || [], actions: workflow.actions || [{kind:"reminder",message:""}] });
+function WorkflowModal({ workflow, onSave, onClose, groups = [] }) {
+  const [f, setFState] = useState({ ...workflow, group: workflow.group || "Default", conditions: workflow.conditions || [], actions: workflow.actions || [{kind:"reminder",message:""}] });
   const setF = (k,v) => setFState(prev => ({ ...prev, [k]: v }));
   const setTrig = (k,v) => setFState(prev => ({ ...prev, trigger: { ...prev.trigger, [k]: v } }));
   const updateCond = (i,patch) => setFState(prev => ({ ...prev, conditions: prev.conditions.map((c,idx) => idx===i ? {...c, ...patch} : c) }));
@@ -2906,6 +3007,13 @@ function WorkflowModal({ workflow, onSave, onClose }) {
             <input value={f.name} onChange={e=>setF("name",e.target.value)} placeholder="e.g. Credit card due reminder" style={iStyle}/></div>
           <div><Label>Description</Label>
             <input value={f.description} onChange={e=>setF("description",e.target.value)} placeholder="What does this workflow do?" style={iStyle}/></div>
+
+          {/* Rule group (Firefly III) */}
+          <div><Label>Rule Group</Label>
+            <input value={f.group} onChange={e=>setF("group",e.target.value)} placeholder="e.g. Spending rules" list="wf-groups" style={iStyle}/>
+            <datalist id="wf-groups">{[...new Set([...groups,"Default","Reminders","Alerts","Spending rules"])].map(g => <option key={g} value={g}/>)}</datalist>
+            <div style={{fontSize:11,color:T.muted,marginTop:6}}>Firefly III groups rules; they run in order and "stop processing" halts later rules in the same group.</div>
+          </div>
 
           {/* Money-flow category */}
           <div><Label>Money-Flow Category</Label>
@@ -2964,7 +3072,7 @@ function WorkflowModal({ workflow, onSave, onClose }) {
           <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"14px 16px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <div style={{fontSize:10,fontWeight:700,color:T.muted,letterSpacing:0.5}}>🔍 IF — CONDITIONS (OPTIONAL)</div>
-              <button onClick={()=>setF("conditions",[...f.conditions,{field:"",op:"=",value:""}])}
+              <button onClick={()=>setF("conditions",[...f.conditions,{field:"description",op:"contains",value:""}])}
                 style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:7,padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit",color:T.text}}>+ Add</button>
             </div>
             {/* Firefly strict / non-strict match mode */}
@@ -2982,17 +3090,38 @@ function WorkflowModal({ workflow, onSave, onClose }) {
             {f.conditions.length === 0 ? (
               <div style={{fontSize:11,color:T.dim}}>No conditions — trigger fires for all matching entities</div>
             ) : (
-              f.conditions.map((c,i) => (
-                <div key={i} style={{display:"grid",gridTemplateColumns:"1.4fr 0.9fr 1.4fr 30px",gap:8,marginBottom:8,alignItems:"center"}}>
-                  <input value={c.field} onChange={e=>updateCond(i,{field:e.target.value})} placeholder="field (e.g. description, amount, category)" style={{...iStyle,padding:"7px 10px"}}/>
-                  <select value={c.op} onChange={e=>updateCond(i,{op:e.target.value})} style={{...iStyle,padding:"7px 10px"}}>
-                    {WORKFLOW_CONDITION_OPS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              f.conditions.map((c,i) => {
+                const fd = wfFieldDef(c.field);
+                const ops = wfOpsForField(c.field);
+                const fieldKnown = WORKFLOW_CONDITION_FIELDS.some(x => x.id === c.field);
+                return (
+                <div key={i} style={{display:"grid",gridTemplateColumns:"1.5fr 0.95fr 1.4fr 24px",gap:8,marginBottom:8,alignItems:"center"}}>
+                  <select value={c.field} onChange={e=>{ const ops2 = wfOpsForField(e.target.value); updateCond(i,{field:e.target.value, op:ops2[0]?.id||"=", value:""}); }} style={{...iStyle,padding:"7px 10px"}}>
+                    {!fieldKnown && c.field && <option value={c.field}>{c.field}</option>}
+                    {WORKFLOW_FIELD_GROUPS.map(g => (
+                      <optgroup key={g} label={g}>
+                        {WORKFLOW_CONDITION_FIELDS.filter(x=>x.group===g).map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+                      </optgroup>
+                    ))}
                   </select>
-                  <input value={c.value} onChange={e=>updateCond(i,{value:e.target.value})} placeholder="value" style={{...iStyle,padding:"7px 10px"}}/>
+                  <select value={c.op} onChange={e=>updateCond(i,{op:e.target.value})} style={{...iStyle,padding:"7px 10px"}}>
+                    {ops.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  </select>
+                  {fd.type === "bool" ? (
+                    <div style={{fontSize:11,color:T.dim,alignSelf:"center"}}>— no value —</div>
+                  ) : fd.type === "choice" ? (
+                    <select value={c.value} onChange={e=>updateCond(i,{value:e.target.value})} style={{...iStyle,padding:"7px 10px"}}>
+                      {(fd.options||[]).map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <input type={fd.type==="amount"?"number":fd.type==="date"?"date":"text"} value={c.value} onChange={e=>updateCond(i,{value:e.target.value})}
+                      placeholder={fd.type==="amount"?"0.00":fd.type==="date"?"":"value"} style={{...iStyle,padding:"7px 10px"}}/>
+                  )}
                   <button onClick={()=>setF("conditions",f.conditions.filter((_,idx)=>idx!==i))}
                     style={{background:"transparent",border:"none",color:T.down,cursor:"pointer",fontSize:14,fontFamily:"inherit"}}>✕</button>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
 
@@ -3009,12 +3138,11 @@ function WorkflowModal({ workflow, onSave, onClose }) {
                 <div key={i} style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10,padding:"10px 12px",background:T.sidebar,borderRadius:8}}>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 30px",gap:8,alignItems:"center"}}>
                     <select value={a.kind} onChange={e=>updateAct(i,{kind:e.target.value})} style={{...iStyle,padding:"7px 10px"}}>
-                      <optgroup label="Notify / Track">
-                        {WORKFLOW_ACTION_KINDS.filter(k=>k.group==="Notify").map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
-                      </optgroup>
-                      <optgroup label="Transform (Firefly III)">
-                        {WORKFLOW_ACTION_KINDS.filter(k=>k.group==="Transform").map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
-                      </optgroup>
+                      {WORKFLOW_ACTION_GROUPS.map(g => (
+                        <optgroup key={g} label={g==="Notify"?"Notify / Track":`${g} (Firefly III)`}>
+                          {WORKFLOW_ACTION_KINDS.filter(k=>k.group===g).map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
+                        </optgroup>
+                      ))}
                     </select>
                     {f.actions.length > 1 && (
                       <button onClick={()=>setF("actions",f.actions.filter((_,idx)=>idx!==i))}
@@ -3029,7 +3157,7 @@ function WorkflowModal({ workflow, onSave, onClose }) {
                   )}
                   {ak?.needsArg && (
                     <input value={a.arg||""} onChange={e=>updateAct(i,{arg:e.target.value})}
-                      placeholder={ak.needsArg==="category"?"Category name (e.g. Dining)":ak.needsArg==="tag"?"Tag (e.g. reimbursable)":ak.needsArg==="budget"?"Budget name (e.g. Monthly Living)":ak.needsArg==="description"?"New description":ak.needsArg==="account"?"Destination account":"Value"}
+                      placeholder={ak.needsArg==="category"?"Category name (e.g. Dining)":ak.needsArg==="tag"?"Tag (e.g. reimbursable)":ak.needsArg==="budget"?"Budget name (e.g. Monthly Living)":ak.needsArg==="text"?"Text value":ak.needsArg==="account"?"Account name":ak.needsArg==="name"?"Name":"Value"}
                       style={{...iStyle,padding:"7px 10px"}}/>
                   )}
                   {ak?.sublabel && <div style={{fontSize:10,color:T.muted}}>{ak.sublabel}</div>}
