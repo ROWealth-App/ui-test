@@ -25,6 +25,7 @@ import {
     "  .wo-topbar-extras { display: none !important; }",
     "  .wo-topbar-search { max-width: none !important; flex: 1 !important; }",
     "  .wo-summary-grid { grid-template-columns: 1fr 1fr !important; }",
+    "  .wo-detail-stats { grid-template-columns: 1fr 1fr !important; }",
     "  .wo-page-header { flex-direction: column !important; align-items: flex-start !important; gap: 10px !important; }",
     "  .wo-drawer-overlay > div:last-child { width: 100vw !important; min-width: 100vw !important; }",
     "  .wo-main-content { padding: 0 14px 24px !important; }",
