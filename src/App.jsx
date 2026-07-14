@@ -295,6 +295,50 @@ function TxToolbar({ search, setSearch, filter, setFilter, filters, placeholder 
   );
 }
 
+/* ─── Dismissible alerts ─────────────────────────────────────
+   Stored as { [alertId]: "YYYY-MM-DD" }. An alert stays hidden only while the stored
+   date === today, so every dismissal auto-expires at midnight and the alert resurfaces.
+
+   NOTE: this deliberately uses the REAL clock. Several alert *triggers* pin a demo date
+   (`new Date("2026-03-10")`); if dismissal keyed off that pinned date, `stored === today`
+   would be true forever and the alert would be dismissed permanently. */
+const DISMISS_KEY = "wealthos.dismissedAlerts";
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+function readDismissed() {
+  try { return JSON.parse(localStorage.getItem(DISMISS_KEY) || "{}"); }
+  catch (e) { void e; return {}; }
+}
+function isDismissedToday(alertId) { return readDismissed()[alertId] === todayISO(); }
+function dismissForToday(alertId) {
+  const today = todayISO();
+  // Drop stale keys while we're here so the map can't grow without bound.
+  const next = Object.fromEntries(Object.entries(readDismissed()).filter(([, d]) => d === today));
+  next[alertId] = today;
+  try { localStorage.setItem(DISMISS_KEY, JSON.stringify(next)); } catch (e) { void e; }
+}
+
+/* Pure pass-through wrapper — works with every alert shape (Card, div, inside a .map)
+   without restructuring any of them. Give each alert a STABLE id (never index-based). */
+function DismissibleAlert({ alertId, children, style = {} }) {
+  const [dismissed, setDismissed] = useState(() => isDismissedToday(alertId));
+  useEffect(() => { setDismissed(isDismissedToday(alertId)); }, [alertId]);
+  if (dismissed) return null;
+  return (
+    <div style={{ position: "relative", ...style }}>
+      {children}
+      <button
+        onClick={() => { dismissForToday(alertId); setDismissed(true); }}
+        title="Hides this alert until tomorrow"
+        style={{ position:"absolute", top:8, right:10, background:"transparent", border:"none",
+                 padding:"2px 4px", fontSize:10, fontWeight:600, color:T.muted, cursor:"pointer",
+                 fontFamily:"inherit", textDecoration:"underline", opacity:0.85, whiteSpace:"nowrap" }}>
+        Dismiss for today ✕
+      </button>
+    </div>
+  );
+}
+
 /* ─── Audit log ──────────────────────────────────────────────
    Records create/update/delete on user-managed entities.
    Powers the "History" tab in every detail drawer. */
@@ -313,6 +357,20 @@ function diffEntities(before, after, ignore = ["id","transactions","loanContract
   return out;
 }
 
+/* Primitives-only shallow copy — mirrors diffEntities' skip-arrays/objects rule so we
+   never retain a nested transaction tree inside the log. Lets a deleted transaction
+   render a real summary (date / amount / method / ref) instead of a bare label. */
+function snapshotOf(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const out = {};
+  Object.keys(obj).forEach(k => {
+    const v = obj[k];
+    if (v == null || Array.isArray(v) || typeof v === "object") return;
+    out[k] = v;
+  });
+  return out;
+}
+
 function makeAuditLogger(setAuditLog) {
   return (entityType, entityId, action, before, after, label) => {
     const entry = {
@@ -322,10 +380,43 @@ function makeAuditLogger(setAuditLog) {
       entityLabel: label || String(entityId || ""),
       action,
       changes: action === "update" ? diffEntities(before, after) : [],
+      // `before`/`after` were previously discarded for every non-update action.
+      // Keep a flat snapshot so the panel can describe what was removed/changed.
+      snapshot: action === "update" ? null
+              : snapshotOf(String(action).startsWith("delete") ? before : after),
       user: "You",
     };
     setAuditLog(prev => [entry, ...prev]);
   };
+}
+
+/* Badge label + colour per audit action. Replaces a ternary chain that had no arm for
+   edit-transaction / delete-transaction — both fell through to a blue "UPDATED" badge,
+   so a deleted transaction read as if it had merely been edited. */
+const ACTION_META = {
+  "create":              { label: "Created",     color: T.up },
+  "update":              { label: "Updated",     color: T.accent },
+  "delete":              { label: "Deleted",     color: T.down },
+  "add-transaction":     { label: "Transaction", color: T.warn },
+  "edit-transaction":    { label: "Edited",      color: T.warn },
+  "delete-transaction":  { label: "Deleted",     color: T.down },
+  "delete-price-update": { label: "Reverted",    color: T.down },
+  "cpf-withdrawal":      { label: "Withdrawal",  color: T.warn },
+};
+const actionMeta = (a) => ACTION_META[a] || { label: "Updated", color: T.accent };
+
+// Human-readable bits of a snapshotted transaction, for the audit detail line.
+function txSummaryBits(s) {
+  if (!s) return [];
+  const bits = [];
+  if (s.date) bits.push(`📅 ${s.date}`);
+  const amt = s.amount ?? s.totalAmount ?? s.qty;
+  if (amt != null && amt !== "" && !isNaN(+amt)) bits.push(`💰 ${s.currency || "S$"}${Number(amt).toLocaleString()}`);
+  if (s.method) bits.push(s.method);
+  if (s.ref) bits.push(`Ref ${s.ref}`);
+  if (s.status) bits.push(s.status);
+  if (s.notes) bits.push(s.notes);
+  return bits;
 }
 
 // Group flat double-entry posting rows into journal entries.
@@ -375,8 +466,8 @@ function AuditLogPanel({ auditLog, entityType, entityId }) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:8,padding:"4px 0"}}>
       {entries.map(e => {
-        const actionColor = e.action === "create" ? T.up : e.action === "delete" ? T.down : e.action === "add-transaction" ? T.warn : T.accent;
-        const actionLabel = e.action === "create" ? "Created" : e.action === "delete" ? "Deleted" : e.action === "add-transaction" ? "Transaction" : "Updated";
+        const { label: actionLabel, color: actionColor } = actionMeta(e.action);
+        const bits = txSummaryBits(e.snapshot);
         return (
           <div key={e.id} className="hov-row" style={{border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 14px",background:T.bg}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
@@ -386,8 +477,13 @@ function AuditLogPanel({ auditLog, entityType, entityId }) {
               </div>
               <span style={{fontSize:11,color:T.dim}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</span>
             </div>
-            {(e.action === "add-transaction" || e.action === "edit-transaction" || e.action === "delete-transaction") && e.entityLabel && (
+            {e.action !== "update" && e.entityLabel && (
               <div style={{marginTop:7,fontSize:12,color:T.text,fontWeight:500}}>{e.entityLabel}</div>
+            )}
+            {bits.length > 0 && (e.action === "delete-transaction" || e.action === "edit-transaction") && (
+              <div style={{marginTop:5,fontSize:11,color:T.muted,display:"flex",gap:10,flexWrap:"wrap"}}>
+                {bits.map((b,i) => <span key={i}>{b}</span>)}
+              </div>
             )}
             {e.changes.length > 0 && (
               <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4,fontSize:12,lineHeight:1.5}}>
@@ -1558,7 +1654,9 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
                                     onDelete={()=>{
                                       if(!window.confirm(`Delete this ${t.txType} transaction?`)) return;
                                       setTransactions(prev=>prev.filter(x=>(x.id||"")!==(t.id||"")));
-                                      if(logAudit) logAudit("stock", h.sym, "delete-transaction", t, null, `${t.txType} · ${t.qty||""} ${h.sym}`);
+                                      // Key by h.id — AuditLogPanel filters on entityId={h.id}, so a
+                                      // sym-keyed entry would never render in the holding's Audit tab.
+                                      if(logAudit) logAudit("stock", h.id, "delete-transaction", t, null, `${t.txType} · ${t.qty||""} ${h.sym} · ${t.date||"—"}`);
                                       showToast("Transaction deleted","success");
                                     }}/>
                                 </div>
@@ -1750,7 +1848,9 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
           onClose={()=>setEditStockTx(null)}
           onSave={(upd)=>{
             setTransactions(prev=>prev.map(x=>(x.id||"")===(editStockTx.id||"")?{...x,...upd}:x));
-            if(logAudit) logAudit("stock", editStockTx.sym, "edit-transaction", editStockTx, upd, `${upd.txType} · ${upd.qty||""} ${editStockTx.sym}`);
+            // Resolve the holding id — AuditLogPanel filters on entityId={h.id}, not the symbol.
+            const hid = (holdings||[]).find(x=>x.sym===editStockTx.sym)?.id;
+            if(logAudit) logAudit("stock", hid, "edit-transaction", editStockTx, upd, `${upd.txType} · ${upd.qty||""} ${editStockTx.sym} · ${upd.date||editStockTx.date||"—"}`);
             setEditStockTx(null);
             showToast("Transaction updated","success");
           }}/>
@@ -4974,6 +5074,19 @@ const POLICIES_INIT = [
       { id: "C002", type: "Hospitalisation", date: "2024-04-05", amount: 6800, status: "Paid", notes: "Appendectomy at Mt Elizabeth. Fully covered minus deductible. Payout received." },
       { id: "C013", type: "Specialist Outpatient", date: "2025-11-10", amount: 920, status: "Rejected", notes: "Treatment not covered under plan rider." },
     ], documents: [{ name: "Policy Certificate.pdf", date: "2019-01-11", type: "Policy" }] },
+  { id: 4, type: "ILP", insurer: "Prudential", policyNo: "ILP-2020-33915", planName: "PRULink SuperGrowth Account", status: "Active", sumAssured: 150000, cashValue: 0, surrenderValue: 36200, ilpFundValue: 38600, currency: "SGD", premium: 500, premFreq: "Monthly", totalPremPaid: 35500, startDate: "2020-09-01", endDate: null, nextPremDue: "2026-08-01", insuredName: "Dilwyn", dob: "1988-05-10", beneficiary: "Spouse — Jane Doe", riders: ["Critical Illness Accelerated", "Premium Waiver on TPD"], exclusions: ["Investment risk borne by policyholder — fund value is not guaranteed", "Suicide within first 12 months", "Early surrender incurs a surrender charge"], notes: "Investment-linked policy. Premiums buy units across the PRULink Global Equity and Asian Income funds after deducting insurance & admin charges. Fund value fluctuates with markets. 4 free fund switches per year.", reminderEnabled: true, reminderDays: 7,
+    premiumTransactions: [
+      { id: "PT401", date: "2020-09-01", amount: 500, method: "GIRO", ref: "PRU-2020-401", status: "Paid", notes: "Inception premium — units allocated after 100% first-year charge" },
+      { id: "PT402", date: "2021-09-01", amount: 500, method: "GIRO", ref: "PRU-2021-401", status: "Paid", notes: "Year 2 — allocation rate improved to 50%" },
+      { id: "PT403", date: "2022-09-01", amount: 500, method: "GIRO", ref: "PRU-2022-401", status: "Paid", notes: "" },
+      { id: "PT404", date: "2023-09-01", amount: 500, method: "GIRO", ref: "PRU-2023-401", status: "Paid", notes: "Full 100% allocation from year 4" },
+      { id: "PT405", date: "2024-09-01", amount: 500, method: "GIRO", ref: "PRU-2024-401", status: "Paid", notes: "" },
+      { id: "PT406", date: "2025-09-01", amount: 500, method: "GIRO", ref: "PRU-2025-401", status: "Paid", notes: "" },
+      { id: "PT407", date: "2026-05-01", amount: 500, method: "GIRO", ref: "PRU-2026-405", status: "Paid", notes: "May 2026 monthly premium" },
+      { id: "PT408", date: "2026-06-01", amount: 500, method: "GIRO", ref: "PRU-2026-406", status: "Paid", notes: "Jun 2026 monthly premium" },
+      { id: "PT409", date: "2026-07-01", amount: 500, method: "GIRO", ref: "PRU-2026-407", status: "Paid", notes: "Jul 2026 monthly premium" },
+    ],
+    claims: [], documents: [{ name: "Policy Document.pdf", date: "2020-09-02", type: "Policy" }, { name: "Fund Statement H1 2026.pdf", date: "2026-06-30", type: "Statement" }] },
 ];
 
 
@@ -5775,7 +5888,7 @@ function BondsScreen({ bonds, setBonds, accounts, setAccounts, showToast, auditL
                                 onDelete={()=>{
                                   if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
                                   setBonds(prev=>prev.map(b=>b.id===bond.id?{...b,transactions:(b.transactions||[]).filter(t=>t.id!==tx.id)}:b));
-                                  if(logAudit) logAudit("bond", bond.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  if(logAudit) logAudit("bond", bond.id, "delete-transaction", tx, null, `${tx.type} · S$${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}`);
                                   showToast("Transaction deleted","success");
                                 }}/>
                             </div>
@@ -6705,7 +6818,7 @@ function RetirementScreen({ plans, setPlans, accounts, setAccounts, showToast, a
                                 onDelete={()=>{
                                   if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
                                   setPlans(prev=>prev.map(p=>p.id===plan.id?{...p,transactions:(p.transactions||[]).filter(t=>t.id!==tx.id)}:p));
-                                  if(logAudit) logAudit("retirement", plan.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  if(logAudit) logAudit("retirement", plan.id, "delete-transaction", tx, null, `${tx.type} · S$${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}`);
                                   showToast("Transaction deleted","success");
                                 }}/>
                             </div>
@@ -8132,7 +8245,7 @@ function CryptoScreen({ cryptos, setCryptos, accounts, setAccounts, setTransacti
                                 onDelete={()=>{
                                   if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
                                   setCryptos(prev=>prev.map(c=>String(c.id)===String(crypto.id)?{...c,transactions:(c.transactions||[]).filter(t=>t.id!==tx.id)}:c));
-                                  if(logAudit) logAudit("crypto", crypto.id, "delete-transaction", tx, null, `${tx.type} · ${tx.qty||tx.amount||""}`);
+                                  if(logAudit) logAudit("crypto", crypto.id, "delete-transaction", tx, null, `${tx.type} · ${tx.qty||0} ${crypto.symbol} · ${tx.date||"—"}`);
                                   showToast("Transaction deleted","success");
                                 }}/>
                             </div>
@@ -8538,7 +8651,9 @@ const EMPTY_PE = {
   id:"", investmentType:"VC Fund", name:"", manager:"", vintageYear:new Date().getFullYear(),
   stage:"N/A", sector:"Technology", geography:"Southeast Asia",
   commitment:0, calledCapital:0, distributionsReceived:0, nav:0,
-  ownershipPct:0, irr:0,
+  // Rates: `irr` is the EXPECTED (target / underwritten) IRR; `estimatedIrr` is the
+  // current mark (GP report or your own model); `ytdReturn` is a year-to-date %.
+  ownershipPct:0, irr:0, estimatedIrr:0, ytdReturn:0,
   investmentDate:"", exitDate:"",
   currency:"SGD", fundSize:0, gpCommit:0,
   status:"Active", notes:"",
@@ -8550,7 +8665,7 @@ const PE_INIT = [
     id:"PE001", investmentType:"VC Fund", name:"Sequoia Capital Southeast Asia VI",
     manager:"Sequoia Capital", vintageYear:2022, stage:"N/A", sector:"Technology", geography:"Southeast Asia",
     commitment:250000, calledCapital:175000, distributionsReceived:22000, nav:218000,
-    ownershipPct:0, irr:14.2,
+    ownershipPct:0, irr:14.2, estimatedIrr:12.6, ytdReturn:4.1,
     investmentDate:"2022-06-01", exitDate:"",
     currency:"SGD", fundSize:850000000, gpCommit:2.0,
     status:"Active",
@@ -8568,7 +8683,7 @@ const PE_INIT = [
     id:"PE002", investmentType:"PE Fund", name:"KKR Asian Fund V",
     manager:"KKR & Co.", vintageYear:2023, stage:"N/A", sector:"Diversified", geography:"Asia Pacific",
     commitment:500000, calledCapital:225000, distributionsReceived:0, nav:238000,
-    ownershipPct:0, irr:8.5,
+    ownershipPct:0, irr:8.5, estimatedIrr:9.2, ytdReturn:2.3,
     investmentDate:"2023-03-15", exitDate:"",
     currency:"SGD", fundSize:15000000000, gpCommit:3.0,
     status:"Active",
@@ -8583,7 +8698,7 @@ const PE_INIT = [
     id:"PE003", investmentType:"Direct Equity", name:"Carousell Group Pte Ltd",
     manager:"Self-directed", vintageYear:2023, stage:"Series D+", sector:"Consumer", geography:"Singapore",
     commitment:50000, calledCapital:50000, distributionsReceived:0, nav:58000,
-    ownershipPct:0.04, irr:11.8,
+    ownershipPct:0.04, irr:11.8, estimatedIrr:15.0, ytdReturn:6.5,
     investmentDate:"2023-08-20", exitDate:"",
     currency:"SGD", fundSize:0, gpCommit:0,
     status:"Active",
@@ -8704,7 +8819,7 @@ function PEModal({ inv, onSave, onClose }) {
           <div><Label required>Commitment</Label><Input type="number" prefix="S$" value={f.commitment} onChange={e=>set("commitment",+e.target.value)}/></div>
         </div>
         <div style={{marginBottom:20}}>
-          <MoreOptions count={13} style={{gridColumn:"unset"}}>
+          <MoreOptions count={15} style={{gridColumn:"unset"}}>
             <div><Label>{isFund?"Vintage Year":"Investment Year"}</Label><Input type="number" value={f.vintageYear} onChange={e=>set("vintageYear",+e.target.value)}/></div>
             <div><Label>Sector</Label><Sel value={f.sector} onChange={e=>set("sector",e.target.value)} options={PE_SECTORS}/></div>
             <div><Label>Geography</Label><Input value={f.geography} onChange={e=>set("geography",e.target.value)} placeholder="e.g. SEA, US, Global"/></div>
@@ -8713,7 +8828,9 @@ function PEModal({ inv, onSave, onClose }) {
             <div><Label>Called Capital</Label><Input type="number" prefix="S$" value={f.calledCapital} onChange={e=>set("calledCapital",+e.target.value)}/></div>
             <div><Label>Distributions Received</Label><Input type="number" prefix="S$" value={f.distributionsReceived} onChange={e=>set("distributionsReceived",+e.target.value)}/></div>
             <div><Label>Current NAV</Label><Input type="number" prefix="S$" value={f.nav} onChange={e=>set("nav",+e.target.value)}/></div>
-            <div><Label>IRR (%)</Label><Input type="number" value={f.irr} onChange={e=>set("irr",+e.target.value)}/></div>
+            <div><Label>Expected IRR (%)</Label><Input type="number" value={f.irr} onChange={e=>set("irr",+e.target.value)}/></div>
+            <div><Label>Estimated IRR (%)</Label><Input type="number" value={f.estimatedIrr} onChange={e=>set("estimatedIrr",+e.target.value)}/></div>
+            <div><Label>YTD Return (%)</Label><Input type="number" value={f.ytdReturn} onChange={e=>set("ytdReturn",+e.target.value)}/></div>
             {isDirect?<div><Label>Ownership (%)</Label><Input type="number" value={f.ownershipPct} onChange={e=>set("ownershipPct",+e.target.value)}/></div>:<div><Label>Fund Size</Label><Input type="number" prefix="S$" value={f.fundSize} onChange={e=>set("fundSize",+e.target.value)}/></div>}
             <div><Label>Investment Date</Label><Input type="date" value={f.investmentDate} onChange={e=>set("investmentDate",e.target.value)}/></div>
             <div><Label>Exit Date (if any)</Label><Input type="date" value={f.exitDate} onChange={e=>set("exitDate",e.target.value)}/></div>
@@ -8979,7 +9096,11 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
   const totalValue = totalNAV + totalDistributions;
   const overallTVPI = totalCalled > 0 ? totalValue / totalCalled : 0;
   const overallDPI = totalCalled > 0 ? totalDistributions / totalCalled : 0;
-  const avgIRR = activeInvs.length > 0 ? activeInvs.reduce((s,i)=>s+(i.irr||0),0)/activeInvs.length : 0;
+  const avgOf = (key) => activeInvs.length > 0 ? activeInvs.reduce((s,i)=>s+(i[key]||0),0)/activeInvs.length : 0;
+  const avgExpIRR = avgOf("irr");            // expected / target
+  const avgEstIRR = avgOf("estimatedIrr");   // current mark
+  const avgYTD    = avgOf("ytdReturn");
+  void avgYTD;
 
   // Type breakdown
   const typeBreakdown = {};
@@ -9033,7 +9154,7 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
           {label:"Total NAV",value:fmtCompact(totalNAV),sub:`${activeInvs.length} positions`,icon:"💼",color:T.text},
           {label:"Commitment / Called",value:`${fmtCompact(totalCalled)} / ${fmtCompact(totalCommitment)}`,sub:`Unfunded: ${fmtCompact(totalUnfunded)}`,icon:"📥",color:T.accent},
           {label:"Distributions Received",value:fmtCompact(totalDistributions),sub:`DPI: ${overallDPI.toFixed(2)}x`,icon:"📤",color:T.up},
-          {label:"TVPI / Avg IRR",value:`${overallTVPI.toFixed(2)}x`,sub:`IRR: ${avgIRR.toFixed(1)}%`,icon:"📈",color:overallTVPI>=1?T.up:T.down},
+          {label:"TVPI / Avg IRR",value:`${overallTVPI.toFixed(2)}x`,sub:`Exp ${avgExpIRR.toFixed(1)}% · Est ${avgEstIRR.toFixed(1)}%`,icon:"📈",color:overallTVPI>=1?T.up:T.down},
         ].map((c,i)=>(
           <Card key={i} style={{padding:"18px 20px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -9073,15 +9194,17 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
 
       {/* Unfunded commitments alert */}
       {totalUnfunded > 0 && (
-        <Card style={{padding:"12px 16px",marginBottom:14,background:T.warnBg,border:`1px solid ${T.warn}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:18}}>⚠️</span>
-            <div style={{flex:1}}>
-              <div style={{fontSize:13,fontWeight:600,color:T.warn}}>{fmtCompact(totalUnfunded)} unfunded commitment</div>
-              <div style={{fontSize:11,color:T.muted,marginTop:1}}>Keep liquidity available — GPs may call capital on short notice</div>
+        <DismissibleAlert alertId="pe.unfunded" style={{marginBottom:14}}>
+          <Card style={{padding:"12px 130px 12px 16px",background:T.warnBg,border:`1px solid ${T.warn}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:18}}>⚠️</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,color:T.warn}}>{fmtCompact(totalUnfunded)} unfunded commitment</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:1}}>Keep liquidity available — GPs may call capital on short notice</div>
+              </div>
             </div>
-          </div>
-        </Card>
+          </Card>
+        </DismissibleAlert>
       )}
 
       {/* Filter toolbar */}
@@ -9120,7 +9243,7 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
             const tvpi = inv.calledCapital > 0 ? (inv.nav + inv.distributionsReceived) / inv.calledCapital : 0;
             return <MobileListItem key={inv.id} onClick={()=>navigate({screen:"privateequity",entityId:inv.id})}
               icon={tc.icon} iconBg={tc.bg} title={inv.name} subtitle={`${inv.manager} · ${inv.investmentType}`}
-              value={fmtCompact(inv.nav)} valueColor={T.text} valueSub={`TVPI ${tvpi.toFixed(2)}x · IRR ${inv.irr}%`}
+              value={fmtCompact(inv.nav)} valueColor={T.text} valueSub={`TVPI ${tvpi.toFixed(2)}x · Est IRR ${inv.estimatedIrr ?? inv.irr}%`}
               badge={inv.status} badgeBg={inv.status==="Active"?T.upBg:inv.status==="Realised"?T.inputBg:T.warnBg} badgeColor={inv.status==="Active"?T.up:inv.status==="Realised"?T.muted:T.warn}
               extra={<span style={{fontSize:11,color:T.dim}}>Called {fmtCompact(inv.calledCapital)} / {fmtCompact(inv.commitment)}</span>}
             />;
@@ -9129,7 +9252,7 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
       ) : (
         <Card style={{padding:0,overflowX:"auto"}} className="wo-table-scroll">
           <SortHeader gridCols={capCols("2.2fr 1fr 1.1fr 1.2fr 1fr 0.9fr 0.8fr")} sortKey={peSort.sortKey} sortDir={peSort.sortDir} onSort={peSort.onSort}
-            columns={[["Investment / Manager","left","name"],["Type","left","type"],["NAV","right","nav"],["Commit / Called","right","committed"],["Dist / TVPI","right","tvpi"],["IRR","right","irr"],["Status","left","status"]]}/>
+            columns={[["Investment / Manager","left","name"],["Type","left","type"],["NAV","right","nav"],["Commit / Called","right","committed"],["Dist / TVPI","right","tvpi"],["Est. IRR","right","estIrr"],["Status","left","status"]]}/>
           {peSort.sortFn(filtered, (i, k) => {
             const tvpi = i.calledCapital > 0 ? (i.nav + i.distributionsReceived) / i.calledCapital : 0;
             if (k==="name") return (i.name||"").toLowerCase();
@@ -9137,7 +9260,7 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
             if (k==="nav") return i.nav||0;
             if (k==="committed") return i.commitment||0;
             if (k==="tvpi") return tvpi;
-            if (k==="irr") return i.irr||0;
+            if (k==="estIrr") return i.estimatedIrr ?? i.irr ?? 0;
             if (k==="status") return i.status;
             return 0;
           }).map((inv, idx) => {
@@ -9171,7 +9294,12 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
                   <div style={{fontSize:10,color:tvpi>=1?T.up:T.down,marginTop:1,fontWeight:600}}>{tvpi.toFixed(2)}x TVPI</div>
                 </div>
                 <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:12,fontWeight:600,color:inv.irr>=0?T.up:T.down}}>{inv.irr>=0?"+":""}{inv.irr}%</div>
+                  {(() => { const est = inv.estimatedIrr ?? inv.irr ?? 0; return (
+                    <>
+                      <div style={{fontSize:12,fontWeight:600,color:est>=0?T.up:T.down}}>{est>=0?"+":""}{est}%</div>
+                      <div style={{fontSize:10,color:T.dim,marginTop:1}}>exp {inv.irr>=0?"+":""}{inv.irr}%</div>
+                    </>
+                  ); })()}
                 </div>
                 <div>
                   <Badge bg={inv.status==="Active"?T.upBg:inv.status==="Realised"?T.inputBg:inv.status==="Written Off"?T.downBg:T.warnBg}
@@ -9197,6 +9325,12 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
         const dpi = inv.calledCapital > 0 ? inv.distributionsReceived / inv.calledCapital : 0;
         const rvpi = inv.calledCapital > 0 ? inv.nav / inv.calledCapital : 0;
         const unfunded = (inv.commitment||0) - (inv.calledCapital||0);
+        // YTD cash actually received this calendar year (derived — unlike ytdReturn, which is
+        // a stored % because PE has no beginning-of-year NAV time-series to compute one from).
+        const YEAR = String(new Date().getFullYear());
+        const ytdDistributions = (inv.transactions||[])
+          .filter(t => (t.date||"").startsWith(YEAR) && ["Distribution","Income / Gain","Exit / Realisation"].includes(t.type))
+          .reduce((s,t) => s + (+t.amount||0), 0);
         const inter = "'Inter','Segoe UI',system-ui,sans-serif";
         const mono  = "'Courier New',Courier,monospace";
         const fmtA  = (v) => "S$" + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -9217,7 +9351,10 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
               {l:"Current NAV",v:fmtCompact(inv.nav)},
               {l:"TVPI",v:`${tvpi.toFixed(2)}x`},
               {l:"DPI",v:`${dpi.toFixed(2)}x`},
-              {l:"IRR",v:`${inv.irr>=0?"+":""}${inv.irr}%`},
+              (() => { const est = inv.estimatedIrr ?? inv.irr ?? 0;
+                return {l:"Est. IRR",v:`${est>=0?"+":""}${est}%`,c:est>=0?T.up:T.down}; })(),
+              (() => { const y = inv.ytdReturn ?? 0;
+                return {l:"YTD Return",v:`${y>=0?"+":""}${y}%`,c:y>=0?T.up:T.down}; })(),
             ]}
             tabs={[{id:"overview",label:"Overview"},{id:"transactions",label:`Transactions${txs.length>0?" ("+txs.length+")":""}`},{id:"postings",label:"Postings"},{id:"audit",label:"Audit"},{id:"manage",label:"Manage"}]}
             activeTab={drawerTab} onTab={goTab} onBack={goList}>
@@ -9273,7 +9410,11 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
                         ["TVPI (Total Value / Paid-In)",`${tvpi.toFixed(2)}x`],
                         ["DPI (Distributions / Paid-In)",`${dpi.toFixed(2)}x`],
                         ["RVPI (Residual / Paid-In)",`${rvpi.toFixed(2)}x`],
-                        ["IRR",`${inv.irr>=0?"+":""}${inv.irr}%`],
+                        // ── Rates ──
+                        ["Expected IRR (target)",`${inv.irr>=0?"+":""}${inv.irr}%`],
+                        ["Estimated IRR (current mark)",`${(inv.estimatedIrr??0)>=0?"+":""}${inv.estimatedIrr??0}%`],
+                        ["YTD Return",`${(inv.ytdReturn??0)>=0?"+":""}${inv.ytdReturn??0}%`],
+                        ["YTD Distributions",fmtCompact(ytdDistributions)],
                       ].map(([k,v])=>(
                         <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
                           <span style={{fontSize:12,color:T.muted}}>{k}</span>
@@ -9348,7 +9489,7 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
                                 onDelete={()=>{
                                   if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
                                   setInvestments(prev=>prev.map(i=>i.id===inv.id?{...i,transactions:(i.transactions||[]).filter(t=>t.id!==tx.id)}:i));
-                                  if(logAudit) logAudit("pe", inv.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  if(logAudit) logAudit("pe", inv.id, "delete-transaction", tx, null, `${tx.type} · S$${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}`);
                                   showToast("Transaction deleted","success");
                                 }}/>
                             </div>
@@ -10142,7 +10283,7 @@ function BPScreen({ ventures, setVentures, accounts, setAccounts, showToast, aud
                                 onDelete={()=>{
                                   if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
                                   setVentures(prev=>prev.map(v=>v.id===venture.id?{...v,transactions:(v.transactions||[]).filter(t=>t.id!==tx.id)}:v));
-                                  if(logAudit) logAudit("venture", venture.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  if(logAudit) logAudit("venture", venture.id, "delete-transaction", tx, null, `${tx.type} · S$${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}`);
                                   showToast("Transaction deleted","success");
                                 }}/>
                             </div>
@@ -10697,15 +10838,17 @@ function CollectiblesScreen({ items, setItems, accounts, setAccounts, showToast,
 
       {/* Underinsured alert */}
       {underInsured.length > 0 && (
-        <Card style={{padding:"12px 16px",marginBottom:14,background:T.warnBg,border:`1px solid ${T.warn}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:18}}>⚠️</span>
-            <div style={{flex:1}}>
-              <div style={{fontSize:13,fontWeight:600,color:T.warn}}>{underInsured.length} item{underInsured.length!==1?"s":""} under-insured</div>
-              <div style={{fontSize:11,color:T.muted,marginTop:1}}>Current market value exceeds insured value on {underInsured.map(u=>u.name).slice(0,3).join(", ")}{underInsured.length>3?` and ${underInsured.length-3} more`:""} — review your valuables policy</div>
+        <DismissibleAlert alertId="collectibles.underinsured" style={{marginBottom:14}}>
+          <Card style={{padding:"12px 130px 12px 16px",background:T.warnBg,border:`1px solid ${T.warn}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:18}}>⚠️</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,color:T.warn}}>{underInsured.length} item{underInsured.length!==1?"s":""} under-insured</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:1}}>Current market value exceeds insured value on {underInsured.map(u=>u.name).slice(0,3).join(", ")}{underInsured.length>3?` and ${underInsured.length-3} more`:""} — review your valuables policy</div>
+              </div>
             </div>
-          </div>
-        </Card>
+          </Card>
+        </DismissibleAlert>
       )}
 
       {/* Filter toolbar */}
@@ -10853,15 +10996,17 @@ function CollectiblesScreen({ items, setItems, accounts, setAccounts, showToast,
                 {drawerTab === "overview" && (
                   <div style={{display:"flex",flexDirection:"column",gap:16}}>
                     {underIns && item.status === "Active" && (
-                      <Card style={{padding:"10px 14px",background:T.warnBg,border:`1px solid ${T.warn}`}}>
-                        <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <span style={{fontSize:16}}>⚠️</span>
-                          <div style={{flex:1}}>
-                            <div style={{fontSize:12,fontWeight:600,color:T.warn}}>Under-insured by {fmtCompact((item.currentValue||0) - (item.insuredValue||0))}</div>
-                            <div style={{fontSize:11,color:T.muted,marginTop:1}}>Insured at {fmtCompact(item.insuredValue)} vs current value {fmtCompact(item.currentValue)} — request a valuables policy top-up</div>
+                      <DismissibleAlert alertId={`collectible.underinsured.${item.id}`}>
+                        <Card style={{padding:"10px 130px 10px 14px",background:T.warnBg,border:`1px solid ${T.warn}`}}>
+                          <div style={{display:"flex",alignItems:"center",gap:10}}>
+                            <span style={{fontSize:16}}>⚠️</span>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:12,fontWeight:600,color:T.warn}}>Under-insured by {fmtCompact((item.currentValue||0) - (item.insuredValue||0))}</div>
+                              <div style={{fontSize:11,color:T.muted,marginTop:1}}>Insured at {fmtCompact(item.insuredValue)} vs current value {fmtCompact(item.currentValue)} — request a valuables policy top-up</div>
+                            </div>
                           </div>
-                        </div>
-                      </Card>
+                        </Card>
+                      </DismissibleAlert>
                     )}
                     <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
                       <div style={{padding:"11px 16px",background:T.inputBg,fontSize:12,fontWeight:700}}>📋 Item Details</div>
@@ -10984,7 +11129,7 @@ function CollectiblesScreen({ items, setItems, accounts, setAccounts, showToast,
                                 onDelete={()=>{
                                   if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
                                   setItems(prev=>prev.map(i=>i.id===item.id?{...i,transactions:(i.transactions||[]).filter(t=>t.id!==tx.id)}:i));
-                                  if(logAudit) logAudit("collectible", item.id, "delete-transaction", tx, null, `${tx.type} · ${tx.amount||""}`);
+                                  if(logAudit) logAudit("collectible", item.id, "delete-transaction", tx, null, `${tx.type} · S$${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}`);
                                   showToast("Transaction deleted","success");
                                 }}/>
                             </div>
@@ -12112,7 +12257,7 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                                   onDelete={()=>{
                                     if(!window.confirm("Delete this repayment?")) return;
                                     update({ loanRepayments:(p.loanRepayments||[]).filter(x=>x.id!==r.id) });
-                                    if(logAudit) logAudit("property", p.id, "delete-transaction", r, null, `Mortgage repayment · ${sym}${r.totalAmount}`);
+                                    if(logAudit) logAudit("property", p.id, "delete-transaction", r, null, `Mortgage repayment · ${sym}${(+r.totalAmount||0).toLocaleString()} · ${r.date||"—"}`);
                                     showToast("Repayment deleted","success");
                                   }}/>
                               </div>
@@ -12515,9 +12660,11 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                 </>
               ) : (
                 <>
-                  <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:10,padding:"14px 16px",fontSize:13,color:T.warn}}>
-                    ⚠️ No home insurance linked. Link a policy below to track coverage here.
-                  </div>
+                  <DismissibleAlert alertId={`property.noinsurance.${p.id}`}>
+                    <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:10,padding:"14px 130px 14px 16px",fontSize:13,color:T.warn}}>
+                      ⚠️ No home insurance linked. Link a policy below to track coverage here.
+                    </div>
+                  </DismissibleAlert>
                   {homePolicies.length===0 ? (
                     <div style={{textAlign:"center",padding:"32px 20px",color:T.muted}}>
                       <div style={{fontSize:28,marginBottom:8}}>🏠</div>
@@ -13233,7 +13380,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
 
   const handleDeleteClaim = (pol, c) => {
     setPolicies(prev => prev.map(p => p.id === pol.id ? { ...p, claims: (p.claims || []).filter(x => x.id !== c.id) } : p));
-    if (logAudit) logAudit("insurance", pol.id, "delete-transaction", c, null, `Claim · ${c.type} · S$${parseFloat(c.amount)||0}`);
+    if (logAudit) logAudit("insurance", pol.id, "delete-transaction", c, null, `Claim · ${c.type} · S$${(parseFloat(c.amount)||0).toLocaleString()} · ${c.date||"—"}`);
     showToast("Claim deleted", "success");
   };
 
@@ -13299,7 +13446,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         }
       : p
     ));
-    if (logAudit) logAudit("insurance", polId, "delete-transaction", tx, null, `Premium · S$${tx.amount||0} (${tx.method||""})`);
+    if (logAudit) logAudit("insurance", polId, "delete-transaction", tx, null, `Premium · S$${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}${tx.method?` (${tx.method})`:""}`);
     showToast("Premium payment deleted", "success");
   };
 
@@ -13525,7 +13672,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         if (alerts.length === 0) return null;
         return (
           <div style={{ marginBottom: 16, display: "flex", flexDirection: "column", gap: 8 }}>
-            {alerts.map(({ pol, type }, i) => {
+            {alerts.map(({ pol, type }) => {
               const due = new Date(pol.nextPremDue);
               const daysUntil = Math.ceil((due - TODAY) / 86400000);
               const tc = INS_TYPES[pol.type] || { icon: "📋", color: T.muted, bg: T.inputBg };
@@ -13536,7 +13683,8 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
               const annualPrem = (parseFloat(pol.premium)||0) * ({ Monthly:12, Quarterly:4, "Half-Yearly":2, Yearly:1, "Single Premium":0, "N/A":0 }[pol.premFreq]||1);
               const dueAmount = (parseFloat(pol.premium)||0);
               return (
-                <div key={i} style={{ background: bgColor, border: `1px solid ${borderColor}`, borderRadius: 10, padding: "12px 16px", display: "flex", gap: 12, alignItems: "center" }}>
+                <DismissibleAlert key={`${type}-${pol.id}`} alertId={`insurance.premium.${type}.${pol.id}`}>
+                <div style={{ background: bgColor, border: `1px solid ${borderColor}`, borderRadius: 10, padding: "12px 130px 12px 16px", display: "flex", gap: 12, alignItems: "center" }}>
                   <span style={{ fontSize: 18, flexShrink: 0 }}>{isOverdue ? "⚠️" : "🔔"}</span>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>
@@ -13557,6 +13705,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                   </div>
                   <button onClick={() => navigate({screen:"insurance",entityId:pol.id})} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", color: T.text, flexShrink: 0 }}>View</button>
                 </div>
+                </DismissibleAlert>
               );
             })}
           </div>
@@ -13716,13 +13865,15 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
 
                 {/* Lapsed / closed warning banner */}
                 {(pol.status === "Lapsed" || pol.status === "Cancelled" || pol.status === "Surrendered") && (
-                  <div style={{ background: T.downBg, border: `1px solid #FECACA`, borderRadius: 10, padding: "12px 16px", display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
-                    <span style={{ fontSize: 20 }}>🚫</span>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: T.down }}>This policy is {pol.status}</div>
-                      <div style={{ fontSize: 12, color: T.down, marginTop: 2 }}>Coverage has ended. No new claims can be filed. Records are preserved for reference.</div>
+                  <DismissibleAlert alertId={`insurance.lapsed.${pol.id}`} style={{ marginBottom: 16 }}>
+                    <div style={{ background: T.downBg, border: `1px solid #FECACA`, borderRadius: 10, padding: "12px 130px 12px 16px", display: "flex", gap: 10, alignItems: "center" }}>
+                      <span style={{ fontSize: 20 }}>🚫</span>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: T.down }}>This policy is {pol.status}</div>
+                        <div style={{ fontSize: 12, color: T.down, marginTop: 2 }}>Coverage has ended. No new claims can be filed. Records are preserved for reference.</div>
+                      </div>
                     </div>
-                  </div>
+                  </DismissibleAlert>
                 )}
 
                 {/* Overview tab */}
@@ -13737,15 +13888,17 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                       const isUpcoming = daysUntil >= 0 && daysUntil <= (pol.reminderDays || 14);
                       if (!isOverdue && !isUpcoming) return null;
                       return (
-                        <div style={{ background: isOverdue ? T.downBg : T.warnBg, border: `1px solid ${isOverdue ? T.down : T.warn}30`, borderRadius: 10, padding: "12px 14px", display: "flex", gap: 10, alignItems: "center" }}>
-                          <span style={{ fontSize: 18 }}>{isOverdue ? "⚠️" : "🔔"}</span>
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: isOverdue ? T.down : T.warn }}>
-                              {isOverdue ? `Premium overdue by ${Math.abs(daysUntil)} days` : daysUntil === 0 ? "Premium due today!" : `Premium due in ${daysUntil} days`}
+                        <DismissibleAlert alertId={`insurance.premium.detail.${pol.id}`}>
+                          <div style={{ background: isOverdue ? T.downBg : T.warnBg, border: `1px solid ${isOverdue ? T.down : T.warn}30`, borderRadius: 10, padding: "12px 130px 12px 14px", display: "flex", gap: 10, alignItems: "center" }}>
+                            <span style={{ fontSize: 18 }}>{isOverdue ? "⚠️" : "🔔"}</span>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: isOverdue ? T.down : T.warn }}>
+                                {isOverdue ? `Premium overdue by ${Math.abs(daysUntil)} days` : daysUntil === 0 ? "Premium due today!" : `Premium due in ${daysUntil} days`}
+                              </div>
+                              <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>S${parseFloat(pol.premium||0).toLocaleString()} due on {pol.nextPremDue}</div>
                             </div>
-                            <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>S${parseFloat(pol.premium||0).toLocaleString()} due on {pol.nextPremDue}</div>
                           </div>
-                        </div>
+                        </DismissibleAlert>
                       );
                     })()}
                     <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -15657,7 +15810,7 @@ function LoanDrawer({ loan, setLoans, accounts, setAccounts, showToast, onClose,
       outstandingBalance: newOutstanding,
       status: l.status === "Completed" && newOutstanding > 0 ? "Active" : l.status,
     } : l));
-    if (logAudit) logAudit("loan", loan.id, "delete-transaction", r, null, `Repayment · S$${r.amount} (principal S$${r.principal})`);
+    if (logAudit) logAudit("loan", loan.id, "delete-transaction", r, null, `Repayment · S$${(+r.amount||0).toLocaleString()} · ${r.date||"—"} (principal S$${(+r.principal||0).toLocaleString()})`);
     showToast("Repayment deleted", "success");
   };
 
@@ -15687,22 +15840,26 @@ function LoanDrawer({ loan, setLoans, accounts, setAccounts, showToast, onClose,
             <>
               {/* Payment due alerts — matches CC due alerts */}
               {loan.status === "Active" && daysUntilDue <= 7 && (
-                <div style={{background:T.warnBg,border:"1px solid #FDE68A",borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
-                  <span style={{fontSize:18}}>⚠️</span>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:700,color:T.warn}}>Payment due in {daysUntilDue} day{daysUntilDue!==1?"s":""}</div>
-                    <div style={{fontSize:12,color:T.warn}}>S${loan.monthlyPayment.toLocaleString(undefined,{minimumFractionDigits:2})} due {nextDueDateStr}</div>
+                <DismissibleAlert alertId={`loan.due.${loan.id}`}>
+                  <div style={{background:T.warnBg,border:"1px solid #FDE68A",borderRadius:10,padding:"12px 130px 12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                    <span style={{fontSize:18}}>⚠️</span>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:T.warn}}>Payment due in {daysUntilDue} day{daysUntilDue!==1?"s":""}</div>
+                      <div style={{fontSize:12,color:T.warn}}>S${loan.monthlyPayment.toLocaleString(undefined,{minimumFractionDigits:2})} due {nextDueDateStr}</div>
+                    </div>
                   </div>
-                </div>
+                </DismissibleAlert>
               )}
               {loan.status === "Active" && daysUntilDue > 7 && (
-                <div style={{background:T.accentBg,border:"1px solid #BFDBFE",borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
-                  <span style={{fontSize:18}}>🔁</span>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:700,color:T.accent}}>Recurring payment — {daysUntilDue} days until due</div>
-                    <div style={{fontSize:12,color:T.accent}}>S${loan.monthlyPayment.toLocaleString(undefined,{minimumFractionDigits:2})}/mo · next due {nextDueDateStr} (day {startDay} monthly)</div>
+                <DismissibleAlert alertId={`loan.recurring.${loan.id}`}>
+                  <div style={{background:T.accentBg,border:"1px solid #BFDBFE",borderRadius:10,padding:"12px 130px 12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                    <span style={{fontSize:18}}>🔁</span>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:T.accent}}>Recurring payment — {daysUntilDue} days until due</div>
+                      <div style={{fontSize:12,color:T.accent}}>S${loan.monthlyPayment.toLocaleString(undefined,{minimumFractionDigits:2})}/mo · next due {nextDueDateStr} (day {startDay} monthly)</div>
+                    </div>
                   </div>
-                </div>
+                </DismissibleAlert>
               )}
               {loan.status === "Completed" && (
                 <div style={{background:T.upBg,border:"1px solid #BBF7D0",borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
@@ -16240,7 +16397,7 @@ function LoansScreen({ loans, setLoans, properties, setProperties, accounts, set
         if (alerts.length === 0) return null;
         return (
           <div style={{ marginBottom:16, display:"flex", flexDirection:"column", gap:8 }}>
-            {alerts.map(({ loan: al, type }, i) => {
+            {alerts.map(({ loan: al, type }) => {
               const due = new Date(al.nextPaymentDue);
               const daysUntil = Math.ceil((due - TODAY) / 86400000);
               const isOverdue = type === "overdue";
@@ -16249,7 +16406,8 @@ function LoansScreen({ loans, setLoans, properties, setProperties, accounts, set
               const textColor = isOverdue ? T.down : T.warn;
               const licon = LOAN_TYPE_ICONS[al.loanType] || "💰";
               return (
-                <div key={i} style={{ background:bgColor, border:`1px solid ${borderColor}`, borderRadius:10, padding:"12px 16px", display:"flex", gap:12, alignItems:"center" }}>
+                <DismissibleAlert key={`${type}-${al.id}`} alertId={`loan.${type}.${al.id}`}>
+                <div style={{ background:bgColor, border:`1px solid ${borderColor}`, borderRadius:10, padding:"12px 130px 12px 16px", display:"flex", gap:12, alignItems:"center" }}>
                   <span style={{ fontSize:18, flexShrink:0 }}>{isOverdue ? "⚠️" : "🔔"}</span>
                   <div style={{ flex:1 }}>
                     <div style={{ fontSize:13, fontWeight:600, color:T.text }}>
@@ -16270,6 +16428,7 @@ function LoansScreen({ loans, setLoans, properties, setProperties, accounts, set
                   </div>
                   <button onClick={() => navigate({screen:"loans",entityId:al.id})} style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:7, padding:"5px 12px", fontSize:12, cursor:"pointer", fontFamily:"inherit", color:T.text, flexShrink:0 }}>View</button>
                 </div>
+                </DismissibleAlert>
               );
             })}
           </div>
@@ -17010,7 +17169,7 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
   const handleDeleteTxn = (tid) => {
     const removed = transactions.find(t => t.id === tid);
     setTransactions(prev => prev.filter(t => t.id !== tid));
-    if (logAudit && removed) logAudit("creditcard", card.id, "delete-transaction", removed, null, `${removed.type} · ${removed.currency||"SGD"} ${removed.amount||0}${removed.description?` — ${removed.description}`:""}`);
+    if (logAudit && removed) logAudit("creditcard", card.id, "delete-transaction", removed, null, `${removed.type} · ${removed.currency||"SGD"} ${(+removed.amount||0).toLocaleString()} · ${removed.date||"—"}${removed.description?` — ${removed.description}`:""}`);
     showToast("Transaction removed","success");
   };
 
@@ -17076,22 +17235,26 @@ function CCDrawer({ card, accounts, setAccounts, transactions, setTransactions, 
             <>
               {/* Payment due alert */}
               {!isDebit && card.dueDayOfMonth && daysUntilDue !== null && daysUntilDue <= 7 && (
-                <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
-                  <span style={{fontSize:18}}>⚠️</span>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:700,color:T.warn}}>Payment due in {daysUntilDue} day{daysUntilDue!==1?"s":""}</div>
-                    <div style={{fontSize:12,color:T.warn}}>Min. payment {cardSymbol}{card.minimumPayment.toLocaleString()} due {nextDueDateStr}</div>
+                <DismissibleAlert alertId={`creditcard.due.${card.id}`}>
+                  <div style={{background:T.warnBg,border:`1px solid #FDE68A`,borderRadius:10,padding:"12px 130px 12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                    <span style={{fontSize:18}}>⚠️</span>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:T.warn}}>Payment due in {daysUntilDue} day{daysUntilDue!==1?"s":""}</div>
+                      <div style={{fontSize:12,color:T.warn}}>Min. payment {cardSymbol}{card.minimumPayment.toLocaleString()} due {nextDueDateStr}</div>
+                    </div>
                   </div>
-                </div>
+                </DismissibleAlert>
               )}
               {isRecurringDue && daysUntilDue !== null && daysUntilDue > 7 && (
-                <div style={{background:T.accentBg,border:`1px solid #BFDBFE`,borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
-                  <span style={{fontSize:18}}>🔁</span>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:700,color:T.accent}}>Recurring payment — {daysUntilDue} days until due</div>
-                    <div style={{fontSize:12,color:T.accent}}>{cardSymbol}{card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})} outstanding · next due {nextDueDateStr} (day {card.dueDayOfMonth} monthly)</div>
+                <DismissibleAlert alertId={`creditcard.recurring.${card.id}`}>
+                  <div style={{background:T.accentBg,border:`1px solid #BFDBFE`,borderRadius:10,padding:"12px 130px 12px 14px",display:"flex",gap:10,alignItems:"center"}}>
+                    <span style={{fontSize:18}}>🔁</span>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:T.accent}}>Recurring payment — {daysUntilDue} days until due</div>
+                      <div style={{fontSize:12,color:T.accent}}>{cardSymbol}{card.currentBalance.toLocaleString(undefined,{minimumFractionDigits:2})} outstanding · next due {nextDueDateStr} (day {card.dueDayOfMonth} monthly)</div>
+                    </div>
                   </div>
-                </div>
+                </DismissibleAlert>
               )}
               {!isDebit && card.currentBalance === 0 && (
                 <div style={{background:T.upBg,border:`1px solid #BBF7D0`,borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"center"}}>
