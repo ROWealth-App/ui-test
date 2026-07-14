@@ -156,7 +156,7 @@ function MoreOptions({ title="More options", count, children, defaultOpen=false,
      out  → money paid from your pocket    (purchase, capital call, fee, premium, maintenance)
      info → no cash flow, informational    (valuation update, internal transfer, stake/unstake) */
 const TX_FLOW_IN  = new Set(["Sale","Sell","Coupon","Distribution","Interest","Redemption","Payout","Withdrawal","Staking Reward","Airdrop","Dividend","Profit Distribution","Salary / Drawings","Loan Repayment","Capital Withdrawal","Exit / Buyout","Exit / Realisation","Income / Gain"]);
-const TX_FLOW_OUT = new Set(["Purchase","Buy","Fee","Capital Contribution","Partner Loan","Capital Call","Management Fee","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration","Top-Up","Premium","Contribution"]);
+const TX_FLOW_OUT = new Set(["Purchase","Buy","Fee","Capital Contribution","Partner Loan","Capital Call","Additional Investment","Management Fee","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration","Top-Up","Premium","Contribution"]);
 const TX_FLOW_INFO = new Set(["Valuation Update","Transfer In","Transfer Out","Stake","Unstake","Deposit","Withdraw"]);
 const classifyTxFlow = (type) =>
   TX_FLOW_OUT.has(type)  ? "out"  :
@@ -958,9 +958,12 @@ function DetailPage({ icon, iconBg, title, subtitle, badges, stats, tabs, active
           </div>
           {headerActions}
         </div>
-        {stats && (
-          <div className="wo-detail-stats" style={{ display: "grid", gridTemplateColumns: `repeat(${stats.length},1fr)`, gap: 12, marginBottom: 14 }}>
-            {stats.map(s => (
+        {stats && stats.filter(Boolean).length > 0 && (() => {
+          // Filter falsy so callers can include a stat conditionally (`cond ? {...} : null`).
+          const shown = stats.filter(Boolean);
+          return (
+          <div className="wo-detail-stats" style={{ display: "grid", gridTemplateColumns: `repeat(${shown.length},1fr)`, gap: 12, marginBottom: 14 }}>
+            {shown.map(s => (
               <div key={s.l} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9, padding: "10px 12px" }}>
                 <div style={{ fontSize: 11, color: T.muted, fontWeight: 500 }}>{s.l}</div>
                 <div style={{ fontSize: 14, fontWeight: 700, marginTop: 3, color: s.c || T.text }}>{s.v}</div>
@@ -968,7 +971,8 @@ function DetailPage({ icon, iconBg, title, subtitle, badges, stats, tabs, active
               </div>
             ))}
           </div>
-        )}
+          );
+        })()}
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           {tabs.map(t => (
             <button key={t.id} onClick={() => onTab(t.id)}
@@ -5186,6 +5190,20 @@ const POLICIES_INIT = [
       { id: "PT409", date: "2026-07-01", amount: 500, method: "GIRO", ref: "PRU-2026-407", status: "Paid", notes: "Jul 2026 monthly premium" },
     ],
     claims: [], documents: [{ name: "Policy Document.pdf", date: "2020-09-02", type: "Policy" }, { name: "Fund Statement H1 2026.pdf", date: "2026-06-30", type: "Statement" }] },
+  /* DBS Signature Income is an INSURANCE product (a whole-life income plan underwritten by
+     Manulife, distributed by DBS Treasures) — not a fund. Single premium in, a monthly income
+     stream out, against an account value. So it reuses the same payout machinery as the ILP. */
+  { id: 5, type: "Whole Life", insurer: "Manulife (via DBS Treasures)", policyNo: "SI-2023-88104", planName: "DBS Signature Income", status: "Active", sumAssured: 180000, cashValue: 120000, surrenderValue: 108500, ilpFundValue: 0, currency: "SGD", premium: 150000, premFreq: "Single Premium", totalPremPaid: 150000, startDate: "2023-04-01", endDate: null, nextPremDue: "—", insuredName: "Dilwyn", dob: "1988-05-10", beneficiary: "Spouse — Jane Doe", riders: [], exclusions: ["Suicide within first 12 months", "Early surrender incurs a surrender charge"], notes: "Single-premium whole-life income plan. Pays a monthly income stream from year 2. Account value accretes with bonuses; monthly payouts are drawn against it.", reminderEnabled: false, reminderDays: 7,
+    linkedAssetType: "cashaccount", linkedAssetId: 1,
+    premiumTransactions: [
+      { id: "PT501", date: "2023-04-01", amount: 150000, method: "Bank Transfer", ref: "DBS-SI-001", status: "Paid", notes: "Single premium — funded from DBS Multiplier" },
+    ],
+    payouts: [
+      { id: "PO501", date: "2026-05-01", type: "Payout", amount: 625, method: "Bank Transfer", creditAccountId: 1, source: "cash", ref: "SI-PAY-2605", status: "Paid", notes: "May 2026 monthly income" },
+      { id: "PO502", date: "2026-06-01", type: "Payout", amount: 625, method: "Bank Transfer", creditAccountId: 1, source: "cash", ref: "SI-PAY-2606", status: "Paid", notes: "Jun 2026 monthly income" },
+      { id: "PO503", date: "2026-07-01", type: "Payout", amount: 625, method: "Bank Transfer", creditAccountId: 1, source: "cash", ref: "SI-PAY-2607", status: "Paid", notes: "Jul 2026 monthly income" },
+    ],
+    claims: [], documents: [{ name: "Policy Illustration.pdf", date: "2023-04-02", type: "Policy" }, { name: "Annual Statement 2025.pdf", date: "2026-01-10", type: "Statement" }] },
 ];
 
 
@@ -8809,8 +8827,8 @@ const PE_INIT = [
 // ── VC/PE Transaction Modal ───────────────────────────────────
 function PETxModalInner({ inv, editTx, cashAccounts, onSave, onClose }) {
   const isEdit = !!editTx;
-  const txTypes = ["Capital Call","Distribution","Income / Gain","Management Fee","Exit / Realisation"];
-  const txTypeIcon = {"Capital Call":"📤","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Exit / Realisation":"🏁"};
+  const txTypes = ["Capital Call","Additional Investment","Distribution","Income / Gain","Management Fee","Exit / Realisation"];
+  const txTypeIcon = {"Capital Call":"📤","Additional Investment":"➕","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Exit / Realisation":"🏁"};
 
   const [f, setF] = useState(editTx ? { ...editTx } : {
     type: "Capital Call",
@@ -8873,7 +8891,8 @@ function PETxModalInner({ inv, editTx, cashAccounts, onSave, onClose }) {
         <FlowBanner type={f.type} flowOverride={recordOnly ? "info" : undefined}
           amount={recordOnly ? null : f.amount} label={
           recordOnly ? "📝 Recorded — no cash flow"
-          : f.type==="Capital Call" ? "📤 Capital called"
+          : f.type==="Capital Call" ? "📤 Capital called (draws down existing commitment)"
+          : f.type==="Additional Investment" ? "➕ Additional investment (new money — raises commitment)"
           : f.type==="Management Fee" ? "⚠️ Management fee paid"
           : f.type==="Distribution" ? "📥 Distribution received"
           : f.type==="Income / Gain" ? "🎁 Income / realised gain"
@@ -9533,7 +9552,8 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
                   <div style={{display:"flex",flexDirection:"column",gap:14}}>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                       {(()=>{
-                        const calls=txs.filter(t=>t.type==="Capital Call");
+                        // Both draw cash into the fund, so both count toward "Total Called".
+                        const calls=txs.filter(t=>t.type==="Capital Call"||t.type==="Additional Investment");
                         const dists=txs.filter(t=>t.type==="Distribution");
                         const fees=txs.filter(t=>t.type==="Management Fee");
                         return [
@@ -9557,9 +9577,9 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
                     ):(
                       <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
                         {visibleTxs.map((tx,i)=>{
-                          const isOut = ["Capital Call","Management Fee"].includes(tx.type);
+                          const isOut = ["Capital Call","Additional Investment","Management Fee"].includes(tx.type);
                           const isIncome = ["Distribution","Income / Gain","Exit / Realisation"].includes(tx.type);
-                          const icon = {"Capital Call":"📤","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Valuation Update":"📊","Exit / Realisation":"🏁"}[tx.type]||"💰";
+                          const icon = {"Capital Call":"📤","Additional Investment":"➕","Distribution":"📥","Income / Gain":"🎁","Management Fee":"⚠️","Valuation Update":"📊","Exit / Realisation":"🏁"}[tx.type]||"💰";
                           return (
                             <div key={tx.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
                               <div style={{width:34,height:34,borderRadius:8,background:isIncome?T.upBg:isOut?T.downBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
@@ -9611,9 +9631,11 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
                   const sortedTxs = (inv.transactions||[]).filter(t=>t.status==="Complete"&&t.type!=="Valuation Update").slice().sort((a,b)=>b.date.localeCompare(a.date));
                   const journalRows = [];
                   sortedTxs.forEach(tx => {
-                    if (tx.type==="Capital Call") {
+                    // An Additional Investment settles exactly like a Capital Call (Dr the
+                    // investment, Cr cash) — they differ only in what they do to commitment.
+                    if (tx.type==="Capital Call" || tx.type==="Additional Investment") {
                       journalRows.push(
-                        {date:tx.date,desc:`Capital Call — ${tx.notes||inv.name}`,account:invAcct,amount:fmtA(tx.amount),debit:true,_first:true},
+                        {date:tx.date,desc:`${tx.type} — ${tx.notes||inv.name}`,account:invAcct,amount:fmtA(tx.amount),debit:true,_first:true},
                         {date:null,desc:"",account:cashAcct,amount:fmtA(tx.amount),debit:false,_first:false},
                       );
                     } else if (tx.type==="Distribution") {
@@ -13366,7 +13388,7 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
   );
 }
 
-function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
+function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, investments, showToast, auditLog, logAudit, route, navigate }) {
   const isMobile = useIsMobile();
   const [insTab, setInsTab] = useState("overview");
   const [filterType, setFilterType] = useState("All");
@@ -13398,15 +13420,108 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
     startDate: "", endDate: "", nextPremDue: "", insuredName: "Dilwyn",
     reminderEnabled: true, reminderDays: 14,
     dob: "", beneficiary: "", riders: [], exclusions: [], notes: "",
-    claims: [], documents: [],
+    claims: [], documents: [], payouts: [],
+    // Two fields, not one: PE ids are strings while cash-account ids are numbers, so a single
+    // id column could not be resolved unambiguously. Mirrors property.linkedInsuranceId.
+    linkedAssetType: "", linkedAssetId: "",
     riderInput: "", exclusionInput: "",
   };
   const EMPTY_CLAIM = { type: "", date: "", amount: "", status: "Pending", notes: "", creditAccountId: "", method: "Bank Transfer" };
+  /* A payout is NOT a premium: premiums bump totalPremPaid and book Dr Expense, payouts are
+     money coming back OUT of the policy. `source` decides the credit leg — drawing down the
+     fund/cash value is a return of an asset, while a source-less payout is genuine income.
+     (Same split as VC/PE's Distribution-vs-Income.) */
+  const PAYOUT_TYPES = ["Payout", "Withdrawal", "Maturity Benefit", "Surrender"];
+  const EMPTY_PAYOUT = { type: "Payout", date: new Date().toISOString().slice(0,10), amount: "", method: "Bank Transfer", creditAccountId: "", source: "cash", ref: "", status: "Paid", recordOnly: false, notes: "" };
   const [form, setForm] = useState(EMPTY_POLICY);
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [claimForm, setClaimForm] = useState(EMPTY_CLAIM);
   const [editClaim, setEditClaim] = useState(null);
   const setCF = (k, v) => setClaimForm(f => ({ ...f, [k]: v }));
+  const [showPayoutModal, setShowPayoutModal] = useState(false);
+  const [payoutTarget, setPayoutTarget] = useState(null);
+  const [editPayout, setEditPayout] = useState(null);
+  const [payoutForm, setPayoutForm] = useState(EMPTY_PAYOUT);
+  const setPF = (k, v) => setPayoutForm(f => ({ ...f, [k]: v }));
+
+  // The pot a payout is drawn from. ILPs hold a unit-linked fund value; par/whole-life plans
+  // hold a cash value. Anything with either can pay out.
+  const payoutPot = (p) => ((+p.ilpFundValue || 0) > 0 ? "ilpFundValue" : "cashValue");
+  const canPayout = (p) => (+p.ilpFundValue || 0) > 0 || (+p.cashValue || 0) > 0
+    || ["Whole Life", "Endowment", "Universal Life", "ILP"].includes(p.type);
+
+  const creditCash = (accountId, signed) => {
+    if (!accountId || !setAccounts || !signed) return;
+    setAccounts(prev => prev.map(a => {
+      if (String(a.id) !== String(accountId)) return a;
+      const cur = acctBalances(a);
+      const has = cur.find(b => b.ccy === "SGD");
+      const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + signed } : b) : [...cur, { ccy:"SGD", amount: signed }];
+      const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + signed } : {};
+      return { ...a, balances: nextBals, ...nextLegacy };
+    }));
+  };
+
+  const openPayout = (pol, po = null) => {
+    setPayoutTarget(pol);
+    setEditPayout(po);
+    setPayoutForm(po ? { ...EMPTY_PAYOUT, ...po }
+      // Prefill the credit account from the policy's link — the link is functional, not decorative.
+      : { ...EMPTY_PAYOUT, creditAccountId: pol.linkedAssetType === "cashaccount" && pol.linkedAssetId ? String(pol.linkedAssetId) : "" });
+    setShowPayoutModal(true);
+  };
+
+  const handleSavePayout = () => {
+    const pol = payoutTarget;
+    if (!pol || !payoutForm.date || !(parseFloat(payoutForm.amount) > 0)) return;
+    const amt = parseFloat(payoutForm.amount) || 0;
+    const pot = payoutPot(pol);
+
+    if (editPayout) {
+      const upd = { ...editPayout, ...payoutForm, amount: amt };
+      const oldAmt = +editPayout.amount || 0;
+      const oldDrew = editPayout.source !== "none" && !editPayout.recordOnly ? oldAmt : 0;
+      const newDrew = upd.source !== "none" && !upd.recordOnly ? amt : 0;
+      setPolicies(prev => prev.map(p => p.id !== pol.id ? p : {
+        ...p,
+        payouts: (p.payouts || []).map(x => x.id === editPayout.id ? upd : x),
+        [pot]: Math.max(0, (+p[pot] || 0) + oldDrew - newDrew),
+      }));
+      // Reverse the old cash credit, then apply the new one.
+      if (!editPayout.recordOnly && editPayout.status === "Paid") creditCash(editPayout.creditAccountId, -oldAmt);
+      if (!upd.recordOnly && upd.status === "Paid") creditCash(upd.creditAccountId, amt);
+      if (logAudit) logAudit("insurance", pol.id, "edit-transaction", editPayout, upd, `${upd.type} · S$${amt.toLocaleString()} · ${upd.date}`);
+      showToast("Payout updated", "success");
+    } else {
+      const po = { ...payoutForm, id: `PO${Date.now()}`, amount: amt };
+      const drew = po.source !== "none" && !po.recordOnly ? amt : 0;
+      setPolicies(prev => prev.map(p => p.id !== pol.id ? p : {
+        ...p,
+        payouts: [...(p.payouts || []), po],
+        [pot]: Math.max(0, (+p[pot] || 0) - drew),
+        ...(po.type === "Surrender" ? { status: "Surrendered" } : {}),
+      }));
+      if (!po.recordOnly && po.status === "Paid") creditCash(po.creditAccountId, amt);
+      if (logAudit) logAudit("insurance", pol.id, "add-transaction", null, po, `${po.type} · S$${amt.toLocaleString()} · ${po.date}`);
+      showToast(`${po.type} recorded — S$${amt.toLocaleString()}`, "success");
+    }
+    setShowPayoutModal(false); setEditPayout(null); setPayoutTarget(null); setPayoutForm(EMPTY_PAYOUT);
+  };
+
+  const handleDeletePayout = (pol, po) => {
+    if (!window.confirm(`Delete this ${po.type}?\n\nS$${(+po.amount||0).toLocaleString()} on ${po.date}. The policy value and cash account are restored.`)) return;
+    const amt = +po.amount || 0;
+    const pot = payoutPot(pol);
+    const drew = po.source !== "none" && !po.recordOnly ? amt : 0;
+    setPolicies(prev => prev.map(p => p.id !== pol.id ? p : {
+      ...p,
+      payouts: (p.payouts || []).filter(x => x.id !== po.id),
+      [pot]: Math.max(0, (+p[pot] || 0) + drew),
+    }));
+    if (!po.recordOnly && po.status === "Paid") creditCash(po.creditAccountId, -amt);
+    if (logAudit) logAudit("insurance", pol.id, "delete-transaction", po, null, `${po.type} · S$${amt.toLocaleString()} · ${po.date||"—"}`);
+    showToast("Payout deleted", "success");
+  };
 
   // ── Summary stats
   const active = policies.filter(p => p.status === "Active");
@@ -13938,7 +14053,11 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
         const _premLast = _premPaid.length ? _premPaid[_premPaid.length - 1] : null;
         const _premUnpaid = _premTxs.filter(t => t.status !== "Paid").length;
         const _premOverdue = _premTxs.filter(t => t.status === "Overdue").length;
-        const DETAIL_TABS = ["overview","transactions","claims","documents","postings","audit","manage"];
+        const _payouts = pol.payouts || [];
+        const _payoutTotal = _payouts.filter(x => x.status === "Paid").reduce((s, x) => s + (+x.amount || 0), 0);
+        const DETAIL_TABS = canPayout(pol)
+          ? ["overview","transactions","payouts","claims","documents","postings","audit","manage"]
+          : ["overview","transactions","claims","documents","postings","audit","manage"];
 
         return (
           <DetailPage
@@ -13958,13 +14077,14 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
               { l: "Annual Premium", v: `S$${annualPrem.toLocaleString(undefined,{maximumFractionDigits:0})}` },
               { l: pol.ilpFundValue > 0 ? "Fund Value" : "Cash Value", v: pol.ilpFundValue > 0 ? `S$${pol.ilpFundValue.toLocaleString()}` : cv > 0 ? `S$${cv.toLocaleString()}` : "—" },
               { l: "Total Paid", v: _premTotalPaid > 0 ? `S$${_premTotalPaid.toLocaleString()}` : "—", c: T.up },
+              _payoutTotal > 0 ? { l: "Payouts Received", v: `S$${_payoutTotal.toLocaleString()}`, c: T.up } : null,
               { l: "Last Payment", v: _premLast ? `S$${parseFloat(_premLast.amount).toLocaleString()}` : "—" },
               { l: "Outstanding", v: _premUnpaid > 0 ? `${_premUnpaid} unpaid` : "All clear", c: _premOverdue > 0 ? T.down : T.up },
               { l: "Next Premium Due", v: pol.nextPremDue || "—" },
             ]}
             tabs={DETAIL_TABS.map(dt => {
-              const base = { transactions: "Transactions", claims: "Claims", documents: "Documents", overview: "Overview", postings: "Postings", audit: "Audit", manage: "Manage" }[dt] || dt;
-              const cnt = dt === "claims" ? (pol.claims || []).length : dt === "transactions" ? (pol.premiumTransactions || []).length : 0;
+              const base = { transactions: "Transactions", payouts: "Payouts", claims: "Claims", documents: "Documents", overview: "Overview", postings: "Postings", audit: "Audit", manage: "Manage" }[dt] || dt;
+              const cnt = dt === "claims" ? (pol.claims || []).length : dt === "transactions" ? (pol.premiumTransactions || []).length : dt === "payouts" ? _payouts.length : 0;
               return { id: dt, label: cnt > 0 ? `${base} (${cnt})` : base };
             })}
             activeTab={detailTab} onTab={setDetailTab} onBack={goList}>
@@ -14031,6 +14151,15 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                         ["Cash Value", pol.cashValue > 0 ? `S$${pol.cashValue.toLocaleString()}` : "—"],
                         ["Surrender Value", pol.surrenderValue > 0 ? `S$${pol.surrenderValue.toLocaleString()}` : "—"],
                         pol.ilpFundValue > 0 ? ["ILP Fund Value", `S$${pol.ilpFundValue.toLocaleString()}`] : null,
+                        _payoutTotal > 0 ? ["Payouts Received", `S$${_payoutTotal.toLocaleString()}`] : null,
+                        pol.linkedAssetType && pol.linkedAssetId ? ["Linked Asset", (() => {
+                          if (pol.linkedAssetType === "cashaccount") {
+                            const a = (accounts || []).find(x => String(x.id) === String(pol.linkedAssetId));
+                            return a ? `💰 ${a.bank} · ${a.accountName}` : "—";
+                          }
+                          const i = (investments || []).find(x => String(x.id) === String(pol.linkedAssetId));
+                          return i ? `💼 ${i.name}` : "—";
+                        })()] : null,
                         ["Coverage Period", pol.endDate ? `${pol.startDate} → ${pol.endDate}` : `${pol.startDate} → Lifetime`],
                       ].filter(Boolean).map(([label, value]) => (
                         <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "10px 16px", borderTop: `1px solid ${T.border}` }}>
@@ -14358,6 +14487,66 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                   );
                 })()}
 
+                {/* Payouts tab — money coming back OUT of the policy (ILP / income plans) */}
+                {detailTab === "payouts" && (() => {
+                  const pot = payoutPot(pol);
+                  const potLabel = pot === "ilpFundValue" ? "Fund Value" : "Cash Value";
+                  const rows = _payouts.slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+                  const icon = { Payout: "📥", Withdrawal: "📤", "Maturity Benefit": "🏁", Surrender: "🚫" };
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                      <StatStrip stats={[
+                        { l: `Current ${potLabel}`, v: `S$${(+pol[pot] || 0).toLocaleString()}` },
+                        { l: "Payouts Received", v: `S$${_payoutTotal.toLocaleString()}`, c: T.up },
+                        { l: "Payouts Recorded", v: String(_payouts.length) },
+                      ]}/>
+                      <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                        filters={["All", ...PAYOUT_TYPES]}
+                        placeholder="Search payouts…"
+                        action={pol.status === "Active" && <button onClick={() => openPayout(pol)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: T.selected, color: T.selectedText, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>+ Record Payout</button>}/>
+                      {rows.length === 0 ? (
+                        <div style={{ textAlign: "center", padding: "32px 20px", color: T.muted }}>
+                          <div style={{ fontSize: 28, marginBottom: 8 }}>📥</div>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>No payouts yet</div>
+                          <div style={{ fontSize: 11, marginTop: 4, color: T.dim }}>Income payouts, withdrawals, maturity benefits and surrenders appear here.</div>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 1, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+                          {rows
+                            .filter(po => (txFilter === "All" || po.type === txFilter)
+                              && (!txSearch || (po.notes||"").toLowerCase().includes(txSearch.toLowerCase()) || (po.ref||"").toLowerCase().includes(txSearch.toLowerCase()) || (po.date||"").includes(txSearch)))
+                            .map((po, i) => {
+                            const acct = (accounts || []).find(a => String(a.id) === String(po.creditAccountId));
+                            return (
+                              <div key={po.id} className="hov-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 16px", background: i%2===0?T.bg:T.inputBg, borderTop: i>0?`1px solid ${T.border}`:"none" }}>
+                                <div style={{ width: 34, height: 34, borderRadius: 8, background: T.upBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>{icon[po.type] || "💰"}</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 600 }}>{po.type}{po.notes ? ` — ${po.notes}` : ""}</div>
+                                  <div style={{ fontSize: 11, color: T.muted, marginTop: 1, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                    <span>{po.date}</span>
+                                    {po.method && <span style={{ fontSize: 10, background: T.inputBg, borderRadius: 4, padding: "1px 6px" }}>{po.method}</span>}
+                                    {acct && <span style={{ fontSize: 10, color: T.dim }}>→ {acct.accountName}</span>}
+                                    {po.ref && <span style={{ fontSize: 10, color: T.dim, fontFamily: "monospace" }}>{po.ref}</span>}
+                                    {po.recordOnly && <span style={{ fontSize: 10, color: T.muted, background: T.inputBg, borderRadius: 4, padding: "1px 6px" }}>record only</span>}
+                                    {po.source === "none" && <span style={{ fontSize: 10, color: T.warn, background: T.warnBg, borderRadius: 4, padding: "1px 6px" }}>income</span>}
+                                  </div>
+                                </div>
+                                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: po.recordOnly ? T.text : T.up }}>{po.recordOnly ? "" : "+ "}S${(+po.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}</div>
+                                  <div style={{ fontSize: 10, color: T.dim, marginTop: 1 }}>{po.status}</div>
+                                </div>
+                                <TxRowActions
+                                  onEdit={()=>openPayout(pol, po)}
+                                  onDelete={()=>handleDeletePayout(pol, po)}/>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* Documents tab */}
                 {detailTab === "documents" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -14387,7 +14576,11 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                   const inter = "'Inter','Segoe UI',system-ui,sans-serif";
                   const mono  = "'Courier New',Courier,monospace";
                   const txs    = (pol.premiumTransactions || []).filter(t => t.status === "Paid").slice().sort((a,b) => a.date.localeCompare(b.date));
-                  const claims = (pol.claims || []).filter(c => c.status === "Approved").slice().sort((a,b) => a.date.localeCompare(b.date));
+                  // Was filtering on "Approved" — a status the claim modal never writes (it only
+                  // offers Pending/Paid/Rejected), so claims silently never posted. "Paid" is also
+                  // the correct trigger: an approved-but-unpaid claim has moved no cash.
+                  const claims = (pol.claims || []).filter(c => c.status === "Paid").slice().sort((a,b) => a.date.localeCompare(b.date));
+                  const payouts = (pol.payouts || []).filter(x => x.status === "Paid" && !x.recordOnly).slice().sort((a,b) => a.date.localeCompare(b.date));
                   const ccy   = pol.currency || "SGD";
                   const sym2  = ccy === "USD" ? "US$" : ccy === "GBP" ? "£" : "S$";
                   const fmtA  = (v) => sym2 + Math.abs(parseFloat(v)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -14407,6 +14600,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                   const allEntries = [
                     ...txs.map(tx => ({ _type: "premium", date: tx.date, tx })),
                     ...claims.map(c  => ({ _type: "claim",   date: c.date,  c  })),
+                    ...payouts.map(po => ({ _type: "payout", date: po.date, po })),
                   ].sort((a, b) => b.date.localeCompare(a.date));
 
                   allEntries.forEach(entry => {
@@ -14424,13 +14618,26 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                           { date: null, desc: "",                            account: cashAcct,                  amount: fmtA(fee), debit: false, _first: false },
                         );
                       }
+                    } else if (entry._type === "payout") {
+                      const po  = entry.po;
+                      const amt = parseFloat(po.amount)||0;
+                      // A payout drawn from the fund/cash value is a RETURN OF ASSET (Cr the policy
+                      // asset), not income. A source-less payout genuinely IS income. Same split as
+                      // VC/PE's Distribution-vs-Income.
+                      const creditLeg = po.source === "none"
+                        ? `Income:Insurance:${pol.insurer.replace(/[^A-Za-z0-9]/g,"")}`
+                        : `Assets:Insurance:${pol.insurer.replace(/[^A-Za-z0-9]/g,"")}:${(pol.planName||"Policy").replace(/[^A-Za-z0-9]/g,"")}`;
+                      journalRows.push(
+                        { date: po.date, desc: `${po.type} — ${pol.planName}${po.notes ? ` (${po.notes.slice(0,40)}${po.notes.length>40?"…":""})` : ""}`, account: cashAcct, amount: fmtA(amt), debit: true,  _first: true  },
+                        { date: null,    desc: "",                                                                                                         account: creditLeg, amount: fmtA(amt), debit: false, _first: false },
+                      );
                     } else {
                       const c   = entry.c;
                       const amt = parseFloat(c.amount)||0;
                       // Claim payout: Dr Assets:Bank:Cash (receive money), Cr Income:InsuranceClaim
                       journalRows.push(
                         { date: c.date, desc: `Claim payout — ${c.type}${c.notes ? ` (${c.notes.slice(0,40)}${c.notes.length>40?"…":""})` : ""}`, account: cashAcct, amount: fmtA(amt), debit: true,  _first: true  },
-                        { date: null,   desc: "",                                                                                                       account: `Income:InsuranceClaim:${pol.insurer.replace(/ /g,"")}`, amount: fmtA(amt), debit: false, _first: false },
+                        { date: null,   desc: "",                                                                                                       account: `Income:InsuranceClaim:${pol.insurer.replace(/[^A-Za-z0-9]/g,"")}`, amount: fmtA(amt), debit: false, _first: false },
                       );
                     }
                   });
@@ -14509,8 +14716,20 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 )}
 
                 {detailTab === "manage" && (
-                  <div style={{padding:"16px 0"}}>
-                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: "18px 20px" }}>
+                  <div style={{padding:"16px 0",display:"flex",flexDirection:"column",gap:14}}>
+                    {/* Without this, ilpFundValue/cashValue could never be maintained — which
+                        would make the payout feature half-useless, since a payout draws it down. */}
+                    <FieldUpdatePanel
+                      entity={pol} entityType="insurance" entityLabel={pol.planName || pol.type}
+                      fields={[
+                        ...((+pol.ilpFundValue || 0) > 0 ? [{ key: "ilpFundValue", label: "Fund Value", icon: "📈", helper: "Unit-linked fund value from your latest statement." }] : []),
+                        { key: "cashValue", label: "Cash Value", icon: "💰", helper: "Guaranteed / accumulated cash value." },
+                        { key: "surrenderValue", label: "Surrender Value", icon: "🚪", helper: "What you'd receive if you surrendered today." },
+                        { key: "sumAssured", label: "Sum Assured", icon: "🛡", helper: "Death / TPD benefit." },
+                      ]}
+                      onUpdate={(next) => setPolicies(prev => prev.map(x => x.id === pol.id ? next : x))}
+                      auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, padding: "18px 20px", maxWidth: 560 }}>
                       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Policy Status</div>
                       <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>
                         {pol.status === "Active" ? "Close this policy to mark it as lapsed. Records are preserved." : `This policy is ${pol.status}.`}
@@ -15186,7 +15405,7 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                 </div>
               </div>
 
-              <MoreOptions count={5} style={{gridColumn:"unset"}}>
+              <MoreOptions count={7} style={{gridColumn:"unset"}}>
                 <div>
                   <Label>Policy Start Date</Label>
                   <Input type="date" value={form.startDate} onChange={e => setF("startDate", e.target.value)} />
@@ -15233,6 +15452,30 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
                       ))}
                     </div>
                   )}
+                </div>
+                <div>
+                  <Label>Linked Asset</Label>
+                  <Sel value={form.linkedAssetType || ""} onChange={e => { setF("linkedAssetType", e.target.value); setF("linkedAssetId", ""); }}
+                    placeholder="Not linked"
+                    options={[
+                      { value: "cashaccount", label: "Cash Account" },
+                      { value: "pe", label: "VC/PE Investment" },
+                    ]}/>
+                </div>
+                <div>
+                  <Label>Linked To</Label>
+                  <Sel value={String(form.linkedAssetId ?? "")} onChange={e => setF("linkedAssetId", e.target.value)}
+                    placeholder={form.linkedAssetType ? "Select…" : "Pick an asset type first"}
+                    options={
+                      form.linkedAssetType === "cashaccount"
+                        ? (accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet").map(a => ({ value: String(a.id), label: `${a.bank} · ${a.accountName}` }))
+                        : form.linkedAssetType === "pe"
+                        ? (investments || []).map(i => ({ value: String(i.id), label: i.name }))
+                        : []
+                    }/>
+                  <div style={{ fontSize: 10, color: T.dim, marginTop: 4 }}>
+                    Payout modals prefill their credit account from a linked cash account.
+                  </div>
                 </div>
                 <div style={{gridColumn:"1 / -1"}}>
                   <Label>Notes</Label>
@@ -15330,6 +15573,99 @@ function InsuranceScreen({ policies, setPolicies, accounts, setAccounts, showToa
           </div>
         </div>
       )}
+
+      {/* ══ PAYOUT MODAL ═══════════════════════════════════════════ */}
+      {showPayoutModal && payoutTarget && (() => {
+        const pol = payoutTarget;
+        const pot = payoutPot(pol);
+        const potLabel = pot === "ilpFundValue" ? "Fund Value" : "Cash Value";
+        const potVal = +pol[pot] || 0;
+        const amt = parseFloat(payoutForm.amount) || 0;
+        const draws = payoutForm.source !== "none" && !payoutForm.recordOnly;
+        const remaining = draws ? Math.max(0, potVal - amt) : potVal;
+        const invalid = !payoutForm.date || !(amt > 0) || (!payoutForm.recordOnly && payoutForm.status === "Paid" && !payoutForm.creditAccountId);
+        const close = () => { setShowPayoutModal(false); setEditPayout(null); setPayoutTarget(null); setPayoutForm(EMPTY_PAYOUT); };
+        return (
+          <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 320, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: T.bg, borderRadius: 16, width: "min(560px, 100%)", maxHeight: "90vh", display: "flex", flexDirection: "column", border: `1px solid ${T.border}`, overflow: "hidden" }}>
+              <div style={{ padding: "22px 24px 0", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 800 }}>{editPayout ? "Edit Payout" : "Record Payout"}</div>
+                  <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>{pol.planName} · {pol.insurer}</div>
+                </div>
+                <button onClick={close} style={{ background: T.inputBg, border: "none", borderRadius: 7, width: 30, height: 30, cursor: "pointer", fontSize: 18, color: T.muted, lineHeight: 1 }}>×</button>
+              </div>
+              <div style={{ padding: 22, overflowY: "auto", flex: 1, minHeight: 0 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <Label required>Type</Label>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {PAYOUT_TYPES.map(t => (
+                        <button key={t} onClick={() => setPF("type", t)}
+                          style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${payoutForm.type===t?T.selected:T.border}`, background: payoutForm.type===t?`${T.selected}15`:T.inputBg, color: payoutForm.type===t?T.selected:T.muted, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: payoutForm.type===t?700:500 }}>
+                          {{ Payout:"📥", Withdrawal:"📤", "Maturity Benefit":"🏁", Surrender:"🚫" }[t]} {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div><Label required>Date</Label><Input type="date" value={payoutForm.date} onChange={e=>setPF("date",e.target.value)}/></div>
+                  <div><Label required>Amount</Label><Input type="number" prefix="S$" value={payoutForm.amount} onChange={e=>setPF("amount",e.target.value)} placeholder="0.00"/></div>
+                  <div>
+                    <Label>Drawn From</Label>
+                    <Sel value={payoutForm.source} onChange={e=>setPF("source",e.target.value)}
+                      options={[
+                        { value: "cash", label: `Policy ${potLabel} (return of asset)` },
+                        { value: "none", label: "Not from policy value (income)" },
+                      ]}/>
+                  </div>
+                  <div>
+                    <Label required={!payoutForm.recordOnly && payoutForm.status === "Paid"}>Credit to Account</Label>
+                    <Sel value={payoutForm.creditAccountId} onChange={e=>setPF("creditAccountId",e.target.value)}
+                      placeholder="Select account…"
+                      options={(accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet").map(a => ({ value: String(a.id), label: `${a.bank} · ${a.accountName}` }))}/>
+                  </div>
+                  <MoreOptions count={4}>
+                    <div><Label>Method</Label><Sel value={payoutForm.method} onChange={e=>setPF("method",e.target.value)} options={["Bank Transfer","GIRO","Cheque","PayNow","Cash"]}/></div>
+                    <div><Label>Status</Label><Sel value={payoutForm.status} onChange={e=>setPF("status",e.target.value)} options={["Paid","Pending"]}/></div>
+                    <div><Label>Reference</Label><Input value={payoutForm.ref} onChange={e=>setPF("ref",e.target.value)} placeholder="Optional"/></div>
+                    <div style={{ gridColumn: "1 / -1" }}><Label>Notes</Label>
+                      <textarea value={payoutForm.notes} onChange={e=>setPF("notes",e.target.value)} rows={2} placeholder="e.g. Monthly income payout, partial withdrawal…"
+                        style={{ width: "100%", boxSizing: "border-box", background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, fontFamily: "inherit", color: T.text, outline: "none", resize: "vertical" }}/>
+                    </div>
+                  </MoreOptions>
+                </div>
+
+                {draws && amt > 0 && (
+                  <div style={{ background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px", marginBottom: 14, display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.muted }}>
+                      <span>Current {potLabel}</span><span style={{ fontWeight: 600, color: T.text }}>S${potVal.toLocaleString()}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.muted }}>
+                      <span>{potLabel} after payout</span>
+                      <span style={{ fontWeight: 700, color: remaining < potVal ? T.down : T.text }}>S${remaining.toLocaleString()}</span>
+                    </div>
+                    {amt > potVal && <div style={{ fontSize: 10, color: T.warn, marginTop: 2 }}>⚠️ Payout exceeds the policy value — it will be floored at zero.</div>}
+                  </div>
+                )}
+
+                <FlowBanner type={payoutForm.type} flowOverride={payoutForm.recordOnly ? "info" : "in"}
+                  amount={payoutForm.recordOnly ? null : payoutForm.amount}
+                  label={payoutForm.recordOnly ? "📝 Recorded — no cash flow"
+                    : payoutForm.source === "none" ? "📥 Income received"
+                    : `📥 Drawn from policy ${potLabel.toLowerCase()}`}/>
+                <RecordOnlyToggle recordOnly={!!payoutForm.recordOnly} setRecordOnly={(fn) => setPF("recordOnly", typeof fn === "function" ? fn(!!payoutForm.recordOnly) : fn)} style={{ marginTop: 10, marginBottom: 4 }}/>
+              </div>
+              <div style={{ padding: "14px 24px 20px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "flex-end", gap: 10, flexShrink: 0 }}>
+                <button onClick={close} style={{ padding: "9px 20px", borderRadius: 8, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>Cancel</button>
+                <button onClick={handleSavePayout} disabled={invalid}
+                  style={{ padding: "9px 22px", borderRadius: 8, border: "none", background: invalid ? T.border : T.selected, color: invalid ? T.dim : T.selectedText, cursor: invalid ? "not-allowed" : "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>
+                  {editPayout ? "Save Changes" : `Record ${payoutForm.type}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -19446,7 +19782,7 @@ export default function App() {
     if (page === "creditcards") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} baseCurrency={baseCurrency} goToExport={goToExport} showToast={showToast} auditLog={auditLog} logAudit={logAudit} lockView="cards" route={route} navigate={navigate} />;
     if (page === "cashaccounts") return <CreditCardScreen cards={ccCards} setCards={setCCCards} accounts={ccAccounts} setAccounts={setCCAccounts} transactions={ccTransactions} setTransactions={setCCTransactions} baseCurrency={baseCurrency} goToExport={goToExport} showToast={showToast} auditLog={auditLog} logAudit={logAudit} lockView="accounts" route={route} navigate={navigate} />;
     if (page === "loans") return <LoansScreen loans={loans} setLoans={setLoans} properties={properties} setProperties={setProperties} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
-    if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "insurance") return <InsuranceScreen policies={policies} setPolicies={setPolicies} accounts={ccAccounts} setAccounts={setCCAccounts} investments={peInvestments} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
     if (page === "realestate") return <RealEstateScreen properties={properties} setProperties={setProperties} policies={policies} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
     if (page === "retirement") return <RetirementScreen plans={retPlans} setPlans={setRetPlans} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
     if (page === "bonds") return <BondsScreen bonds={bondHoldings} setBonds={setBondHoldings} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
