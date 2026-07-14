@@ -157,7 +157,7 @@ function MoreOptions({ title="More options", count, children, defaultOpen=false,
      info → no cash flow, informational    (valuation update, internal transfer, stake/unstake) */
 const TX_FLOW_IN  = new Set(["Sale","Sell","Coupon","Distribution","Interest","Redemption","Payout","Withdrawal","Staking Reward","Airdrop","Dividend","Profit Distribution","Salary / Drawings","Loan Repayment","Capital Withdrawal","Exit / Buyout","Exit / Realisation","Income / Gain","Rent Received","Deposit Received","Other Income","Maturity Benefit","Surrender","Subscription Income"]);
 const TX_FLOW_OUT = new Set(["Purchase","Buy","Fee","Capital Contribution","Partner Loan","Capital Call","Additional Investment","Management Fee","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration","Top-Up","Premium","Contribution","Deposit Refunded","Property Tax","MCST / Maintenance","Repairs & Maintenance","Agent Commission","Utilities","Other Expense"]);
-const TX_FLOW_INFO = new Set(["Valuation Update","Transfer In","Transfer Out","Stake","Unstake","Deposit","Withdraw"]);
+const TX_FLOW_INFO = new Set(["Valuation Update","Transfer In","Transfer Out","Stake","Unstake","Deposit","Withdraw","Switch In","Switch Out"]);
 const classifyTxFlow = (type) =>
   TX_FLOW_OUT.has(type)  ? "out"  :
   TX_FLOW_IN.has(type)   ? "in"   :
@@ -9800,6 +9800,8 @@ const EMPTY_BP = {
   startDate:"", expiryDate:"",
   registrationNo:"", country:"Singapore", currency:"SGD",
   status:"Active", notes:"",
+  // Set when this venture was created from an internal organization (see the Organizations screen).
+  organizationId: null,
   transactions:[],
 };
 
@@ -19872,6 +19874,1099 @@ function ExportScreen({ holdings, transactions, ccTransactions, ccCards, bondHol
 }
 
 
+/* ═══════════════════════════════════════════════════════════════
+   INVESTMENT FUNDS MODULE — unit trusts / mutual funds
+   The only module with BOTH units and a per-unit price, so the Ledger
+   commodity-lot branch in gatherTransactions works on it for free.
+   ═══════════════════════════════════════════════════════════════ */
+const FUND_TYPES = ["Unit Trust","Mutual Fund","Index Fund","Money Market","Feeder Fund","Multi-Asset","Bond Fund","Equity Fund"];
+const FUND_STATUS = ["Active","Fully Redeemed","Suspended"];
+const FUND_TX_TYPES = ["Subscription","Redemption","Switch In","Switch Out","Distribution","Fee"];
+const FUND_TX_ICON = { "Subscription":"📥", "Redemption":"📤", "Switch In":"🔄", "Switch Out":"🔀", "Distribution":"🎁", "Fee":"⚠️" };
+
+const EMPTY_FUND = {
+  id:"", name:"", fundHouse:"", isin:"", fundType:"Unit Trust", assetClass:"Equity",
+  geography:"Global", currency:"SGD",
+  units:0, avgCost:0, nav:0, navDate:"",
+  salesCharge:0, mgmtFee:0, trusteeFee:0,
+  platform:"", accountId:"", purchaseDate:"", status:"Active",
+  distributionPolicy:"Accumulating", notes:"",
+  transactions:[],
+};
+
+/* Every headline number is DERIVED from units × price — never stored, so it can't drift. */
+const fundMarketValue = (f) => (+f.units || 0) * (+f.nav || 0);
+const fundBookCost    = (f) => (+f.units || 0) * (+f.avgCost || 0);
+const fundUnrealised  = (f) => fundMarketValue(f) - fundBookCost(f);
+const fundDistributions = (f) => (f.transactions || []).filter(t => t.type === "Distribution").reduce((s,t) => s + (+t.amount || 0), 0);
+const fundTotalReturn = (f) => fundUnrealised(f) + fundDistributions(f);
+const fundReturnPct   = (f) => { const c = fundBookCost(f); return c > 0 ? (fundTotalReturn(f) / c * 100) : 0; };
+
+const FUNDS_INIT = [
+  { id:"FD001", name:"Fundsmith Equity Fund", fundHouse:"Fundsmith LLP", isin:"LU0690375182", fundType:"Unit Trust", assetClass:"Equity",
+    geography:"Global", currency:"SGD", units:4200.5, avgCost:22.40, nav:28.65, navDate:"2026-06-30",
+    salesCharge:0, mgmtFee:1.05, trusteeFee:0.10, platform:"FSMOne", accountId:1, purchaseDate:"2021-11-05",
+    status:"Active", distributionPolicy:"Accumulating", notes:"Core global equity holding. Low turnover, quality bias.",
+    transactions:[
+      { id:"FTX001", type:"Subscription", date:"2021-11-05", units:2000, price:19.80, amount:39600, fees:0, method:"Bank Transfer", cashAccountId:1, ref:"FSM-SUB-01", notes:"Initial subscription", status:"Complete" },
+      { id:"FTX002", type:"Subscription", date:"2023-03-14", units:1500, price:24.10, amount:36150, fees:0, method:"Bank Transfer", cashAccountId:1, ref:"FSM-SUB-02", notes:"Added on market dip", status:"Complete" },
+      { id:"FTX003", type:"Subscription", date:"2024-09-02", units:700.5, price:26.20, amount:18353.10, fees:0, method:"Bank Transfer", cashAccountId:1, ref:"FSM-SUB-03", notes:"Top-up", status:"Complete" },
+    ] },
+  { id:"FD002", name:"Schroder Asian Growth Fund", fundHouse:"Schroders", isin:"SG9999002356", fundType:"Unit Trust", assetClass:"Equity",
+    geography:"Asia ex-Japan", currency:"SGD", units:9800, avgCost:3.15, nav:3.42, navDate:"2026-06-30",
+    salesCharge:1.5, mgmtFee:1.25, trusteeFee:0.12, platform:"DBS Vickers", accountId:1, purchaseDate:"2022-06-20",
+    status:"Active", distributionPolicy:"Distributing", notes:"Asian growth sleeve. Pays semi-annual distributions.",
+    transactions:[
+      { id:"FTX010", type:"Subscription", date:"2022-06-20", units:6000, price:2.98, amount:17880, fees:268.20, method:"Bank Transfer", cashAccountId:1, ref:"SCH-SUB-01", notes:"Initial — 1.5% sales charge", status:"Complete" },
+      { id:"FTX011", type:"Subscription", date:"2023-08-11", units:3800, price:3.42, amount:12996, fees:194.94, method:"Bank Transfer", cashAccountId:1, ref:"SCH-SUB-02", notes:"", status:"Complete" },
+      { id:"FTX012", type:"Distribution", date:"2025-01-15", units:0, price:0, amount:1176, fees:0, method:"Bank Transfer", cashAccountId:1, ref:"SCH-DIS-01", notes:"Semi-annual distribution", status:"Complete" },
+      { id:"FTX013", type:"Distribution", date:"2025-07-15", units:0, price:0, amount:1225, fees:0, method:"Bank Transfer", cashAccountId:1, ref:"SCH-DIS-02", notes:"Semi-annual distribution", status:"Complete" },
+    ] },
+  { id:"FD003", name:"Lion-OCBC Securities Singapore Low Carbon ETF", fundHouse:"Lion Global Investors", isin:"SG9999019943", fundType:"Index Fund", assetClass:"Equity",
+    geography:"Singapore", currency:"SGD", units:12000, avgCost:1.02, nav:0.97, navDate:"2026-06-30",
+    salesCharge:0, mgmtFee:0.45, trusteeFee:0.08, platform:"FSMOne", accountId:1, purchaseDate:"2024-02-08",
+    status:"Active", distributionPolicy:"Distributing", notes:"Passive SG large-cap tilt. Currently below cost.",
+    transactions:[
+      { id:"FTX020", type:"Subscription", date:"2024-02-08", units:12000, price:1.02, amount:12240, fees:0, method:"Bank Transfer", cashAccountId:1, ref:"LOC-SUB-01", notes:"Initial position", status:"Complete" },
+    ] },
+];
+
+function FundTxModalInner({ fund, editTx, cashAccounts, onSave, onClose }) {
+  const [f, setF] = useState(editTx ? { ...editTx, recordOnly: !!editTx.recordOnly } : {
+    type:"Subscription", date:new Date().toISOString().slice(0,10),
+    units:"", price:String(fund.nav || ""), amount:"", fees:"",
+    method:"Bank Transfer", cashAccountId: cashAccounts[0] ? String(cashAccounts[0].id) : "",
+    ref:"", notes:"", recordOnly:false, status:"Complete",
+  });
+  const set = (k, v) => setF(prev => {
+    const next = { ...prev, [k]: v };
+    // Units × price drives the amount for every unit-moving type; a Distribution/Fee is a pure amount.
+    if ((k === "units" || k === "price") && !["Distribution","Fee"].includes(next.type)) {
+      next.amount = ((parseFloat(next.units) || 0) * (parseFloat(next.price) || 0)).toFixed(2);
+    }
+    return next;
+  });
+  const needsUnits = !["Distribution","Fee"].includes(f.type);
+  const invalid = !f.date || !(parseFloat(f.amount) > 0) || (needsUnits && !(parseFloat(f.units) > 0));
+  const sym = "S$";
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:320,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:16,width:"min(560px,100%)",maxHeight:"90vh",display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,overflow:"hidden"}}>
+        <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:800}}>{editTx ? "Edit Transaction" : "Record Transaction"}</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:2}}>{fund.name}</div>
+          </div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1}}>×</button>
+        </div>
+        <div style={{padding:22,overflowY:"auto",flex:1,minHeight:0}}>
+          <div style={{marginBottom:14}}>
+            <Label required>Type</Label>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {FUND_TX_TYPES.map(t => (
+                <button key={t} onClick={()=>set("type",t)}
+                  style={{padding:"7px 12px",borderRadius:8,border:`1px solid ${f.type===t?T.selected:T.border}`,background:f.type===t?`${T.selected}15`:T.inputBg,color:f.type===t?T.selected:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:f.type===t?700:500}}>
+                  {FUND_TX_ICON[t]} {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+            <div><Label required>Date</Label><Input type="date" value={f.date} onChange={e=>set("date",e.target.value)}/></div>
+            {needsUnits ? (
+              <>
+                <div><Label required>Units</Label><Input type="number" step="0.0001" value={f.units} onChange={e=>set("units",e.target.value)} placeholder="0"/></div>
+                <div><Label required>Price per Unit</Label><Input type="number" step="0.0001" prefix={sym} value={f.price} onChange={e=>set("price",e.target.value)} placeholder={String(fund.nav||"0.00")}/></div>
+                <div><Label required>Amount</Label><Input type="number" prefix={sym} value={f.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/></div>
+              </>
+            ) : (
+              <div><Label required>Amount</Label><Input type="number" prefix={sym} value={f.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/></div>
+            )}
+            <MoreOptions count={4}>
+              <div><Label>Fees / Charges</Label><Input type="number" prefix={sym} value={f.fees} onChange={e=>set("fees",e.target.value)} placeholder="0.00"/></div>
+              <div><Label>Method</Label><Sel value={f.method} onChange={e=>set("method",e.target.value)} options={["Bank Transfer","GIRO","Cheque","Platform Cash","Internal Switch"]}/></div>
+              <div style={{gridColumn:"1 / -1"}}><Label>Cash Account</Label>
+                <Sel value={f.cashAccountId} onChange={e=>set("cashAccountId",e.target.value)} placeholder="Not linked"
+                  options={cashAccounts.map(a => ({value:String(a.id), label:`${a.bank} · ${a.accountName}`}))}/>
+              </div>
+              <div><Label>Reference</Label><Input value={f.ref} onChange={e=>set("ref",e.target.value)} placeholder="Optional"/></div>
+              <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="e.g. Monthly RSP, switch out of bond sleeve…"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+              </div>
+            </MoreOptions>
+          </div>
+          <FlowBanner type={f.type} amount={f.recordOnly ? null : f.amount} flowOverride={f.recordOnly ? "info" : undefined}
+            label={
+              f.recordOnly ? "📝 Recorded — no cash flow"
+              : f.type==="Subscription" ? "📥 Units bought"
+              : f.type==="Redemption" ? "📤 Units sold"
+              : f.type==="Switch In" ? "🔄 Units switched in (no cash)"
+              : f.type==="Switch Out" ? "🔀 Units switched out (no cash)"
+              : f.type==="Distribution" ? "🎁 Distribution received"
+              : "⚠️ Fee charged"
+            }/>
+          <RecordOnlyToggle recordOnly={!!f.recordOnly} setRecordOnly={(fn)=>set("recordOnly", typeof fn === "function" ? fn(!!f.recordOnly) : fn)} style={{marginTop:10,marginBottom:0}}/>
+        </div>
+        <div style={{padding:"14px 24px 20px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave({ ...f, units: parseFloat(f.units)||0, price: parseFloat(f.price)||0, amount: parseFloat(f.amount)||0, fees: parseFloat(f.fees)||0 })} disabled={invalid}
+            style={{padding:"9px 22px",borderRadius:8,border:"none",background:invalid?T.border:T.selected,color:invalid?T.dim:T.selectedText,cursor:invalid?"not-allowed":"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>
+            {editTx ? "Save Changes" : `Record ${f.type}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FundModal({ fund, accounts, onSave, onClose }) {
+  const [f, setF] = useState(fund ? { ...EMPTY_FUND, ...fund } : EMPTY_FUND);
+  const set = (k,v) => setF(prev => ({...prev, [k]: v}));
+  const invalid = !f.name || !f.fundHouse;
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:16,width:"min(620px,100%)",maxHeight:"92vh",display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,overflow:"hidden"}}>
+        <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:16,fontWeight:800}}>{fund ? "Edit Fund" : "Add Fund"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1}}>×</button>
+        </div>
+        <div style={{padding:22,overflowY:"auto",flex:1,minHeight:0}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div style={{gridColumn:"1 / -1"}}><Label required>Fund Name</Label>
+              <Input value={f.name} onChange={e=>set("name",e.target.value)} placeholder="e.g. Fundsmith Equity Fund"/></div>
+            <div><Label required>Fund House</Label><Input value={f.fundHouse} onChange={e=>set("fundHouse",e.target.value)} placeholder="e.g. Schroders"/></div>
+            <div><Label>Fund Type</Label><Sel value={f.fundType} onChange={e=>set("fundType",e.target.value)} options={FUND_TYPES}/></div>
+            <div><Label>Units Held</Label><Input type="number" step="0.0001" value={f.units} onChange={e=>set("units",+e.target.value)}/></div>
+            <div><Label>Avg Cost / Unit</Label><Input type="number" step="0.0001" prefix="S$" value={f.avgCost} onChange={e=>set("avgCost",+e.target.value)}/></div>
+            <div><Label>Current NAV / Unit</Label><Input type="number" step="0.0001" prefix="S$" value={f.nav} onChange={e=>set("nav",+e.target.value)}/></div>
+            <div><Label>NAV Date</Label><Input type="date" value={f.navDate} onChange={e=>set("navDate",e.target.value)}/></div>
+            <MoreOptions count={9}>
+              <div><Label>ISIN</Label><Input value={f.isin} onChange={e=>set("isin",e.target.value)} placeholder="LU0690375182"/></div>
+              <div><Label>Asset Class</Label><Sel value={f.assetClass} onChange={e=>set("assetClass",e.target.value)} options={["Equity","Fixed Income","Multi-Asset","Money Market","Alternatives"]}/></div>
+              <div><Label>Geography</Label><Input value={f.geography} onChange={e=>set("geography",e.target.value)} placeholder="Global / Asia / Singapore"/></div>
+              <div><Label>Platform</Label><Input value={f.platform} onChange={e=>set("platform",e.target.value)} placeholder="FSMOne, DBS Vickers…"/></div>
+              <div><Label>Sales Charge (%)</Label><Input type="number" step="0.01" value={f.salesCharge} onChange={e=>set("salesCharge",+e.target.value)}/></div>
+              <div><Label>Mgmt Fee (% p.a.)</Label><Input type="number" step="0.01" value={f.mgmtFee} onChange={e=>set("mgmtFee",+e.target.value)}/></div>
+              <div><Label>Trustee Fee (% p.a.)</Label><Input type="number" step="0.01" value={f.trusteeFee} onChange={e=>set("trusteeFee",+e.target.value)}/></div>
+              <div><Label>Distribution Policy</Label><Sel value={f.distributionPolicy} onChange={e=>set("distributionPolicy",e.target.value)} options={["Accumulating","Distributing"]}/></div>
+              <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={FUND_STATUS}/></div>
+              <div><Label>Purchase Date</Label><Input type="date" value={f.purchaseDate} onChange={e=>set("purchaseDate",e.target.value)}/></div>
+              <div><Label>Cash Account</Label>
+                <Sel value={String(f.accountId ?? "")} onChange={e=>set("accountId",e.target.value)} placeholder="Not linked"
+                  options={(accounts||[]).map(a => ({value:String(a.id), label:`${a.bank} · ${a.accountName}`}))}/>
+              </div>
+              <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Strategy, role in portfolio…"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+              </div>
+            </MoreOptions>
+          </div>
+        </div>
+        <div style={{padding:"14px 24px 20px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={invalid}
+            style={{padding:"9px 22px",borderRadius:8,border:"none",background:invalid?T.border:T.selected,color:invalid?T.dim:T.selectedText,cursor:invalid?"not-allowed":"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>
+            {fund ? "Save Changes" : "Add Fund"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FundsScreen({ funds, setFunds, accounts, setAccounts, showToast, auditLog, logAudit, route, navigate }) {
+  const isMobile = useIsMobile();
+  const cashAccounts = (accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
+  const [showModal, setShowModal] = useState(false);
+  const [editFund, setEditFund] = useState(null);
+  const [showTxModal, setShowTxModal] = useState(false);
+  const [editTx, setEditTx] = useState(null);
+  const [searchQ, setSearchQ] = useState("");
+  const [filterType, setFilterType] = useState("All");
+  const [txSearch, setTxSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("All");
+  const { sortKey, sortDir, onSort } = useSortState("value", "desc");
+
+  const detailId = route.entityId;
+  const tab = route.tab || "overview";
+  const detail = detailId ? funds.find(f => String(f.id) === String(detailId)) : null;
+  const goList = () => navigate({ screen: "funds" });
+  const goTab = (t) => navigate({ screen: "funds", entityId: detailId, tab: t });
+
+  const active = funds.filter(f => f.status === "Active");
+  const totalValue = active.reduce((s,f) => s + fundMarketValue(f), 0);
+  const totalCost  = active.reduce((s,f) => s + fundBookCost(f), 0);
+  const totalUnreal = totalValue - totalCost;
+  const totalDist  = funds.reduce((s,f) => s + fundDistributions(f), 0);
+  const unrealPct  = totalCost > 0 ? (totalUnreal / totalCost * 100) : 0;
+
+  const creditCash = (accountId, signed) => {
+    if (!accountId || !setAccounts || !signed) return;
+    setAccounts(prev => prev.map(a => {
+      if (String(a.id) !== String(accountId)) return a;
+      const cur = acctBalances(a);
+      const has = cur.find(b => b.ccy === "SGD");
+      const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + signed } : b) : [...cur, { ccy:"SGD", amount: signed }];
+      const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + signed } : {};
+      return { ...a, balances: nextBals, ...nextLegacy };
+    }));
+  };
+
+  /* Apply a transaction to the fund's units + weighted-average cost.
+     `sign` is +1 to apply and −1 to reverse, so add / edit / delete all share one rule. */
+  const applyTx = (f, tx, sign = 1) => {
+    const units = (+tx.units || 0) * sign;
+    const amt   = (+tx.amount || 0);
+    const price = (+tx.price || 0);
+    const patch = {};
+    if (tx.type === "Subscription" || tx.type === "Switch In") {
+      const curUnits = +f.units || 0, curCost = +f.avgCost || 0;
+      const newUnits = curUnits + units;
+      // Weighted-average cost. On reversal (sign −1) this backs the lot out again.
+      patch.units = Math.max(0, newUnits);
+      patch.avgCost = newUnits > 0 ? Math.max(0, (curUnits * curCost + units * price) / newUnits) : 0;
+    } else if (tx.type === "Redemption" || tx.type === "Switch Out") {
+      // Selling doesn't change average cost — only the unit count.
+      patch.units = Math.max(0, (+f.units || 0) - units);
+    }
+    void amt;
+    return patch;
+  };
+
+  const handleSaveTx = (raw) => {
+    const f = detail;
+    if (!f) return;
+    if (editTx) {
+      const upd = { ...editTx, ...raw };
+      setFunds(prev => prev.map(x => {
+        if (x.id !== f.id) return x;
+        // Reverse the old effect, then apply the new one.
+        const reversed = { ...x, ...applyTx(x, editTx, -1) };
+        const applied  = { ...reversed, ...applyTx(reversed, upd, 1) };
+        return { ...applied, transactions: (x.transactions||[]).map(t => t.id === editTx.id ? upd : t) };
+      }));
+      if (!editTx.recordOnly) creditCash(editTx.cashAccountId, (classifyTxFlow(editTx.type)==="out" ? 1 : -1) * ((+editTx.amount||0) + (+editTx.fees||0)));
+      if (!upd.recordOnly)   creditCash(upd.cashAccountId,   (classifyTxFlow(upd.type)==="out" ? -1 : 1) * ((+upd.amount||0) - (classifyTxFlow(upd.type)==="out" ? -(+upd.fees||0) : (+upd.fees||0))));
+      if (logAudit) logAudit("fund", f.id, "edit-transaction", editTx, upd, `${upd.type} · S$${(+upd.amount||0).toLocaleString()} · ${upd.date}`);
+      showToast(`${upd.type} updated`, "success");
+    } else {
+      const tx = { ...raw, id: "FTX" + Date.now(), status: "Complete" };
+      setFunds(prev => prev.map(x => x.id === f.id
+        ? { ...x, ...applyTx(x, tx, 1), transactions: [...(x.transactions||[]), tx] }
+        : x));
+      if (!tx.recordOnly) {
+        const flow = classifyTxFlow(tx.type);
+        // Switches move units between funds — no cash leaves or enters the bank.
+        if (flow !== "info") {
+          const signed = flow === "out" ? -((+tx.amount||0) + (+tx.fees||0)) : ((+tx.amount||0) - (+tx.fees||0));
+          creditCash(tx.cashAccountId, signed);
+        }
+      }
+      if (logAudit) logAudit("fund", f.id, "add-transaction", null, tx, `${tx.type} · S$${(+tx.amount||0).toLocaleString()} · ${tx.date}`);
+      showToast(`${tx.type} recorded — S$${(+tx.amount||0).toLocaleString()}`, "success");
+    }
+    setShowTxModal(false); setEditTx(null);
+  };
+
+  const handleDeleteTx = (f, tx) => {
+    if (!window.confirm(`Delete this ${tx.type}?\n\nS$${(+tx.amount||0).toLocaleString()} on ${tx.date}. Units and the cash account are restored.`)) return;
+    setFunds(prev => prev.map(x => x.id === f.id
+      ? { ...x, ...applyTx(x, tx, -1), transactions: (x.transactions||[]).filter(t => t.id !== tx.id) }
+      : x));
+    if (!tx.recordOnly) {
+      const flow = classifyTxFlow(tx.type);
+      if (flow !== "info") {
+        const signed = flow === "out" ? ((+tx.amount||0) + (+tx.fees||0)) : -((+tx.amount||0) - (+tx.fees||0));
+        creditCash(tx.cashAccountId, signed);
+      }
+    }
+    if (logAudit) logAudit("fund", f.id, "delete-transaction", tx, null, `${tx.type} · S$${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}`);
+    showToast("Transaction deleted", "success");
+  };
+
+  const handleSaveFund = (f) => {
+    if (f.id) {
+      const prev = funds.find(x => x.id === f.id);
+      setFunds(p => p.map(x => x.id === f.id ? { ...x, ...f } : x));
+      if (logAudit) logAudit("fund", f.id, "update", prev, { ...prev, ...f }, `${f.name} · ${f.fundHouse}`);
+      showToast("Fund updated", "success");
+    } else {
+      const nf = { ...EMPTY_FUND, ...f, id: "FD" + Date.now(), transactions: [] };
+      setFunds(p => [...p, nf]);
+      if (logAudit) logAudit("fund", nf.id, "create", null, nf, `${nf.name} · ${nf.fundHouse}`);
+      showToast("Fund added", "success");
+    }
+    setShowModal(false); setEditFund(null);
+  };
+
+  const filtered = funds
+    .filter(f => (filterType === "All" || f.fundType === filterType)
+      && (!searchQ || f.name.toLowerCase().includes(searchQ.toLowerCase()) || (f.fundHouse||"").toLowerCase().includes(searchQ.toLowerCase()) || (f.isin||"").toLowerCase().includes(searchQ.toLowerCase())))
+    .slice()
+    .sort((a,b) => {
+      const val = (x) => sortKey === "value" ? fundMarketValue(x)
+        : sortKey === "name" ? x.name
+        : sortKey === "units" ? (+x.units||0)
+        : sortKey === "nav" ? (+x.nav||0)
+        : sortKey === "pl" ? fundTotalReturn(x)
+        : sortKey === "house" ? (x.fundHouse||"")
+        : fundMarketValue(x);
+      const av = val(a), bv = val(b);
+      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+
+  const COLS = capCols("2.2fr 1.1fr 0.9fr 0.9fr 1.1fr 1.2fr");
+
+  /* ── DETAIL PAGE ── */
+  if (detailId) {
+    if (!detail) return <NotFound message="This fund could not be found." onBack={goList}/>;
+    const f = detail;
+    const mv = fundMarketValue(f), bc = fundBookCost(f), ur = fundUnrealised(f);
+    const urPct = bc > 0 ? (ur / bc * 100) : 0;
+    const txs = f.transactions || [];
+    const q = txSearch.trim().toLowerCase();
+    const visibleTxs = txs.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||""))
+      .filter(t => (txFilter === "All" || t.type === txFilter)
+        && (!q || (t.type||"").toLowerCase().includes(q) || (t.notes||"").toLowerCase().includes(q) || (t.ref||"").toLowerCase().includes(q) || (t.date||"").includes(q)));
+
+    return (
+      <>
+        <DetailPage
+          icon="📗" iconBg={T.accentBg}
+          title={f.name}
+          subtitle={`${f.fundHouse} · ${f.fundType}${f.isin ? ` · ${f.isin}` : ""}`}
+          badges={<>
+            <Badge bg={f.status === "Active" ? T.upBg : T.inputBg} color={f.status === "Active" ? T.up : T.muted}>{f.status}</Badge>
+            {f.distributionPolicy && <Badge bg={T.inputBg} color={T.muted}>{f.distributionPolicy}</Badge>}
+          </>}
+          stats={[
+            { l: "Market Value", v: fmtCompact(mv) },
+            { l: "Units Held", v: (+f.units||0).toLocaleString(undefined,{maximumFractionDigits:4}) },
+            { l: "NAV / Unit", v: `S$${(+f.nav||0).toFixed(4)}`, sub: f.navDate || undefined },
+            { l: "Avg Cost", v: `S$${(+f.avgCost||0).toFixed(4)}` },
+            { l: "Unrealised P/L", v: `${ur>=0?"+":""}${fmtCompact(ur)}`, c: ur>=0?T.up:T.down, sub: `${urPct>=0?"+":""}${urPct.toFixed(2)}%`, subC: ur>=0?T.up:T.down },
+          ]}
+          tabs={[
+            { id:"overview", label:"Overview" },
+            { id:"transactions", label:`Transactions (${txs.length})` },
+            { id:"postings", label:"Postings" },
+            { id:"audit", label:"Audit" },
+            { id:"manage", label:"Manage" },
+          ]}
+          activeTab={tab} onTab={goTab} onBack={goList}
+          headerActions={
+            <button onClick={()=>{ setEditFund(f); setShowModal(true); }}
+              style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:600,color:T.text,fontFamily:"inherit"}}>✏️ Edit</button>
+          }>
+          <div style={{paddingBottom:8}}>
+            {tab === "overview" && (
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>📈 Performance</div>
+                  {[
+                    ["Market Value", fmtCompact(mv)],
+                    ["Book Cost", fmtCompact(bc)],
+                    ["Unrealised P/L", `${ur>=0?"+":""}${fmtCompact(ur)} (${urPct>=0?"+":""}${urPct.toFixed(2)}%)`],
+                    ["Distributions Received", fmtCompact(fundDistributions(f))],
+                    ["Total Return", `${fundTotalReturn(f)>=0?"+":""}${fmtCompact(fundTotalReturn(f))} (${fundReturnPct(f)>=0?"+":""}${fundReturnPct(f).toFixed(2)}%)`],
+                  ].map(([k,v]) => (
+                    <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                      <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                      <span style={{fontSize:12,fontWeight:600}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>📋 Fund Details</div>
+                  {[
+                    ["Fund House", f.fundHouse || "—"],
+                    ["ISIN", f.isin || "—"],
+                    ["Asset Class", f.assetClass || "—"],
+                    ["Geography", f.geography || "—"],
+                    ["Platform", f.platform || "—"],
+                    ["Purchase Date", f.purchaseDate || "—"],
+                    ["Distribution Policy", f.distributionPolicy || "—"],
+                  ].map(([k,v]) => (
+                    <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                      <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                      <span style={{fontSize:12,fontWeight:600}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>💸 Fees</div>
+                  {[
+                    ["Sales Charge", `${(+f.salesCharge||0).toFixed(2)}%`],
+                    ["Management Fee", `${(+f.mgmtFee||0).toFixed(2)}% p.a.`],
+                    ["Trustee Fee", `${(+f.trusteeFee||0).toFixed(2)}% p.a.`],
+                    ["Est. Annual Cost", fmtCompact(mv * ((+f.mgmtFee||0) + (+f.trusteeFee||0)) / 100)],
+                  ].map(([k,v]) => (
+                    <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
+                      <span style={{fontSize:12,color:T.muted}}>{k}</span>
+                      <span style={{fontSize:12,fontWeight:600}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                {f.notes && (
+                  <div style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px"}}>
+                    <div style={{fontSize:12,fontWeight:700,marginBottom:6,color:T.muted}}>📝 Notes</div>
+                    <div style={{fontSize:13,lineHeight:1.6}}>{f.notes}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === "transactions" && (
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                <TxToolbar search={txSearch} setSearch={setTxSearch} filter={txFilter} setFilter={setTxFilter}
+                  filters={["All", ...Array.from(new Set(txs.map(t=>t.type)))]}
+                  action={<button onClick={()=>{ setEditTx(null); setShowTxModal(true); }} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Record</button>}/>
+                {visibleTxs.length === 0 ? (
+                  <div style={{textAlign:"center",padding:"36px 20px",color:T.muted}}>
+                    <div style={{fontSize:28,marginBottom:8}}>📒</div>
+                    <div style={{fontSize:13,fontWeight:600}}>{txs.length===0?"No transactions yet":"No matching transactions"}</div>
+                  </div>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                    {visibleTxs.map((tx,i) => {
+                      const flow = classifyTxFlow(tx.type);
+                      const isIn = flow === "in", isOut = flow === "out";
+                      return (
+                        <div key={tx.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                          <div style={{width:34,height:34,borderRadius:8,background:isIn?T.upBg:isOut?T.downBg:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{FUND_TX_ICON[tx.type]||"💰"}</div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:600}}>{tx.type}{tx.notes?` — ${tx.notes}`:""}</div>
+                            <div style={{fontSize:11,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                              <span>{tx.date}</span>
+                              {(+tx.units||0) > 0 && <span style={{fontSize:10,background:T.inputBg,borderRadius:4,padding:"1px 6px"}}>{(+tx.units).toLocaleString(undefined,{maximumFractionDigits:4})} units @ S${(+tx.price||0).toFixed(4)}</span>}
+                              {(+tx.fees||0) > 0 && <span style={{fontSize:10,color:T.warn,background:T.warnBg,borderRadius:4,padding:"1px 6px"}}>S${(+tx.fees).toFixed(2)} fees</span>}
+                              {tx.ref && <span style={{fontSize:10,color:T.dim,fontFamily:"monospace"}}>{tx.ref}</span>}
+                              {tx.recordOnly && <span style={{fontSize:10,color:T.muted,background:T.inputBg,borderRadius:4,padding:"1px 6px"}}>record only</span>}
+                            </div>
+                          </div>
+                          <div style={{textAlign:"right",flexShrink:0}}>
+                            <div style={{fontSize:13,fontWeight:700,color:tx.recordOnly?T.text:isIn?T.up:isOut?T.down:T.text}}>
+                              {tx.recordOnly?"":isIn?"+ ":isOut?"- ":""}S${(+tx.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}
+                            </div>
+                          </div>
+                          <TxRowActions onEdit={()=>{ setEditTx(tx); setShowTxModal(true); }} onDelete={()=>handleDeleteTx(f, tx)}/>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === "postings" && (() => {
+              const inter = "'Inter','Segoe UI',system-ui,sans-serif";
+              const mono  = "'Courier New',Courier,monospace";
+              const fmtA = (v) => "S$" + Math.abs(+v||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+              const nm = (f.name||"Fund").replace(/[^A-Za-z0-9]/g,"");
+              const fundAcct = `Assets:Funds:${nm}`;
+              const cashAcct = "Assets:Bank:Cash";
+              const rows = [];
+              const posted = txs.filter(t => !t.recordOnly).slice().sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+              posted.forEach(t => {
+                const amt = +t.amount || 0, fee = +t.fees || 0;
+                if (t.type === "Subscription" || t.type === "Switch In") {
+                  rows.push({date:t.date,desc:`${t.type} — ${t.units} units @ S$${(+t.price||0).toFixed(4)}`,account:fundAcct,amount:fmtA(amt),debit:true,_first:true});
+                  if (fee > 0) rows.push({date:null,desc:"Sales charge",account:"Expenses:Funds:SalesCharge",amount:fmtA(fee),debit:true,_first:false});
+                  rows.push({date:null,desc:"",account: t.type==="Switch In" ? `Assets:Funds:Switch` : cashAcct, amount:fmtA(amt+fee),debit:false,_first:false});
+                } else if (t.type === "Redemption" || t.type === "Switch Out") {
+                  rows.push({date:t.date,desc:`${t.type} — ${t.units} units @ S$${(+t.price||0).toFixed(4)}`,account: t.type==="Switch Out" ? `Assets:Funds:Switch` : cashAcct, amount:fmtA(amt-fee),debit:true,_first:true});
+                  if (fee > 0) rows.push({date:null,desc:"Redemption fee",account:"Expenses:Funds:RedemptionFee",amount:fmtA(fee),debit:true,_first:false});
+                  rows.push({date:null,desc:"",account:fundAcct,amount:fmtA(amt),debit:false,_first:false});
+                } else if (t.type === "Distribution") {
+                  rows.push({date:t.date,desc:`Distribution — ${f.name}`,account:cashAcct,amount:fmtA(amt),debit:true,_first:true});
+                  rows.push({date:null,desc:"",account:`Income:Funds:Distribution:${nm}`,amount:fmtA(amt),debit:false,_first:false});
+                } else if (t.type === "Fee") {
+                  rows.push({date:t.date,desc:`Fee — ${t.notes||f.name}`,account:"Expenses:Funds:ManagementFee",amount:fmtA(amt),debit:true,_first:true});
+                  rows.push({date:null,desc:"",account:cashAcct,amount:fmtA(amt),debit:false,_first:false});
+                }
+              });
+              if (isMobile && rows.length > 0) return <MobilePostingsList journalRows={rows} entryCount={posted.length} entryLabel="transactions"/>;
+              if (rows.length === 0) return (
+                <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}><div style={{fontSize:32,marginBottom:10}}>📒</div><div style={{fontSize:13,fontWeight:600}}>No entries to post yet</div></div>
+              );
+              return (
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.bg}}>
+                  <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
+                    <div style={{fontSize:12,color:T.accent,marginTop:3,fontFamily:inter}}>Double-entry bookkeeping · PTA compliant · {posted.length} transaction{posted.length!==1?"s":""}</div>
+                  </div>
+                  <div style={{overflowX:"auto",overflowY:"auto",maxHeight:460}}>
+                    <table style={{width:"100%",borderCollapse:"collapse"}}>
+                      <thead><tr style={{borderBottom:`1px solid ${T.border}`}}>
+                        {["Date","Account","Description","Debit","Credit"].map((h,hi)=>(
+                          <th key={h} style={{padding:"9px 16px",textAlign:hi>=3?"right":"left",fontSize:11,fontWeight:500,color:T.muted,fontFamily:inter,whiteSpace:"nowrap"}}>{h}</th>
+                        ))}
+                      </tr></thead>
+                      {groupByFirst(rows).map((grp,gi)=>(<tbody key={gi} className="hov-group">{grp.map((row,ri)=>(
+                        <tr key={ri} style={{borderBottom:`1px solid ${T.border}`}}>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",whiteSpace:"nowrap"}}>{row._first ? row.date : null}</td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top"}}><span style={{fontFamily:mono,fontSize:12,color:T.text}}>{row.account}</span></td>
+                          <td style={{padding:"11px 16px",verticalAlign:"top",fontSize:12,color:T.muted,fontFamily:inter}}>{row.desc}</td>
+                          <td style={{padding:"11px 16px",textAlign:"right",whiteSpace:"nowrap"}}>{row.debit ? <span style={{fontSize:12,fontWeight:700,color:T.up,fontFamily:inter}}>{row.amount}</span> : <span style={{fontSize:12,color:T.dim}}>—</span>}</td>
+                          <td style={{padding:"11px 16px",textAlign:"right",whiteSpace:"nowrap"}}>{!row.debit ? <span style={{fontSize:12,fontWeight:700,color:T.down,fontFamily:inter}}>{row.amount}</span> : <span style={{fontSize:12,color:T.dim}}>—</span>}</td>
+                        </tr>
+                      ))}</tbody>))}
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {tab === "audit" && <AuditLogPanel auditLog={auditLog} entityType="fund" entityId={f.id}/>}
+
+            {tab === "manage" && (
+              <FieldUpdatePanel
+                entity={f} entityType="fund" entityLabel={f.name}
+                fields={[
+                  { key:"nav", label:"NAV per Unit", icon:"📊", step:"0.0001", helper:"Latest published NAV from the fund factsheet." },
+                  { key:"units", label:"Units Held", icon:"🔢", prefix:"", step:"0.0001", helper:"Correct the unit count (e.g. after a fund split)." },
+                  { key:"avgCost", label:"Avg Cost / Unit", icon:"💰", step:"0.0001", helper:"Weighted-average book cost per unit." },
+                ]}
+                onUpdate={(next)=>setFunds(prev=>prev.map(x=>x.id===f.id?next:x))}
+                auditLog={auditLog} logAudit={logAudit} showToast={showToast}/>
+            )}
+          </div>
+        </DetailPage>
+        {showTxModal && <FundTxModalInner fund={f} editTx={editTx} cashAccounts={cashAccounts}
+          onSave={handleSaveTx} onClose={()=>{setShowTxModal(false);setEditTx(null);}}/>}
+        {showModal && <FundModal fund={editFund} accounts={cashAccounts} onSave={handleSaveFund} onClose={()=>{setShowModal(false);setEditFund(null);}}/>}
+      </>
+    );
+  }
+
+  /* ── LIST ── */
+  return (
+    <>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,gap:12,flexWrap:"wrap"}}>
+        <div style={{fontSize:13,color:T.muted}}>
+          <strong style={{color:T.text}}>{funds.length}</strong> fund{funds.length!==1?"s":""} · <strong style={{color:T.text}}>{active.length}</strong> active
+        </div>
+        <button onClick={()=>{ setEditFund(null); setShowModal(true); }}
+          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>+ Add Fund</button>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginBottom:18}}>
+        {[
+          { l:"Total Value", v:fmtCompact(totalValue), icon:"📗", sub:`${active.length} active funds` },
+          { l:"Book Cost", v:fmtCompact(totalCost), icon:"💰", sub:"Invested capital" },
+          { l:"Unrealised P/L", v:`${totalUnreal>=0?"+":""}${fmtCompact(totalUnreal)}`, icon:"📈", c:totalUnreal>=0?T.up:T.down, sub:`${unrealPct>=0?"+":""}${unrealPct.toFixed(2)}%` },
+          { l:"Distributions", v:fmtCompact(totalDist), icon:"🎁", c:T.up, sub:"Received to date" },
+        ].map(s => (
+          <Card key={s.l} style={{padding:"14px 16px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <span style={{fontSize:11,color:T.muted,fontWeight:500}}>{s.l}</span>
+              <span style={{fontSize:15}}>{s.icon}</span>
+            </div>
+            <div style={{fontSize:19,fontWeight:800,color:s.c||T.text}}>{s.v}</div>
+            <div style={{fontSize:11,color:T.dim,marginTop:2}}>{s.sub}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{flex:1,minWidth:200,display:"flex",alignItems:"center",gap:8,background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:9,padding:"7px 12px"}}>
+          <span style={{fontSize:13,color:T.dim}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search fund, house, ISIN…"
+            style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize:13,fontFamily:"inherit",color:T.text}}/>
+        </div>
+        <Sel value={filterType} onChange={e=>setFilterType(e.target.value)} options={["All",...FUND_TYPES]}/>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}>
+          <div style={{fontSize:32,marginBottom:10}}>📗</div>
+          <div style={{fontSize:13,fontWeight:600}}>{funds.length===0?"No funds yet":"No matching funds"}</div>
+          <div style={{fontSize:11,marginTop:4,color:T.dim}}>Track unit trusts, mutual funds and index funds here.</div>
+        </div>
+      ) : isMobile ? (
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {filtered.map(f => {
+            const ur = fundUnrealised(f);
+            return <MobileListItem key={f.id} icon="📗" iconBg={T.accentBg}
+              title={f.name} subtitle={`${f.fundHouse} · ${(+f.units||0).toLocaleString(undefined,{maximumFractionDigits:2})} units`}
+              value={fmtCompact(fundMarketValue(f))}
+              valueSub={`${ur>=0?"+":""}${fmtCompact(ur)}`} valueColor={ur>=0?T.up:T.down}
+              onClick={()=>navigate({screen:"funds",entityId:f.id})}/>;
+          })}
+        </div>
+      ) : (
+        <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+          <SortHeader
+            columns={[["Fund","left","name"],["Fund House","left","house"],["Units","right","units"],["NAV","right","nav"],["Market Value","right","value"],["Total Return","right","pl"]]}
+            sortKey={sortKey} sortDir={sortDir} onSort={onSort} gridCols={COLS}/>
+          {filtered.map((f,i) => {
+            const mv = fundMarketValue(f);
+            const tr = fundTotalReturn(f);
+            const trPct = fundReturnPct(f);
+            return (
+              <div key={f.id} className="hov-row" onClick={()=>navigate({screen:"funds",entityId:f.id})}
+                style={{display:"grid",gridTemplateColumns:COLS,columnGap:24,padding:"13px 20px",alignItems:"center",cursor:"pointer",borderTop:i>0?`1px solid ${T.border}`:"none",minWidth:700}}>
+                <div style={{display:"flex",gap:10,alignItems:"center",minWidth:0}}>
+                  <div style={{width:32,height:32,borderRadius:8,background:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>📗</div>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div>
+                    <div style={{fontSize:11,color:T.dim,marginTop:1}}>{f.fundType}{f.isin?` · ${f.isin}`:""}</div>
+                  </div>
+                </div>
+                <div style={{fontSize:12,color:T.muted}}>{f.fundHouse}</div>
+                <div style={{fontSize:12,textAlign:"right"}}>{(+f.units||0).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
+                <div style={{fontSize:12,textAlign:"right"}}>S${(+f.nav||0).toFixed(4)}</div>
+                <div style={{fontSize:13,fontWeight:700,textAlign:"right"}}>{fmtCompact(mv)}</div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:tr>=0?T.up:T.down}}>{tr>=0?"+":""}{fmtCompact(tr)}</div>
+                  <div style={{fontSize:10,color:tr>=0?T.up:T.down,marginTop:1}}>{trPct>=0?"+":""}{trPct.toFixed(2)}%</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showModal && <FundModal fund={editFund} accounts={cashAccounts} onSave={handleSaveFund} onClose={()=>{setShowModal(false);setEditFund(null);}}/>}
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ORGANIZATIONS — an internal registry of entities you control.
+   An org holds no cash of its own; its money lives on the linked Business Venture.
+   So it deliberately has NO transactions/postings tabs, and no Export/Import wiring.
+   ═══════════════════════════════════════════════════════════════ */
+const ORG_TYPES = ["Private Limited","LLP","Sole Proprietorship","Holding Company","Trust","Foundation","Branch Office"];
+const ORG_STATUS = ["Active","Dormant","Struck Off","In Liquidation"];
+
+const EMPTY_ORG = {
+  id:"", name:"", orgType:"Private Limited", registrationNo:"", country:"Singapore",
+  incorporationDate:"", industry:"", role:"Director",
+  ownershipPct:100, shareCapital:0, currency:"SGD",
+  registeredAddress:"", contactEmail:"", website:"",
+  status:"Active",
+  // The user's "allows to be added into portfolio" flag. addToPortfolio() is hard-gated on it.
+  portfolioEligible:false,
+  linkedVentureId:null,
+  notes:"", documents:[],
+};
+
+const ORGS_INIT = [
+  { id:"ORG001", name:"Betawerkz Pte Ltd", orgType:"Private Limited", registrationNo:"201834567K", country:"Singapore",
+    incorporationDate:"2018-07-12", industry:"Technology / Software", role:"Founder & Director",
+    ownershipPct:70, shareCapital:100000, currency:"SGD",
+    registeredAddress:"71 Ayer Rajah Crescent, #04-12, Singapore 139951", contactEmail:"hello@betawerkz.com.sg", website:"betawerkz.com.sg",
+    status:"Active", portfolioEligible:true, linkedVentureId:null,
+    notes:"Primary operating company. Software consulting and product development.",
+    documents:[{ name:"ACRA Bizfile.pdf", date:"2018-07-13", type:"Incorporation" }, { name:"FY2025 Financials.pdf", date:"2026-03-20", type:"Financials" }] },
+  { id:"ORG002", name:"Kiara Holdings Pte Ltd", orgType:"Holding Company", registrationNo:"202112345D", country:"Singapore",
+    incorporationDate:"2021-03-02", industry:"Investment Holding", role:"Director",
+    ownershipPct:100, shareCapital:50000, currency:"SGD",
+    registeredAddress:"1 Raffles Place, #20-61, Singapore 048616", contactEmail:"admin@kiaraholdings.sg", website:"",
+    status:"Active", portfolioEligible:true, linkedVentureId:null,
+    notes:"Holding vehicle for property and private investments.",
+    documents:[{ name:"Constitution.pdf", date:"2021-03-05", type:"Incorporation" }] },
+  { id:"ORG003", name:"Dormant Ventures LLP", orgType:"LLP", registrationNo:"T19LL0987A", country:"Singapore",
+    incorporationDate:"2019-11-20", industry:"Consulting", role:"Partner",
+    ownershipPct:50, shareCapital:0, currency:"SGD",
+    registeredAddress:"—", contactEmail:"", website:"",
+    status:"Dormant", portfolioEligible:false, linkedVentureId:null,
+    notes:"Dormant since 2023. Not eligible for the portfolio until reactivated.",
+    documents:[] },
+];
+
+function OrgModal({ org, onSave, onClose }) {
+  const [f, setF] = useState(org ? { ...EMPTY_ORG, ...org } : EMPTY_ORG);
+  const set = (k,v) => setF(prev => ({...prev, [k]: v}));
+  const invalid = !f.name || !f.orgType;
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:16,width:"min(620px,100%)",maxHeight:"92vh",display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,overflow:"hidden"}}>
+        <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:16,fontWeight:800}}>{org ? "Edit Organization" : "Add Organization"}</div>
+          <button onClick={onClose} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1}}>×</button>
+        </div>
+        <div style={{padding:22,overflowY:"auto",flex:1,minHeight:0}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div style={{gridColumn:"1 / -1"}}><Label required>Organization Name</Label>
+              <Input value={f.name} onChange={e=>set("name",e.target.value)} placeholder="e.g. Betawerkz Pte Ltd"/></div>
+            <div><Label required>Type</Label><Sel value={f.orgType} onChange={e=>set("orgType",e.target.value)} options={ORG_TYPES}/></div>
+            <div><Label>Registration No.</Label><Input value={f.registrationNo} onChange={e=>set("registrationNo",e.target.value)} placeholder="e.g. 201834567K"/></div>
+            <div><Label>Your Role</Label><Input value={f.role} onChange={e=>set("role",e.target.value)} placeholder="Director, Partner…"/></div>
+            <div><Label>Ownership (%)</Label><Input type="number" step="0.01" value={f.ownershipPct} onChange={e=>set("ownershipPct",+e.target.value)}/></div>
+            <div style={{gridColumn:"1 / -1",background:f.portfolioEligible?T.upBg:T.inputBg,border:`1px solid ${f.portfolioEligible?T.up:T.border}30`,borderRadius:10,padding:"12px 14px",display:"flex",gap:10,alignItems:"flex-start",cursor:"pointer"}}
+              onClick={()=>set("portfolioEligible", !f.portfolioEligible)}>
+              <div style={{width:18,height:18,borderRadius:5,border:`1.5px solid ${f.portfolioEligible?T.up:T.border}`,background:f.portfolioEligible?T.up:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>
+                {f.portfolioEligible && <span style={{color:"#fff",fontSize:11,fontWeight:700}}>✓</span>}
+              </div>
+              <div>
+                <div style={{fontSize:13,fontWeight:600,color:f.portfolioEligible?T.up:T.text}}>Allow into portfolio</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>Only eligible organizations can be added to Business Ventures and tracked as an asset.</div>
+              </div>
+            </div>
+            <MoreOptions count={8}>
+              <div><Label>Country</Label><Input value={f.country} onChange={e=>set("country",e.target.value)}/></div>
+              <div><Label>Industry</Label><Input value={f.industry} onChange={e=>set("industry",e.target.value)} placeholder="e.g. Technology"/></div>
+              <div><Label>Incorporation Date</Label><Input type="date" value={f.incorporationDate} onChange={e=>set("incorporationDate",e.target.value)}/></div>
+              <div><Label>Share Capital</Label><Input type="number" prefix="S$" value={f.shareCapital} onChange={e=>set("shareCapital",+e.target.value)}/></div>
+              <div><Label>Status</Label><Sel value={f.status} onChange={e=>set("status",e.target.value)} options={ORG_STATUS}/></div>
+              <div><Label>Contact Email</Label><Input value={f.contactEmail} onChange={e=>set("contactEmail",e.target.value)} placeholder="admin@company.com"/></div>
+              <div><Label>Website</Label><Input value={f.website} onChange={e=>set("website",e.target.value)} placeholder="company.com"/></div>
+              <div style={{gridColumn:"1 / -1"}}><Label>Registered Address</Label><Input value={f.registeredAddress} onChange={e=>set("registeredAddress",e.target.value)}/></div>
+              <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="What this entity does…"
+                  style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+              </div>
+            </MoreOptions>
+          </div>
+        </div>
+        <div style={{padding:"14px 24px 20px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"flex-end",gap:10}}>
+          <button onClick={onClose} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave(f)} disabled={invalid}
+            style={{padding:"9px 22px",borderRadius:8,border:"none",background:invalid?T.border:T.selected,color:invalid?T.dim:T.selectedText,cursor:invalid?"not-allowed":"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>
+            {org ? "Save Changes" : "Add Organization"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrganizationsScreen({ organizations, setOrganizations, ventures, setVentures, showToast, auditLog, logAudit, route, navigate }) {
+  const isMobile = useIsMobile();
+  const [showModal, setShowModal] = useState(false);
+  const [editOrg, setEditOrg] = useState(null);
+  const [searchQ, setSearchQ] = useState("");
+  const [filterStatus, setFilterStatus] = useState("All");
+  const { sortKey, sortDir, onSort } = useSortState("name", "asc");
+
+  const detailId = route.entityId;
+  const tab = route.tab || "overview";
+  const detail = detailId ? organizations.find(o => String(o.id) === String(detailId)) : null;
+  const goList = () => navigate({ screen: "organizations" });
+  const goTab = (t) => navigate({ screen: "organizations", entityId: detailId, tab: t });
+
+  const eligible = organizations.filter(o => o.portfolioEligible);
+  const linked = organizations.filter(o => o.linkedVentureId);
+
+  const handleSave = (o) => {
+    if (o.id) {
+      const prev = organizations.find(x => x.id === o.id);
+      setOrganizations(p => p.map(x => x.id === o.id ? { ...x, ...o } : x));
+      if (logAudit) logAudit("organization", o.id, "update", prev, { ...prev, ...o }, `${o.name} · ${o.orgType}`);
+      showToast("Organization updated", "success");
+    } else {
+      const no = { ...EMPTY_ORG, ...o, id: "ORG" + Date.now(), documents: [] };
+      setOrganizations(p => [...p, no]);
+      if (logAudit) logAudit("organization", no.id, "create", null, no, `${no.name} · ${no.orgType}`);
+      showToast("Organization added", "success");
+    }
+    setShowModal(false); setEditOrg(null);
+  };
+
+  /* Create a Business Venture from an organization and cross-link the two.
+     Hard-gated on portfolioEligible — an org the user hasn't cleared for the portfolio
+     cannot be added, which is the whole point of the flag. */
+  const addToPortfolio = (org) => {
+    if (!org.portfolioEligible) {
+      showToast("This organization isn't marked as portfolio-eligible", "error");
+      return;
+    }
+    if (org.linkedVentureId) {
+      navigate({ screen: "partnerships", entityId: org.linkedVentureId });
+      return;
+    }
+    const vid = "BP" + Date.now();
+    const venture = {
+      ...EMPTY_BP,
+      id: vid,
+      businessName: org.name,
+      partnershipType: org.orgType === "LLP" ? "LLP" : org.orgType === "Sole Proprietorship" ? "Sole Proprietorship" : "Private Limited",
+      industry: org.industry || "Other",
+      role: org.role || "Active Partner",
+      ownershipPct: +org.ownershipPct || 0,
+      capitalContributed: +org.shareCapital || 0,
+      bookValue: +org.shareCapital || 0,
+      estimatedMarketValue: +org.shareCapital || 0,
+      startDate: org.incorporationDate || "",
+      registrationNo: org.registrationNo || "",
+      country: org.country || "Singapore",
+      currency: org.currency || "SGD",
+      status: org.status === "Active" ? "Active" : "Dormant",
+      notes: org.notes || "",
+      organizationId: org.id,
+      transactions: [],
+    };
+    setVentures(prev => [...prev, venture]);
+    setOrganizations(prev => prev.map(x => x.id === org.id ? { ...x, linkedVentureId: vid } : x));
+    if (logAudit) {
+      logAudit("organization", org.id, "update", { linkedVentureId: null }, { linkedVentureId: vid }, `${org.name} · added to portfolio as a Business Venture`);
+      logAudit("venture", vid, "create", null, venture, `${venture.businessName} · created from organization ${org.name}`);
+    }
+    showToast(`${org.name} added to Business Ventures`, "success");
+    navigate({ screen: "partnerships", entityId: vid });
+  };
+
+  const filtered = organizations
+    .filter(o => (filterStatus === "All" || o.status === filterStatus)
+      && (!searchQ || o.name.toLowerCase().includes(searchQ.toLowerCase()) || (o.registrationNo||"").toLowerCase().includes(searchQ.toLowerCase())))
+    .slice()
+    .sort((a,b) => {
+      const val = (x) => sortKey === "name" ? x.name
+        : sortKey === "type" ? x.orgType
+        : sortKey === "own" ? (+x.ownershipPct||0)
+        : sortKey === "cap" ? (+x.shareCapital||0)
+        : sortKey === "status" ? x.status : x.name;
+      const av = val(a), bv = val(b);
+      if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+
+  const COLS = capCols("2fr 1.2fr 1fr 1fr 1.2fr 1.4fr");
+
+  /* ── DETAIL ── */
+  if (detailId) {
+    if (!detail) return <NotFound message="This organization could not be found." onBack={goList}/>;
+    const o = detail;
+    const venture = o.linkedVentureId ? (ventures||[]).find(v => String(v.id) === String(o.linkedVentureId)) : null;
+    return (
+      <>
+        <DetailPage
+          icon="🏢" iconBg={T.accentBg}
+          title={o.name}
+          subtitle={`${o.orgType}${o.registrationNo ? ` · ${o.registrationNo}` : ""} · ${o.country}`}
+          badges={<>
+            <Badge bg={o.status === "Active" ? T.upBg : T.inputBg} color={o.status === "Active" ? T.up : T.muted}>{o.status}</Badge>
+            {o.portfolioEligible
+              ? <Badge bg={T.accentBg} color={T.accent}>Portfolio-eligible</Badge>
+              : <Badge bg={T.inputBg} color={T.dim}>Not eligible</Badge>}
+          </>}
+          stats={[
+            { l: "Your Ownership", v: `${(+o.ownershipPct||0).toFixed(0)}%` },
+            { l: "Share Capital", v: fmtCompact(+o.shareCapital||0) },
+            { l: "Incorporated", v: o.incorporationDate || "—" },
+            { l: "In Portfolio", v: venture ? "Yes" : "No", c: venture ? T.up : T.muted },
+          ]}
+          tabs={[
+            { id:"overview", label:"Overview" },
+            { id:"ventures", label:"Portfolio Link" },
+            { id:"documents", label:`Documents (${(o.documents||[]).length})` },
+            { id:"audit", label:"Audit" },
+            { id:"manage", label:"Manage" },
+          ]}
+          activeTab={tab} onTab={goTab} onBack={goList}
+          headerActions={
+            <button onClick={()=>{ setEditOrg(o); setShowModal(true); }}
+              style={{background:T.inputBg,border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:600,color:T.text,fontFamily:"inherit"}}>✏️ Edit</button>
+          }>
+          <div style={{paddingBottom:8}}>
+            {tab === "overview" && (
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>🏢 Entity Details</div>
+                  {[
+                    ["Type", o.orgType],
+                    ["Registration No.", o.registrationNo || "—"],
+                    ["Country", o.country || "—"],
+                    ["Industry", o.industry || "—"],
+                    ["Your Role", o.role || "—"],
+                    ["Ownership", `${(+o.ownershipPct||0).toFixed(2)}%`],
+                    ["Share Capital", fmtCompact(+o.shareCapital||0)],
+                    ["Incorporation Date", o.incorporationDate || "—"],
+                    ["Registered Address", o.registeredAddress || "—"],
+                    ["Contact", o.contactEmail || "—"],
+                    ["Website", o.website || "—"],
+                  ].map(([k,v]) => (
+                    <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`,gap:12}}>
+                      <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>{k}</span>
+                      <span style={{fontSize:12,fontWeight:600,textAlign:"right"}}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                {o.notes && (
+                  <div style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px"}}>
+                    <div style={{fontSize:12,fontWeight:700,marginBottom:6,color:T.muted}}>📝 Notes</div>
+                    <div style={{fontSize:13,lineHeight:1.6}}>{o.notes}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === "ventures" && (
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                {venture ? (
+                  <div style={{border:`1px solid ${T.up}30`,background:T.upBg,borderRadius:12,padding:"18px 20px"}}>
+                    <div style={{fontSize:13,fontWeight:700,color:T.up,marginBottom:6}}>✅ Tracked in your portfolio</div>
+                    <div style={{fontSize:12,color:T.muted,marginBottom:14}}>
+                      This organization is linked to the Business Venture <strong style={{color:T.text}}>{venture.businessName}</strong>. Capital, distributions and valuations are recorded there.
+                    </div>
+                    <button onClick={()=>navigate({screen:"partnerships",entityId:venture.id})}
+                      style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:8,padding:"9px 18px",cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit"}}>
+                      View in Business Ventures →
+                    </button>
+                  </div>
+                ) : o.portfolioEligible ? (
+                  <div style={{border:`1px dashed ${T.border}`,borderRadius:12,padding:"32px 20px",textAlign:"center"}}>
+                    <div style={{fontSize:28,marginBottom:8}}>🤝</div>
+                    <div style={{fontSize:13,fontWeight:600}}>Not yet in your portfolio</div>
+                    <div style={{fontSize:11,color:T.dim,marginTop:4,marginBottom:14,maxWidth:420,marginLeft:"auto",marginRight:"auto"}}>
+                      This organization is marked portfolio-eligible. Adding it creates a Business Venture seeded from its details, and links the two together.
+                    </div>
+                    <button onClick={()=>addToPortfolio(o)}
+                      style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:8,padding:"9px 20px",cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit"}}>
+                      ＋ Add to Business Ventures
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{border:`1px solid ${T.border}`,borderRadius:12,padding:"32px 20px",textAlign:"center"}}>
+                    <div style={{fontSize:28,marginBottom:8}}>🔒</div>
+                    <div style={{fontSize:13,fontWeight:600}}>Not portfolio-eligible</div>
+                    <div style={{fontSize:11,color:T.dim,marginTop:4,maxWidth:420,marginLeft:"auto",marginRight:"auto"}}>
+                      Tick <strong>Allow into portfolio</strong> in Edit to make this organization available as a Business Venture.
+                    </div>
+                  </div>
+                )}
+                <div style={{fontSize:11,color:T.dim,padding:"0 2px"}}>
+                  An organization holds no cash of its own — its money flow lives on the linked Business Venture, which is where transactions and postings are recorded.
+                </div>
+              </div>
+            )}
+
+            {tab === "documents" && (
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{background:T.inputBg,border:`2px dashed ${T.border}`,borderRadius:10,padding:24,textAlign:"center"}}>
+                  <div style={{fontSize:24,marginBottom:6}}>📎</div>
+                  <div style={{fontSize:13,fontWeight:500}}>Upload Document</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:4}}>ACRA filings, constitution, financials…</div>
+                </div>
+                {(o.documents||[]).length === 0 ? (
+                  <div style={{textAlign:"center",padding:"24px 20px",fontSize:13,color:T.muted}}>No documents uploaded</div>
+                ) : (o.documents||[]).map((d,i) => (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:12,border:`1px solid ${T.border}`,borderRadius:10,padding:"11px 14px"}}>
+                    <span style={{fontSize:18}}>📄</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600}}>{d.name}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{d.type} · {d.date}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {tab === "audit" && <AuditLogPanel auditLog={auditLog} entityType="organization" entityId={o.id}/>}
+
+            {tab === "manage" && (
+              <FieldUpdatePanel
+                entity={o} entityType="organization" entityLabel={o.name}
+                fields={[
+                  { key:"shareCapital", label:"Share Capital", icon:"💰", helper:"Issued and paid-up capital." },
+                  { key:"ownershipPct", label:"Ownership %", icon:"📊", prefix:"", suffix:"%", helper:"Your stake in this entity." },
+                ]}
+                onUpdate={(next)=>setOrganizations(prev=>prev.map(x=>x.id===o.id?next:x))}
+                auditLog={auditLog} logAudit={logAudit} showToast={showToast}
+                extraActions={o.portfolioEligible && !venture && (
+                  <button onClick={()=>addToPortfolio(o)}
+                    style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${T.accent}60`,background:T.accentBg,color:T.accent,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>
+                    🤝 Add to Business Ventures
+                  </button>
+                )}/>
+            )}
+          </div>
+        </DetailPage>
+        {showModal && <OrgModal org={editOrg} onSave={handleSave} onClose={()=>{setShowModal(false);setEditOrg(null);}}/>}
+      </>
+    );
+  }
+
+  /* ── LIST ── */
+  return (
+    <>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,gap:12,flexWrap:"wrap"}}>
+        <div style={{fontSize:13,color:T.muted}}>
+          <strong style={{color:T.text}}>{organizations.length}</strong> organization{organizations.length!==1?"s":""} · <strong style={{color:T.text}}>{eligible.length}</strong> portfolio-eligible · <strong style={{color:T.text}}>{linked.length}</strong> in portfolio
+        </div>
+        <button onClick={()=>{ setEditOrg(null); setShowModal(true); }}
+          style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:9,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>+ Add Organization</button>
+      </div>
+
+      <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{flex:1,minWidth:200,display:"flex",alignItems:"center",gap:8,background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:9,padding:"7px 12px"}}>
+          <span style={{fontSize:13,color:T.dim}}>🔍</span>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search organization, UEN…"
+            style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize:13,fontFamily:"inherit",color:T.text}}/>
+        </div>
+        <Sel value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} options={["All",...ORG_STATUS]}/>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{textAlign:"center",padding:"48px 20px",color:T.muted}}>
+          <div style={{fontSize:32,marginBottom:10}}>🏢</div>
+          <div style={{fontSize:13,fontWeight:600}}>{organizations.length===0?"No organizations yet":"No matching organizations"}</div>
+          <div style={{fontSize:11,marginTop:4,color:T.dim}}>Register the companies, LLPs and holding entities you control.</div>
+        </div>
+      ) : isMobile ? (
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {filtered.map(o => (
+            <MobileListItem key={o.id} icon="🏢" iconBg={T.accentBg}
+              title={o.name} subtitle={`${o.orgType} · ${(+o.ownershipPct||0).toFixed(0)}% owned`}
+              value={fmtCompact(+o.shareCapital||0)}
+              valueSub={o.linkedVentureId ? "In portfolio" : o.portfolioEligible ? "Eligible" : "Not eligible"}
+              valueColor={o.linkedVentureId ? T.up : T.muted}
+              badge={o.status} badgeBg={o.status==="Active"?T.upBg:T.inputBg} badgeColor={o.status==="Active"?T.up:T.muted}
+              onClick={()=>navigate({screen:"organizations",entityId:o.id})}/>
+          ))}
+        </div>
+      ) : (
+        <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+          <SortHeader
+            columns={[["Organization","left","name"],["Type","left","type"],["Ownership","right","own"],["Share Capital","right","cap"],["Status","right","status"],["Portfolio","right"]]}
+            sortKey={sortKey} sortDir={sortDir} onSort={onSort} gridCols={COLS}/>
+          {filtered.map((o,i) => (
+            <div key={o.id} className="hov-row" onClick={()=>navigate({screen:"organizations",entityId:o.id})}
+              style={{display:"grid",gridTemplateColumns:COLS,columnGap:24,padding:"13px 20px",alignItems:"center",cursor:"pointer",borderTop:i>0?`1px solid ${T.border}`:"none",minWidth:700}}>
+              <div style={{display:"flex",gap:10,alignItems:"center",minWidth:0}}>
+                <div style={{width:32,height:32,borderRadius:8,background:T.accentBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>🏢</div>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{o.name}</div>
+                  <div style={{fontSize:11,color:T.dim,marginTop:1}}>{o.registrationNo||"—"}</div>
+                </div>
+              </div>
+              <div style={{fontSize:12,color:T.muted}}>{o.orgType}</div>
+              <div style={{fontSize:12,textAlign:"right"}}>{(+o.ownershipPct||0).toFixed(0)}%</div>
+              <div style={{fontSize:13,fontWeight:600,textAlign:"right"}}>{fmtCompact(+o.shareCapital||0)}</div>
+              <div style={{textAlign:"right"}}>
+                <Badge bg={o.status==="Active"?T.upBg:T.inputBg} color={o.status==="Active"?T.up:T.muted}>{o.status}</Badge>
+              </div>
+              <div style={{textAlign:"right",fontSize:11}}>
+                {o.linkedVentureId
+                  ? <span style={{color:T.up,fontWeight:600}}>✅ In portfolio</span>
+                  : o.portfolioEligible
+                  ? <span style={{color:T.accent,fontWeight:600}}>Eligible</span>
+                  : <span style={{color:T.dim}}>🔒 Not eligible</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showModal && <OrgModal org={editOrg} onSave={handleSave} onClose={()=>{setShowModal(false);setEditOrg(null);}}/>}
+    </>
+  );
+}
+
+/* Screens that render in the full-width layout (their own title row + scroll container) rather
+   than the narrow centred default. A new screen missing from this set renders in the WRONG layout
+   with no error at all — it was previously a 15-term `||` chain, which is exactly how that
+   happens. Keep it beside NAV so the two are edited together. */
+const FULL_WIDTH_SCREENS = new Set([
+  "stocks","funds","realestate","creditcards","cashaccounts","insurance","loans","retirement",
+  "bonds","crypto","privateequity","partnerships","collectibles","organizations",
+  "workflows","import","export",
+]);
+
 const NAV = [
   { id: "cashaccounts", label: "Cash Accounts", icon: "💰", group: "Banking" },
   { id: "creditcards", label: "Credit Cards", icon: "💳", group: "Banking" },
@@ -19879,12 +20974,14 @@ const NAV = [
   { id: "stocks", label: "Stocks", icon: "📈", group: "Investments" },
   { id: "bonds", label: "Bonds & T-Bills", icon: "📊", group: "Investments" },
   { id: "crypto", label: "Cryptocurrencies", icon: "🪙", group: "Investments" },
+  { id: "funds", label: "Investment Funds", icon: "📗", group: "Investments" },
   { id: "realestate", label: "Real Estate", icon: "🏠", group: "Protection" },
   { id: "insurance", label: "Insurance", icon: "🛡", group: "Protection" },
   { id: "retirement", label: "Retirement", icon: "🏛️", group: "Protection" },
   { id: "privateequity", label: "VC/PE Investments", icon: "💼", group: "Private Assets" },
   { id: "partnerships", label: "Business Ventures", icon: "🤝", group: "Private Assets" },
   { id: "collectibles", label: "Collectibles", icon: "💎", group: "Private Assets" },
+  { id: "organizations", label: "Organizations", icon: "🏢", group: "Private Assets" },
   { id: "workflows", label: "Workflows", icon: "⚡", group: "Automation" },
   { id: "import", label: "Import", icon: "📥", group: "Automation" },
   { id: "export", label: "Export", icon: "📤", group: "Automation" },
@@ -19892,6 +20989,8 @@ const NAV = [
 
 const subtitles = {
   stocks: "Stock holdings, dividends and transactions across brokerages",
+  funds: "Unit trusts, mutual funds and index funds",
+  organizations: "Companies, LLPs and holding entities you control",
   creditcards: "Credit, commercial and debit cards",
   cashaccounts: "Bank, brokerage and crypto wallet accounts",
   loans: "Personal, car, education, business and mortgage loans",
@@ -19982,6 +21081,8 @@ export default function App() {
   const [bondHoldings, setBondHoldings] = useState(BONDS_INIT);
   const [cryptoHoldings, setCryptoHoldings] = useState(CRYPTO_INIT);
   const [peInvestments, setPEInvestments] = useState(PE_INIT);
+  const [funds, setFunds] = useState(FUNDS_INIT);
+  const [organizations, setOrganizations] = useState(ORGS_INIT);
   const [bpVentures, setBPVentures] = useState(BP_INIT);
   const [collectibles, setCollectibles] = useState(COL_INIT);
   const [workflows, setWorkflows] = useState(WORKFLOWS_INIT);
@@ -20234,6 +21335,8 @@ export default function App() {
     if (page === "retirement") return <RetirementScreen plans={retPlans} setPlans={setRetPlans} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
     if (page === "bonds") return <BondsScreen bonds={bondHoldings} setBonds={setBondHoldings} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
     if (page === "crypto") return <CryptoScreen cryptos={cryptoHoldings} setCryptos={setCryptoHoldings} accounts={ccAccounts} setAccounts={setCCAccounts} setTransactions={setTransactions} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "organizations") return <OrganizationsScreen organizations={organizations} setOrganizations={setOrganizations} ventures={bpVentures} setVentures={setBPVentures} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
+    if (page === "funds") return <FundsScreen funds={funds} setFunds={setFunds} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
     if (page === "privateequity") return <PEScreen investments={peInvestments} setInvestments={setPEInvestments} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
     if (page === "partnerships") return <BPScreen ventures={bpVentures} setVentures={setBPVentures} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
     if (page === "collectibles") return <CollectiblesScreen items={collectibles} setItems={setCollectibles} accounts={ccAccounts} setAccounts={setCCAccounts} showToast={showToast} auditLog={auditLog} logAudit={logAudit} route={route} navigate={navigate} />;
@@ -20374,7 +21477,7 @@ export default function App() {
         </div>
 
         {/* Page content */}
-        {page === "stocks" || page === "realestate" || page === "creditcards" || page === "cashaccounts" || page === "insurance" || page === "loans" || page === "retirement" || page === "bonds" || page === "crypto" || page === "privateequity" || page === "partnerships" || page === "collectibles" || page === "workflows" || page === "import" || page === "export" ? (
+        {FULL_WIDTH_SCREENS.has(page) ? (
           <div style={{ flex: 1, overflowY: "auto", minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "18px 28px 0", flexShrink: 0 }}>
               <h1 className="wo-main-title" style={{ fontSize: 26, fontWeight: 700, margin: "0 0 4px", letterSpacing: "-0.02em" }}>{activeNav && activeNav.label}</h1>
