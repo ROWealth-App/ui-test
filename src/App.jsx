@@ -342,7 +342,7 @@ function DismissibleAlert({ alertId, children, style = {} }) {
 /* ─── Audit log ──────────────────────────────────────────────
    Records create/update/delete on user-managed entities.
    Powers the "History" tab in every detail drawer. */
-function diffEntities(before, after, ignore = ["id","transactions","loanContracts","loanRepayments","claims","premiums"]) {
+function diffEntities(before, after, ignore = ["id","transactions","loanContracts","loanRepayments","claims","premiums","priceDate","navDate","valuationDate"]) {
   const out = [];
   if (!before || !after) return out;
   const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
@@ -371,11 +371,15 @@ function snapshotOf(obj) {
   return out;
 }
 
+/* The 7th `opts` param is additive — every positional call site keeps working untouched.
+   `opts.effectiveDate` is the date the change *takes effect* (a price can be back-dated),
+   as distinct from `ts`, the machine time it was recorded. */
 function makeAuditLogger(setAuditLog) {
-  return (entityType, entityId, action, before, after, label) => {
+  const log = (entityType, entityId, action, before, after, label, opts) => {
     const entry = {
       id: "AL" + Date.now().toString(36) + Math.floor(Math.random()*1000).toString(36),
       ts: new Date().toISOString(),
+      effectiveDate: (opts && opts.effectiveDate) || null,
       entityType, entityId,
       entityLabel: label || String(entityId || ""),
       action,
@@ -387,8 +391,16 @@ function makeAuditLogger(setAuditLog) {
       user: "You",
     };
     setAuditLog(prev => [entry, ...prev]);
+    return entry.id;
   };
+  // The only mutation of the audit log. Used by the price-history delete, which then logs a
+  // replacement `delete-price-update` entry — so the trail is never actually broken.
+  log.remove = (entryId) => setAuditLog(prev => prev.filter(e => e.id !== entryId));
+  return log;
 }
+
+// The date a change took effect. Legacy/seeded entries fall back to their recorded timestamp.
+const effDate = (e) => (e && (e.effectiveDate || String(e.ts || "").slice(0, 10))) || "";
 
 /* Badge label + colour per audit action. Replaces a ternary chain that had no arm for
    edit-transaction / delete-transaction — both fell through to a blue "UPDATED" badge,
@@ -501,6 +513,91 @@ function AuditLogPanel({ auditLog, entityType, entityId }) {
         );
       })}
     </div>
+  );
+}
+
+/* ─── Shared price / NAV / value history table ────────────────
+   One table for Stocks, Bonds, Crypto, VC/PE and the generic FieldUpdatePanel.
+   Sorted by EFFECTIVE date, not the recorded timestamp — a back-dated update slots into
+   the past, so row 0 is genuinely the update that set the value in force today (CURRENT).
+   `onDelete(entry, isLatest)` lets the owning panel revert only when the entry is the
+   latest one: deleting a superseded entry must not touch the entity's current value. */
+function PriceHistoryTable({ entries, fieldKeys, fmt, fmtDelta, title, emptyTitle, emptyHint, onDelete }) {
+  const keys = Array.isArray(fieldKeys) ? fieldKeys : [fieldKeys];
+  const money = fmt || ((n) => `S$${Number(n).toLocaleString()}`);
+  const delta = fmtDelta || ((n) => Number(n).toLocaleString());
+  // Descending by effective date; recorded time breaks ties (two updates dated the same day).
+  const rows = (entries || []).slice().sort((a, b) => {
+    const c = effDate(b).localeCompare(effDate(a));
+    return c !== 0 ? c : new Date(b.ts) - new Date(a.ts);
+  });
+
+  return (
+    <Card style={{padding:"16px 18px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={{fontSize:13,fontWeight:600}}>{title}</div>
+        <div style={{fontSize:11,color:T.muted}}>{rows.length} {rows.length === 1 ? "entry" : "entries"}</div>
+      </div>
+      {rows.length === 0 ? (
+        <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
+          <div style={{fontSize:22,marginBottom:6}}>📈</div>
+          <div style={{fontWeight:600}}>{emptyTitle || "No updates yet"}</div>
+          <div style={{fontSize:11,marginTop:3,color:T.dim}}>{emptyHint || "Your updates will be tracked here."}</div>
+        </div>
+      ) : (
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+            <thead>
+              <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
+                <th style={{padding:"8px 10px",whiteSpace:"nowrap"}}>Effective Date</th>
+                <th style={{padding:"8px 10px",textAlign:"right"}}>Old</th>
+                <th style={{padding:"8px 10px",textAlign:"right"}}>New</th>
+                <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
+                <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
+                <th style={{padding:"8px 10px",whiteSpace:"nowrap"}}>Recorded</th>
+                <th style={{padding:"8px 10px"}}>By</th>
+                {onDelete && <th style={{padding:"8px 10px",textAlign:"right"}}></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((e, idx) => {
+                let ch = null;
+                for (const k of keys) { ch = (e.changes||[]).find(c => c.field === k); if (ch) break; }
+                const before = parseFloat(ch?.before) || 0;
+                const after = parseFloat(ch?.after) || 0;
+                const d = after - before;
+                const pct = before > 0 ? (d/before*100) : 0;
+                const up = d >= 0;
+                const isLatest = idx === 0;
+                return (
+                  <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                    <td style={{padding:"9px 10px",color:T.text,whiteSpace:"nowrap"}}>
+                      {effDate(e) || "—"}
+                      {isLatest && (
+                        <span style={{marginLeft:6,fontSize:9,fontWeight:700,color:T.up,background:`${T.up}15`,padding:"2px 5px",borderRadius:3,letterSpacing:0.3}}>CURRENT</span>
+                      )}
+                    </td>
+                    <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>{money(before)}</td>
+                    <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>{money(after)}</td>
+                    <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{delta(d)}</td>
+                    <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{pct.toFixed(2)}%</td>
+                    <td style={{padding:"9px 10px",color:T.dim,whiteSpace:"nowrap"}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
+                    <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
+                    {onDelete && (
+                      <td style={{padding:"9px 10px",textAlign:"right"}}>
+                        <button onClick={()=>onDelete(e, isLatest, { before, after })}
+                          title={isLatest ? "Delete this update and revert to the previous value" : "Delete this log entry (a later update superseded it, so the current value won't change)"}
+                          style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 7px",cursor:"pointer",fontSize:12,color:T.down,fontFamily:"inherit",lineHeight:1.2}}>🗑</button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -1520,13 +1617,13 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
                   {drawerTab === "history" && (
                     <ManageScreen holdings={acctHoldings} setHoldings={scopedSetHoldings}
                       transactions={acctTxns} setTransactions={scopedSetTransactions}
-                      showToast={showToast} onlyTab="history"/>
+                      showToast={showToast} onlyTab="history" logAudit={logAudit}/>
                   )}
 
                   {drawerTab === "postings" && (
                     <ManageScreen holdings={acctHoldings} setHoldings={scopedSetHoldings}
                       transactions={acctTxns} setTransactions={scopedSetTransactions}
-                      showToast={showToast} onlyTab="postings"/>
+                      showToast={showToast} onlyTab="postings" logAudit={logAudit}/>
                   )}
                 </div>
               </div>
@@ -2053,7 +2150,7 @@ function StockActionPanel({ holding, setHoldings, setTransactions, setAccounts, 
   const isUpdatePrice = txType === "Update Price";
   const needsPrice = txType === "Buy" || txType === "Sell" || txType === "Dividend" || isUpdatePrice;
   const canSubmit = isUpdatePrice
-    ? !!form.price && parseFloat(form.price) > 0
+    ? !!form.price && parseFloat(form.price) > 0 && !!form.date
     : form.date && form.qty && (txType === "Transfer In" || txType === "Transfer Out" || form.price);
 
   const handleSubmit = () => {
@@ -2061,11 +2158,14 @@ function StockActionPanel({ holding, setHoldings, setTransactions, setAccounts, 
 
     if (isUpdatePrice) {
       const newPrice = parseFloat(form.price);
+      const priceDate = form.date;
       const prev = { ...holding };
-      const next = { ...holding, marketPrice: newPrice, price: newPrice };
-      setHoldings(prevHs => prevHs.map(x => x.id === holding.id ? { ...x, marketPrice: newPrice, price: newPrice } : x));
-      if (logAudit) logAudit("stock", holding.id, "update", prev, next, `${holding.sym} · price ${holding.tradeCcy} ${(holding.marketPrice||holding.price||0).toFixed(2)} → ${holding.tradeCcy} ${newPrice.toFixed(2)}`);
-      showToast(`${holding.sym} price updated to ${holding.tradeCcy} ${newPrice.toFixed(2)}`, "success");
+      // `value` and `priceDate` were previously left stale after a price update.
+      const patch = { marketPrice: newPrice, price: newPrice, priceDate, value: newPrice * (holding.qty || 0) };
+      const next = { ...holding, ...patch };
+      setHoldings(prevHs => prevHs.map(x => x.id === holding.id ? { ...x, ...patch } : x));
+      if (logAudit) logAudit("stock", holding.id, "update", prev, next, `${holding.sym} · price ${holding.tradeCcy} ${(holding.marketPrice||holding.price||0).toFixed(2)} → ${holding.tradeCcy} ${newPrice.toFixed(2)} (${priceDate})`, { effectiveDate: priceDate });
+      showToast(`${holding.sym} price updated to ${holding.tradeCcy} ${newPrice.toFixed(2)} as of ${priceDate}`, "success");
       setForm(f => ({ ...f, price: String(newPrice) }));
       return;
     }
@@ -2127,6 +2227,39 @@ function StockActionPanel({ holding, setHoldings, setTransactions, setAccounts, 
     if (onRecorded) onRecorded();
   };
 
+  const priceUpdates = (auditLog || [])
+    .filter(e => e.entityType === "stock" && e.entityId === holding.id && e.action === "update"
+      && (e.changes||[]).some(c => c.field === "marketPrice" || c.field === "price"));
+
+  const handleDeletePrice = (entry, isLatest, { before, after }) => {
+    const ccy = holding.tradeCcy;
+    const canRevert = isLatest && Number.isFinite(before);
+    const msg = canRevert
+      ? `Delete this price update?\n\nPrice reverts to ${ccy} ${before.toFixed(2)} — the price in force before this update.`
+      : `Delete this log entry?\n\nA later update superseded it, so the current price stays at ${ccy} ${(holding.marketPrice||holding.price||0).toFixed(2)}. Only the history row is removed.`;
+    if (!window.confirm(msg)) return;
+
+    const eff = effDate(entry);
+    const prior = priceUpdates.slice().sort((a,b) => effDate(b).localeCompare(effDate(a)) || (new Date(b.ts) - new Date(a.ts)))
+      .filter(e => e.id !== entry.id)[0];
+
+    if (canRevert) {
+      setHoldings(prev => prev.map(x => x.id === holding.id
+        ? { ...x, marketPrice: before, price: before, value: before * (x.qty || 0), priceDate: prior ? effDate(prior) : null }
+        : x));
+      setForm(f => ({ ...f, price: String(before) }));
+    }
+    if (logAudit) {
+      logAudit.remove(entry.id);
+      logAudit("stock", holding.id, "delete-price-update", null, null,
+        canRevert
+          ? `${holding.sym} · price update reverted · ${ccy} ${after.toFixed(2)} → ${ccy} ${before.toFixed(2)} (was effective ${eff})`
+          : `${holding.sym} · price history entry removed · ${ccy} ${after.toFixed(2)} effective ${eff} (superseded — current price unchanged)`,
+        { effectiveDate: eff });
+    }
+    showToast(canRevert ? `Price reverted to ${ccy} ${before.toFixed(2)}` : "History entry removed", "success");
+  };
+
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       {/* Type pills */}
@@ -2165,6 +2298,9 @@ function StockActionPanel({ holding, setHoldings, setTransactions, setAccounts, 
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
               <div><Label required>New Market Price ({holding.tradeCcy})</Label>
                 <Input type="number" step="0.01" value={form.price} onChange={e=>set("price",e.target.value)} placeholder={String(holding.marketPrice||holding.price||"0.00")}/>
+              </div>
+              <div><Label required>Effective Date</Label>
+                <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
               </div>
               {(() => {
                 const newPrice = parseFloat(form.price) || 0;
@@ -2307,61 +2443,18 @@ function StockActionPanel({ holding, setHoldings, setTransactions, setAccounts, 
       </Card>
 
       {/* Price update history — Update Price mode only */}
-      {isUpdatePrice && (() => {
-        const priceUpdates = (auditLog || [])
-          .filter(e => e.entityType === "stock" && e.entityId === holding.id && e.action === "update"
-            && (e.changes||[]).some(c => c.field === "marketPrice" || c.field === "price"));
-        return (
-          <Card style={{padding:"16px 18px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <div style={{fontSize:13,fontWeight:600}}>Price History</div>
-              <div style={{fontSize:11,color:T.muted}}>{priceUpdates.length} {priceUpdates.length === 1 ? "entry" : "entries"}</div>
-            </div>
-            {priceUpdates.length === 0 ? (
-              <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
-                <div style={{fontSize:22,marginBottom:6}}>📈</div>
-                <div style={{fontWeight:600}}>No manual price updates yet</div>
-                <div style={{fontSize:11,marginTop:3,color:T.dim}}>Your price updates will be tracked here.</div>
-              </div>
-            ) : (
-              <div style={{overflowX:"auto"}}>
-                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                  <thead>
-                    <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
-                      <th style={{padding:"8px 10px"}}>Date</th>
-                      <th style={{padding:"8px 10px",textAlign:"right"}}>Old Price</th>
-                      <th style={{padding:"8px 10px",textAlign:"right"}}>New Price</th>
-                      <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
-                      <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
-                      <th style={{padding:"8px 10px"}}>By</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {priceUpdates.map(e => {
-                      const ch = (e.changes||[]).find(c => c.field === "marketPrice") || (e.changes||[]).find(c => c.field === "price");
-                      const before = parseFloat(ch?.before) || 0;
-                      const after = parseFloat(ch?.after) || 0;
-                      const delta = after - before;
-                      const pct = before > 0 ? (delta/before*100) : 0;
-                      const up = delta >= 0;
-                      return (
-                        <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
-                          <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
-                          <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>{holding.tradeCcy} {before.toFixed(2)}</td>
-                          <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>{holding.tradeCcy} {after.toFixed(2)}</td>
-                          <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{delta.toFixed(2)}</td>
-                          <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{pct.toFixed(2)}%</td>
-                          <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        );
-      })()}
+      {isUpdatePrice && (
+        <PriceHistoryTable
+          entries={priceUpdates}
+          fieldKeys={["marketPrice","price"]}
+          title="Price History"
+          emptyTitle="No manual price updates yet"
+          emptyHint="Your price updates will be tracked here."
+          fmt={(n) => `${holding.tradeCcy} ${Number(n).toFixed(2)}`}
+          fmtDelta={(n) => Number(n).toFixed(2)}
+          onDelete={handleDeletePrice}
+        />
+      )}
 
       {/* Danger zone */}
       {showDanger && onDelete && (
@@ -4048,7 +4141,7 @@ function AIScreen() {
 /* ══════════════════════════════════════════════════════════════
    MANAGE STOCKS SCREEN — ADD / REMOVE / HISTORY / API TABS
 ══════════════════════════════════════════════════════════════ */
-function ManageScreen({ holdings, setHoldings, transactions, setTransactions, showToast, onlyTab, onlyTabs, defaultAccount, brokerAccounts, allowedTxTypes, onCancel }) {
+function ManageScreen({ holdings, setHoldings, transactions, setTransactions, showToast, onlyTab, onlyTabs, defaultAccount, brokerAccounts, allowedTxTypes, onCancel, logAudit }) {
   const isMobile = useIsMobile();
   const [tab, setTab] = useState(onlyTab || (onlyTabs && onlyTabs[0]) || "add");
   const txTypes = allowedTxTypes || TX_TYPES;
@@ -4083,7 +4176,7 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
   const [confirmId, setConfirmId] = useState(null);
   const [partialId, setPartialId] = useState(null);
   const [sellF, setSellF] = useState({ qty: "", price: "", date: "", fees: "" });
-  const [priceF, setPriceF] = useState({ price: "" });
+  const [priceF, setPriceF] = useState({ price: "", date: new Date().toISOString().slice(0,10) });
   const [updatePriceId, setUpdatePriceId] = useState(null);
   const [search, setSearch] = useState("");
 
@@ -4370,7 +4463,7 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", padding: "0 4px" }}>
-                    <button onClick={() => { setUpdatePriceId(updatePriceId === h.id ? null : h.id); setPriceF({ price: String(mp) }); setPartialId(null); setConfirmId(null); }}
+                    <button onClick={() => { setUpdatePriceId(updatePriceId === h.id ? null : h.id); setPriceF({ price: String(mp), date: new Date().toISOString().slice(0,10) }); setPartialId(null); setConfirmId(null); }}
                       style={{ background: updatePriceId === h.id ? T.accentBg : T.inputBg, color: updatePriceId === h.id ? T.accent : T.muted, border: `1px solid ${updatePriceId === h.id ? T.accent + "60" : T.border}`, borderRadius: 7, padding: "5px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>$ Price</button>
                     <button onClick={() => { setPartialId(partialId === h.id ? null : h.id); setConfirmId(null); setUpdatePriceId(null); setSellF({ qty: "", price: "", date: "", fees: "" }); }}
                       style={{ background: partialId === h.id ? T.selected : T.inputBg, color: partialId === h.id ? T.selectedText : T.muted, border: `1px solid ${partialId === h.id ? T.selected : T.border}`, borderRadius: 7, padding: "5px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Sell</button>
@@ -4390,7 +4483,11 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
                     <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
                       <div style={{ flex: "0 0 180px" }}>
                         <Label>New Market Price ($)</Label>
-                        <Input type="number" step="0.01" placeholder={String(mp)} value={priceF.price} onChange={e => setPriceF({ price: e.target.value })} />
+                        <Input type="number" step="0.01" placeholder={String(mp)} value={priceF.price} onChange={e => setPriceF(p => ({ ...p, price: e.target.value }))} />
+                      </div>
+                      <div style={{ flex: "0 0 170px" }}>
+                        <Label>Effective Date</Label>
+                        <Input type="date" value={priceF.date} onChange={e => setPriceF(p => ({ ...p, date: e.target.value }))} />
                       </div>
                       {priceF.price && parseFloat(priceF.price) > 0 && (() => {
                         const newMp  = parseFloat(priceF.price);
@@ -4409,12 +4506,14 @@ function ManageScreen({ holdings, setHoldings, transactions, setTransactions, sh
                       <button onClick={() => {
                         const newMp = parseFloat(priceF.price);
                         if (!newMp || newMp <= 0) return;
-                        const today = new Date().toISOString().slice(0,10);
-                        setHoldings(prev => prev.map(x => x.id === h.id
-                          ? { ...x, marketPrice: newMp, priceDate: today, price: newMp, value: newMp * x.qty }
-                          : x));
+                        const eff = priceF.date || new Date().toISOString().slice(0,10);
+                        const patch = { marketPrice: newMp, priceDate: eff, price: newMp, value: newMp * h.qty };
+                        setHoldings(prev => prev.map(x => x.id === h.id ? { ...x, ...patch } : x));
+                        // This panel used to change the price without writing to the audit trail at all.
+                        if (logAudit) logAudit("stock", h.id, "update", { ...h }, { ...h, ...patch },
+                          `${h.sym} · price $${mp.toFixed(2)} → $${newMp.toFixed(2)} (${eff})`, { effectiveDate: eff });
                         setUpdatePriceId(null);
-                        showToast(`${h.sym} price updated to $${newMp.toFixed(2)}`, "success");
+                        showToast(`${h.sym} price updated to $${newMp.toFixed(2)} as of ${eff}`, "success");
                       }}
                         style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 7, padding: "8px 20px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>
                         Update Price
@@ -5334,7 +5433,7 @@ function BondActionPanel({ bond, setBonds, accounts, setAccounts, auditLog, logA
   };
 
   const canSubmit = isUpdatePrice
-    ? !!form.pricePerUnit && parseFloat(form.pricePerUnit) > 0
+    ? !!form.pricePerUnit && parseFloat(form.pricePerUnit) > 0 && !!form.date
     : form.date && parseFloat(form.amount) > 0 && !!form.creditAccountId;
 
   const handleSubmit = () => {
@@ -5342,13 +5441,15 @@ function BondActionPanel({ bond, setBonds, accounts, setAccounts, auditLog, logA
 
     if (isUpdatePrice) {
       const newPrice = parseFloat(form.pricePerUnit);
+      const priceDate = form.date;
       const prev = { ...bond };
       const units = bond.units || 0;
       const newValue = units > 0 ? newPrice * units : bond.currentValue || 0;
-      const next = { ...bond, currentPricePerUnit: newPrice, currentValue: newValue };
-      setBonds(prevBs => prevBs.map(b => b.id === bond.id ? { ...b, currentPricePerUnit: newPrice, currentValue: newValue } : b));
-      if (logAudit) logAudit("bond", bond.id, "update", prev, next, `${bond.issuer} · ${bond.name} · price S$${(bond.currentPricePerUnit||0).toFixed(3)} → S$${newPrice.toFixed(3)}`);
-      showToast(`${bond.name} price updated to S$${newPrice.toFixed(3)}`, "success");
+      const patch = { currentPricePerUnit: newPrice, currentValue: newValue, priceDate };
+      const next = { ...bond, ...patch };
+      setBonds(prevBs => prevBs.map(b => b.id === bond.id ? { ...b, ...patch } : b));
+      if (logAudit) logAudit("bond", bond.id, "update", prev, next, `${bond.issuer} · ${bond.name} · price S$${(bond.currentPricePerUnit||0).toFixed(3)} → S$${newPrice.toFixed(3)} (${priceDate})`, { effectiveDate: priceDate });
+      showToast(`${bond.name} price updated to S$${newPrice.toFixed(3)} as of ${priceDate}`, "success");
       setForm(f => ({ ...f, pricePerUnit: String(newPrice) }));
       return;
     }
@@ -5384,6 +5485,36 @@ function BondActionPanel({ bond, setBonds, accounts, setAccounts, auditLog, logA
   const priceUpdates = (auditLog || [])
     .filter(e => e.entityType === "bond" && e.entityId === bond.id && e.action === "update"
       && (e.changes||[]).some(c => c.field === "currentPricePerUnit"));
+
+  const handleDeletePrice = (entry, isLatest, { before, after }) => {
+    const canRevert = isLatest && Number.isFinite(before);
+    const msg = canRevert
+      ? `Delete this price update?\n\nPrice per unit reverts to S$${before.toFixed(3)} — the price in force before this update.`
+      : `Delete this log entry?\n\nA later update superseded it, so the current price stays at S$${(bond.currentPricePerUnit||0).toFixed(3)}. Only the history row is removed.`;
+    if (!window.confirm(msg)) return;
+
+    const eff = effDate(entry);
+    const prior = priceUpdates.slice().sort((a,b) => effDate(b).localeCompare(effDate(a)) || (new Date(b.ts) - new Date(a.ts)))
+      .filter(e => e.id !== entry.id)[0];
+
+    if (canRevert) {
+      setBonds(prev => prev.map(b => {
+        if (b.id !== bond.id) return b;
+        const u = b.units || 0;
+        return { ...b, currentPricePerUnit: before, currentValue: u > 0 ? before * u : b.currentValue, priceDate: prior ? effDate(prior) : null };
+      }));
+      setForm(f => ({ ...f, pricePerUnit: String(before) }));
+    }
+    if (logAudit) {
+      logAudit.remove(entry.id);
+      logAudit("bond", bond.id, "delete-price-update", null, null,
+        canRevert
+          ? `${bond.name} · price update reverted · S$${after.toFixed(3)} → S$${before.toFixed(3)} (was effective ${eff})`
+          : `${bond.name} · price history entry removed · S$${after.toFixed(3)} effective ${eff} (superseded — current price unchanged)`,
+        { effectiveDate: eff });
+    }
+    showToast(canRevert ? `Price reverted to S$${before.toFixed(3)}` : "History entry removed", "success");
+  };
 
   const oldPrice = bond.currentPricePerUnit || 0;
   const units = bond.units || 0;
@@ -5421,7 +5552,11 @@ function BondActionPanel({ bond, setBonds, accounts, setAccounts, auditLog, logA
               <Label required>New Price per Unit (S$)</Label>
               <Input type="number" step="0.001" value={form.pricePerUnit} onChange={e=>set("pricePerUnit",e.target.value)} placeholder={String(oldPrice||"0.000")}/>
             </div>
-            <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
+            <div>
+              <Label required>Effective Date</Label>
+              <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+            </div>
+            <div style={{gridColumn:"1 / -1",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
                 <span>Current</span>
                 <span style={{fontWeight:600,color:T.text}}>S${oldPrice.toFixed(3)}</span>
@@ -5472,54 +5607,16 @@ function BondActionPanel({ bond, setBonds, accounts, setAccounts, auditLog, logA
       </Card>
 
       {isUpdatePrice && (
-        <Card style={{padding:"16px 18px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:600}}>Price History</div>
-            <div style={{fontSize:11,color:T.muted}}>{priceUpdates.length} {priceUpdates.length === 1 ? "entry" : "entries"}</div>
-          </div>
-          {priceUpdates.length === 0 ? (
-            <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
-              <div style={{fontSize:22,marginBottom:6}}>📈</div>
-              <div style={{fontWeight:600}}>No manual price updates yet</div>
-              <div style={{fontSize:11,marginTop:3,color:T.dim}}>Your price updates will be tracked here.</div>
-            </div>
-          ) : (
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead>
-                  <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
-                    <th style={{padding:"8px 10px"}}>Date</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>Old Price</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>New Price</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
-                    <th style={{padding:"8px 10px"}}>By</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {priceUpdates.map(e => {
-                    const ch = (e.changes||[]).find(c => c.field === "currentPricePerUnit");
-                    const before = parseFloat(ch?.before) || 0;
-                    const after = parseFloat(ch?.after) || 0;
-                    const delta = after - before;
-                    const pct = before > 0 ? (delta/before*100) : 0;
-                    const up = delta >= 0;
-                    return (
-                      <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
-                        <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>S${before.toFixed(3)}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>S${after.toFixed(3)}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{delta.toFixed(3)}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{pct.toFixed(2)}%</td>
-                        <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+        <PriceHistoryTable
+          entries={priceUpdates}
+          fieldKeys={["currentPricePerUnit"]}
+          title="Price History"
+          emptyTitle="No manual price updates yet"
+          emptyHint="Your price updates will be tracked here."
+          fmt={(n) => `S$${Number(n).toFixed(3)}`}
+          fmtDelta={(n) => Number(n).toFixed(3)}
+          onDelete={handleDeletePrice}
+        />
       )}
     </div>
   );
@@ -6278,6 +6375,7 @@ function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, a
   const [actionKey, setActionKey] = useState(fields[0].key);
   const current = fields.find(f => f.key === actionKey) || fields[0];
   const [val, setVal] = useState(String(entity[current.key] ?? ""));
+  const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0,10));
 
   const switchAction = (key) => {
     const f = fields.find(x => x.key === key);
@@ -6289,7 +6387,7 @@ function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, a
   const newVal = parseFloat(val) || 0;
   const delta = newVal - oldVal;
   const pct = oldVal > 0 ? (delta / oldVal * 100) : 0;
-  const canSubmit = !!val && newVal >= 0 && newVal !== oldVal;
+  const canSubmit = !!val && newVal >= 0 && newVal !== oldVal && !!effectiveDate;
   const prefix = current.prefix ?? "S$";
   const suffix = current.suffix ?? "";
 
@@ -6298,13 +6396,36 @@ function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, a
     const prev = { ...entity };
     const next = { ...entity, [current.key]: newVal };
     onUpdate(next);
-    if (logAudit) logAudit(entityType, entity.id, "update", prev, next, `${entityLabel} · ${current.label} ${prefix}${oldVal.toLocaleString()} → ${prefix}${newVal.toLocaleString()}`);
+    if (logAudit) logAudit(entityType, entity.id, "update", prev, next, `${entityLabel} · ${current.label} ${prefix}${oldVal.toLocaleString()} → ${prefix}${newVal.toLocaleString()} (${effectiveDate})`, { effectiveDate });
     showToast(`${current.label} updated`, "success");
     setVal(String(newVal));
   };
 
   const updates = (auditLog || []).filter(e => e.entityType === entityType && e.entityId === entity.id && e.action === "update"
     && (e.changes || []).some(c => c.field === current.key));
+
+  const handleDeleteUpdate = (entry, isLatest, { before, after }) => {
+    const canRevert = isLatest && Number.isFinite(before);
+    const msg = canRevert
+      ? `Delete this ${current.label.toLowerCase()} update?\n\n${current.label} reverts to ${prefix}${before.toLocaleString()} — the value in force before this update.`
+      : `Delete this log entry?\n\nA later update superseded it, so ${current.label.toLowerCase()} stays at ${prefix}${oldVal.toLocaleString()}. Only the history row is removed.`;
+    if (!window.confirm(msg)) return;
+
+    const eff = effDate(entry);
+    if (canRevert) {
+      onUpdate({ ...entity, [current.key]: before });
+      setVal(String(before));
+    }
+    if (logAudit) {
+      logAudit.remove(entry.id);
+      logAudit(entityType, entity.id, "delete-price-update", null, null,
+        canRevert
+          ? `${entityLabel} · ${current.label} reverted · ${prefix}${after.toLocaleString()} → ${prefix}${before.toLocaleString()} (was effective ${eff})`
+          : `${entityLabel} · ${current.label} history entry removed · ${prefix}${after.toLocaleString()} effective ${eff} (superseded — current value unchanged)`,
+        { effectiveDate: eff });
+    }
+    showToast(canRevert ? `${current.label} reverted to ${prefix}${before.toLocaleString()}` : "History entry removed", "success");
+  };
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:560}}>
@@ -6331,7 +6452,11 @@ function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, a
             <Input type="number" step={current.step || "0.01"} prefix={prefix} value={val}
               onChange={e=>setVal(e.target.value)} placeholder={String(oldVal)}/>
           </div>
-          <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
+          <div>
+            <Label required>Effective Date</Label>
+            <Input type="date" value={effectiveDate} onChange={e=>setEffectiveDate(e.target.value)}/>
+          </div>
+          <div style={{gridColumn:"1 / -1",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
               <span>Current</span>
               <span style={{fontWeight:600,color:T.text}}>{prefix}{oldVal.toLocaleString()}{suffix?` ${suffix}`:""}</span>
@@ -6351,54 +6476,15 @@ function FieldUpdatePanel({ entity, entityType, entityLabel, fields, onUpdate, a
         </div>
       </Card>
 
-      <Card style={{padding:"12px 14px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div style={{fontSize:13,fontWeight:600}}>{current.label} History</div>
-          <div style={{fontSize:11,color:T.muted}}>{updates.length} {updates.length === 1 ? "entry" : "entries"}</div>
-        </div>
-        {updates.length === 0 ? (
-          <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
-            <div style={{fontSize:22,marginBottom:6}}>📈</div>
-            <div style={{fontWeight:600}}>No updates yet</div>
-            <div style={{fontSize:11,marginTop:3,color:T.dim}}>Your {current.label.toLowerCase()} updates will be tracked here.</div>
-          </div>
-        ) : (
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-              <thead>
-                <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
-                  <th style={{padding:"8px 10px"}}>Date</th>
-                  <th style={{padding:"8px 10px",textAlign:"right"}}>Old</th>
-                  <th style={{padding:"8px 10px",textAlign:"right"}}>New</th>
-                  <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
-                  <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
-                  <th style={{padding:"8px 10px"}}>By</th>
-                </tr>
-              </thead>
-              <tbody>
-                {updates.map(e => {
-                  const ch = (e.changes||[]).find(c => c.field === current.key);
-                  const before = parseFloat(ch?.before) || 0;
-                  const after = parseFloat(ch?.after) || 0;
-                  const d = after - before;
-                  const p = before > 0 ? (d/before*100) : 0;
-                  const up = d >= 0;
-                  return (
-                    <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
-                      <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
-                      <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>{prefix}{before.toLocaleString()}</td>
-                      <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>{prefix}{after.toLocaleString()}</td>
-                      <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{d.toLocaleString()}</td>
-                      <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{p.toFixed(2)}%</td>
-                      <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <PriceHistoryTable
+        entries={updates}
+        fieldKeys={[current.key]}
+        title={`${current.label} History`}
+        emptyTitle="No updates yet"
+        emptyHint={`Your ${current.label.toLowerCase()} updates will be tracked here.`}
+        fmt={(n) => `${prefix}${Number(n).toLocaleString()}`}
+        onDelete={handleDeleteUpdate}
+      />
     </div>
   );
 }
@@ -7303,7 +7389,7 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast, 
   };
 
   const canSubmit = isUpdatePrice
-    ? !!form.price && parseFloat(form.price) > 0
+    ? !!form.price && parseFloat(form.price) > 0 && !!form.date
     : form.date && form.qty && parseFloat(form.qty) > 0;
 
   const handleSubmit = () => {
@@ -7311,11 +7397,13 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast, 
 
     if (isUpdatePrice) {
       const newPrice = parseFloat(form.price);
+      const priceDate = form.date;
       const prev = { ...crypto };
-      const next = { ...crypto, currentPrice: newPrice };
-      setCryptos(prevCs => prevCs.map(c => c.id === crypto.id ? { ...c, currentPrice: newPrice } : c));
-      if (logAudit) logAudit("crypto", crypto.id, "update", prev, next, `${crypto.symbol} · price S$${(crypto.currentPrice||0).toFixed(2)} → S$${newPrice.toFixed(2)}`);
-      showToast(`${crypto.symbol} price updated to S$${newPrice.toFixed(2)}`, "success");
+      const patch = { currentPrice: newPrice, priceDate };
+      const next = { ...crypto, ...patch };
+      setCryptos(prevCs => prevCs.map(c => c.id === crypto.id ? { ...c, ...patch } : c));
+      if (logAudit) logAudit("crypto", crypto.id, "update", prev, next, `${crypto.symbol} · price S$${(crypto.currentPrice||0).toFixed(2)} → S$${newPrice.toFixed(2)} (${priceDate})`, { effectiveDate: priceDate });
+      showToast(`${crypto.symbol} price updated to S$${newPrice.toFixed(2)} as of ${priceDate}`, "success");
       setForm(f => ({ ...f, price: String(newPrice) }));
       return;
     }
@@ -7363,6 +7451,33 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast, 
     .filter(e => e.entityType === "crypto" && e.entityId === crypto.id && e.action === "update"
       && (e.changes||[]).some(c => c.field === "currentPrice"));
 
+  const handleDeletePrice = (entry, isLatest, { before, after }) => {
+    const canRevert = isLatest && Number.isFinite(before);
+    const msg = canRevert
+      ? `Delete this price update?\n\nPrice reverts to S$${before.toLocaleString(undefined,{maximumFractionDigits:2})} — the price in force before this update.`
+      : `Delete this log entry?\n\nA later update superseded it, so the current price stays at S$${(crypto.currentPrice||0).toLocaleString(undefined,{maximumFractionDigits:2})}. Only the history row is removed.`;
+    if (!window.confirm(msg)) return;
+
+    const eff = effDate(entry);
+    const prior = priceUpdates.slice().sort((a,b) => effDate(b).localeCompare(effDate(a)) || (new Date(b.ts) - new Date(a.ts)))
+      .filter(e => e.id !== entry.id)[0];
+
+    if (canRevert) {
+      setCryptos(prev => prev.map(c => c.id === crypto.id
+        ? { ...c, currentPrice: before, priceDate: prior ? effDate(prior) : null } : c));
+      setForm(f => ({ ...f, price: String(before) }));
+    }
+    if (logAudit) {
+      logAudit.remove(entry.id);
+      logAudit("crypto", crypto.id, "delete-price-update", null, null,
+        canRevert
+          ? `${crypto.symbol} · price update reverted · S$${after.toLocaleString()} → S$${before.toLocaleString()} (was effective ${eff})`
+          : `${crypto.symbol} · price history entry removed · S$${after.toLocaleString()} effective ${eff} (superseded — current price unchanged)`,
+        { effectiveDate: eff });
+    }
+    showToast(canRevert ? `Price reverted to S$${before.toLocaleString()}` : "History entry removed", "success");
+  };
+
   const needsPrice = txType === "Buy" || txType === "Sell" || txType === "Interest";
 
   return (
@@ -7395,7 +7510,11 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast, 
               <Label required>New Market Price (SGD)</Label>
               <Input type="number" step="0.01" value={form.price} onChange={e=>set("price",e.target.value)} placeholder={String(oldPrice||"0.00")}/>
             </div>
-            <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
+            <div>
+              <Label required>Effective Date</Label>
+              <Input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+            </div>
+            <div style={{gridColumn:"1 / -1",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",display:"flex",flexDirection:"column",gap:4}}>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted}}>
                 <span>Current Price</span>
                 <span style={{fontWeight:600,color:T.text}}>S${oldPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</span>
@@ -7502,54 +7621,16 @@ function CryptoActionPanel({ crypto, setCryptos, auditLog, logAudit, showToast, 
 
       {/* Price history (Update Price mode only) */}
       {isUpdatePrice && (
-        <Card style={{padding:"16px 18px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:600}}>Price History</div>
-            <div style={{fontSize:11,color:T.muted}}>{priceUpdates.length} {priceUpdates.length === 1 ? "entry" : "entries"}</div>
-          </div>
-          {priceUpdates.length === 0 ? (
-            <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
-              <div style={{fontSize:22,marginBottom:6}}>📈</div>
-              <div style={{fontWeight:600}}>No manual price updates yet</div>
-              <div style={{fontSize:11,marginTop:3,color:T.dim}}>Your price updates will be tracked here.</div>
-            </div>
-          ) : (
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead>
-                  <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
-                    <th style={{padding:"8px 10px"}}>Date</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>Old Price</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>New Price</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
-                    <th style={{padding:"8px 10px"}}>By</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {priceUpdates.map(e => {
-                    const ch = (e.changes||[]).find(c => c.field === "currentPrice");
-                    const before = parseFloat(ch?.before) || 0;
-                    const after = parseFloat(ch?.after) || 0;
-                    const delta = after - before;
-                    const pct = before > 0 ? (delta/before*100) : 0;
-                    const up = delta >= 0;
-                    return (
-                      <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
-                        <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>S${before.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>S${after.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{delta.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{pct.toFixed(2)}%</td>
-                        <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+        <PriceHistoryTable
+          entries={priceUpdates}
+          fieldKeys={["currentPrice"]}
+          title="Price History"
+          emptyTitle="No manual price updates yet"
+          emptyHint="Your price updates will be tracked here."
+          fmt={(n) => `S$${Number(n).toLocaleString(undefined,{maximumFractionDigits:2})}`}
+          fmtDelta={(n) => Number(n).toLocaleString(undefined,{maximumFractionDigits:2})}
+          onDelete={handleDeletePrice}
+        />
       )}
     </div>
   );
@@ -8641,6 +8722,22 @@ const PE_TYPE_CONFIG = {
   "Secondary":                { icon:"🔄", color:"#0891B2", bg:"#ECFEFF" },
 };
 
+/* The aggregate columns a VC/PE transaction moves. `signed` is +amount when a tx is added and
+   −amount when it is removed, so one table drives add, edit (reverse-then-reapply) and delete —
+   which is how deleting a Capital Call finally stops leaving `calledCapital` overstated.
+   An "Additional Investment" is *new* money (unlike a Capital Call, which draws down existing
+   unfunded commitment), so it lifts BOTH commitment and calledCapital, keeping the invariant
+   unfunded = commitment − calledCapital honest. */
+function peAggregateDelta(inv, type, signed) {
+  const patch = {};
+  const bump = (k, by) => { patch[k] = Math.max(0, (+inv[k] || 0) + by); };
+  if (type === "Capital Call") bump("calledCapital", signed);
+  else if (type === "Additional Investment") { bump("commitment", signed); bump("calledCapital", signed); }
+  else if (type === "Distribution" || type === "Exit / Realisation") bump("distributionsReceived", signed);
+  return patch;
+}
+const peApplyAgg = (inv, type, signed) => ({ ...inv, ...peAggregateDelta(inv, type, signed) });
+
 const PE_STATUS_OPTS = ["Active","Realised","Partially Realised","Written Off","Pending Commitment"];
 
 const PE_STAGES = ["Pre-Seed","Seed","Series A","Series B","Series C","Series D+","Growth","Pre-IPO","Buyout","N/A"];
@@ -8893,7 +8990,7 @@ function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
       const next = { ...inv, nav: newNav, navDate };
       const valTx = { id:"PTX"+Date.now(), type:"Valuation Update", date:navDate, amount:newNav, method:"NAV statement", ref:"", notes:`NAV updated to S$${newNav.toLocaleString()}`, status:"Complete" };
       setInvestments(prevIs => prevIs.map(i => i.id === inv.id ? { ...i, nav: newNav, navDate, transactions:[...(i.transactions||[]), valTx] } : i));
-      if (logAudit) logAudit("pe", inv.id, "update", prev, next, `${inv.name} · NAV S$${(inv.nav||0).toLocaleString()} → S$${newNav.toLocaleString()} (${navDate})`);
+      if (logAudit) logAudit("pe", inv.id, "update", prev, next, `${inv.name} · NAV S$${(inv.nav||0).toLocaleString()} → S$${newNav.toLocaleString()} (${navDate})`, { effectiveDate: navDate });
       showToast(`${inv.name} NAV updated to S$${newNav.toLocaleString()} as of ${navDate}`, "success");
       setForm(f => ({ ...f, nav: String(newNav) }));
       return;
@@ -8910,10 +9007,8 @@ function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
     setInvestments(prevIs => prevIs.map(i => {
       if (i.id !== inv.id) return i;
       const nextTxs = [...(i.transactions||[]), newTx];
-      let patch = { transactions: nextTxs };
-      if (txType === "Capital Call") patch.calledCapital = (+i.calledCapital||0) + amt;
-      else if (txType === "Distribution") patch.distributionsReceived = (+i.distributionsReceived||0) + amt;
-      else if (txType === "Exit / Realisation") { patch.distributionsReceived = (+i.distributionsReceived||0) + amt; patch.nav = 0; patch.status = "Realised"; patch.exitDate = form.date; }
+      let patch = { transactions: nextTxs, ...peAggregateDelta(i, txType, amt) };
+      if (txType === "Exit / Realisation") { patch.nav = 0; patch.status = "Realised"; patch.exitDate = form.date; }
       return { ...i, ...patch };
     }));
     if (logAudit) logAudit("pe", inv.id, "add-transaction", null, newTx, `${txType} · S$${amt.toLocaleString()}`);
@@ -8924,6 +9019,44 @@ function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
   const navUpdates = (auditLog || [])
     .filter(e => e.entityType === "pe" && e.entityId === inv.id && e.action === "update"
       && (e.changes||[]).some(c => c.field === "nav"));
+
+  const handleDeleteNav = (entry, isLatest, { before, after }) => {
+    const canRevert = isLatest && Number.isFinite(before);
+    const msg = canRevert
+      ? `Delete this NAV update?\n\nNAV reverts to S$${before.toLocaleString()} — the value in force before this update.\nIts "Valuation Update" transaction is removed too.`
+      : `Delete this log entry?\n\nA later update superseded it, so the current NAV stays at S$${(inv.nav||0).toLocaleString()}. Only the history row is removed.`;
+    if (!window.confirm(msg)) return;
+
+    const eff = effDate(entry);
+    // The NAV update that precedes the one being deleted — what we revert the date to.
+    const prior = navUpdates.slice().sort((a,b) => effDate(b).localeCompare(effDate(a)) || (new Date(b.ts) - new Date(a.ts)))
+      .filter(e => e.id !== entry.id)[0];
+
+    setInvestments(prevIs => prevIs.map(i => {
+      if (i.id !== inv.id) return i;
+      // Drop the Valuation Update pseudo-tx this update created, else NAV and the ledger drift apart.
+      let dropped = false;
+      const nextTxs = (i.transactions || []).filter(t => {
+        if (dropped) return true;
+        if (t.type === "Valuation Update" && t.date === eff && Math.abs((+t.amount||0) - after) < 0.005) { dropped = true; return false; }
+        return true;
+      });
+      const patch = { transactions: nextTxs };
+      if (canRevert) { patch.nav = before; patch.navDate = prior ? effDate(prior) : null; }
+      return { ...i, ...patch };
+    }));
+
+    if (logAudit) {
+      logAudit.remove(entry.id);
+      logAudit("pe", inv.id, "delete-price-update", null, null,
+        canRevert
+          ? `NAV update reverted · S$${after.toLocaleString()} → S$${before.toLocaleString()} (was effective ${eff})`
+          : `NAV history entry removed · S$${after.toLocaleString()} effective ${eff} (superseded — current NAV unchanged)`,
+        { effectiveDate: eff });
+    }
+    if (canRevert) setForm(f => ({ ...f, nav: String(before) }));
+    showToast(canRevert ? `NAV reverted to S$${before.toLocaleString()}` : "History entry removed", "success");
+  };
 
   const oldNav = inv.nav || 0;
   const newNavVal = parseFloat(form.nav) || 0;
@@ -9014,54 +9147,14 @@ function PEActionPanel({ inv, setInvestments, auditLog, logAudit, showToast }) {
       </Card>
 
       {isUpdateNav && (
-        <Card style={{padding:"16px 18px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:600}}>NAV History</div>
-            <div style={{fontSize:11,color:T.muted}}>{navUpdates.length} {navUpdates.length === 1 ? "entry" : "entries"}</div>
-          </div>
-          {navUpdates.length === 0 ? (
-            <div style={{padding:"28px 12px",textAlign:"center",color:T.muted,fontSize:12}}>
-              <div style={{fontSize:22,marginBottom:6}}>📈</div>
-              <div style={{fontWeight:600}}>No NAV updates yet</div>
-              <div style={{fontSize:11,marginTop:3,color:T.dim}}>Quarterly valuations will be tracked here.</div>
-            </div>
-          ) : (
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead>
-                  <tr style={{borderBottom:`1px solid ${T.border}`,color:T.muted,fontWeight:600,textAlign:"left"}}>
-                    <th style={{padding:"8px 10px"}}>Date</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>Old NAV</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>New NAV</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>Change</th>
-                    <th style={{padding:"8px 10px",textAlign:"right"}}>%</th>
-                    <th style={{padding:"8px 10px"}}>By</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {navUpdates.map(e => {
-                    const ch = (e.changes||[]).find(c => c.field === "nav");
-                    const before = parseFloat(ch?.before) || 0;
-                    const after = parseFloat(ch?.after) || 0;
-                    const delta = after - before;
-                    const pct = before > 0 ? (delta/before*100) : 0;
-                    const up = delta >= 0;
-                    return (
-                      <tr key={e.id} style={{borderBottom:`1px solid ${T.border}`}}>
-                        <td style={{padding:"9px 10px",color:T.text}}>{new Date(e.ts).toLocaleString("en-SG",{dateStyle:"medium",timeStyle:"short"})}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",color:T.muted}}>S${before.toLocaleString()}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:T.text}}>S${after.toLocaleString()}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{delta.toLocaleString()}</td>
-                        <td style={{padding:"9px 10px",textAlign:"right",fontWeight:600,color:up?T.up:T.down}}>{up?"+":""}{pct.toFixed(2)}%</td>
-                        <td style={{padding:"9px 10px",color:T.muted}}>{e.user}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+        <PriceHistoryTable
+          entries={navUpdates}
+          fieldKeys={["nav"]}
+          title="NAV History"
+          emptyTitle="No NAV updates yet"
+          emptyHint="Quarterly valuations will be tracked here."
+          onDelete={handleDeleteNav}
+        />
       )}
     </div>
   );
@@ -9484,14 +9577,28 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
                                 </div>
                                 <div style={{fontSize:10,color:T.dim,marginTop:1}}>{tx.type}</div>
                               </div>
+                              {/* A Valuation Update is a mirror of a NAV audit entry, not a real cash
+                                  transaction — editing/deleting it here would drift NAV out of sync
+                                  with its history, so it is managed from the Manage tab only. */}
+                              {tx.type === "Valuation Update" ? (
+                                <span title="NAV updates are managed from the Manage tab" style={{fontSize:10,color:T.dim,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 7px",flexShrink:0,marginLeft:4,whiteSpace:"nowrap"}}>Manage tab</span>
+                              ) : (
                               <TxRowActions
                                 onEdit={()=>{ setEditTx(tx); setShowTxModal(true); }}
                                 onDelete={()=>{
                                   if(!window.confirm(`Delete this ${tx.type} transaction?`)) return;
-                                  setInvestments(prev=>prev.map(i=>i.id===inv.id?{...i,transactions:(i.transactions||[]).filter(t=>t.id!==tx.id)}:i));
+                                  setInvestments(prev=>prev.map(i=>{
+                                    if(i.id!==inv.id) return i;
+                                    // Reverse whatever aggregate this tx bumped, or Called/Distributions
+                                    // keep counting money that no longer exists.
+                                    const patch = { transactions:(i.transactions||[]).filter(t=>t.id!==tx.id) };
+                                    Object.assign(patch, peAggregateDelta(i, tx.type, -(+tx.amount||0)));
+                                    return { ...i, ...patch };
+                                  }));
                                   if(logAudit) logAudit("pe", inv.id, "delete-transaction", tx, null, `${tx.type} · S$${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}`);
                                   showToast("Transaction deleted","success");
                                 }}/>
+                              )}
                             </div>
                           );
                         })}
@@ -9584,33 +9691,33 @@ function PEScreen({ investments, setInvestments, accounts, setAccounts, showToas
       {/* Transaction modal */}
       {showTxModal && detailInv && (() => {
         const inv = detailInv;
-        const callEffect = (t) => t.type === "Capital Call" ? (+t.amount||0) : 0;
-        const distEffect = (t) => (t.type === "Distribution" || t.type === "Exit / Realisation") ? (+t.amount||0) : 0;
         return <PETxModalInner inv={inv} editTx={editTx} cashAccounts={cashAccounts} onSave={(tx) => {
           if (editTx) {
             const upd = {...editTx, ...tx};
             setInvestments(prev => prev.map(i => {
               if (i.id !== inv.id) return i;
+              // Reverse the old tx's aggregate effect, then apply the new one — so changing a
+              // tx's type or amount can't leave a stale contribution behind.
+              const settled = peApplyAgg(peApplyAgg(i, editTx.type, -(+editTx.amount||0)), upd.type, (+upd.amount||0));
               let patch = {
                 transactions: (i.transactions||[]).map(t=>t.id===editTx.id?upd:t),
-                calledCapital: (+i.calledCapital||0) - callEffect(editTx) + callEffect(upd),
-                distributionsReceived: (+i.distributionsReceived||0) - distEffect(editTx) + distEffect(upd),
+                commitment: settled.commitment,
+                calledCapital: settled.calledCapital,
+                distributionsReceived: settled.distributionsReceived,
               };
               if (upd.type === "Valuation Update") patch.nav = +upd.amount;
               return { ...i, ...patch };
             }));
-            if (logAudit) logAudit("pe", inv.id, "edit-transaction", editTx, upd, `${tx.type} · S$${tx.amount||0}`);
+            if (logAudit) logAudit("pe", inv.id, "edit-transaction", editTx, upd, `${tx.type} · S$${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}`);
             showToast(`${tx.type} updated`, "success");
           } else {
             const newTx = {...tx, id:"PTX"+Date.now(), status:"Complete"};
             setInvestments(prev => prev.map(i => {
               if (i.id !== inv.id) return i;
               const nextTxs = [...(i.transactions||[]), newTx];
-              let patch = { transactions: nextTxs };
-              if (tx.type === "Capital Call") patch.calledCapital = (+i.calledCapital||0) + (+tx.amount||0);
-              else if (tx.type === "Distribution") patch.distributionsReceived = (+i.distributionsReceived||0) + (+tx.amount||0);
-              else if (tx.type === "Valuation Update") patch.nav = +tx.amount;
-              else if (tx.type === "Exit / Realisation") { patch.distributionsReceived = (+i.distributionsReceived||0) + (+tx.amount||0); patch.nav = 0; patch.status = "Realised"; patch.exitDate = tx.date; }
+              let patch = { transactions: nextTxs, ...peAggregateDelta(i, tx.type, (+tx.amount||0)) };
+              if (tx.type === "Valuation Update") patch.nav = +tx.amount;
+              else if (tx.type === "Exit / Realisation") { patch.nav = 0; patch.status = "Realised"; patch.exitDate = tx.date; }
               return { ...i, ...patch };
             }));
             // Bank Transfer: credit (inflow) or debit (outflow) the chosen cash account
