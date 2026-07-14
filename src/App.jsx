@@ -155,8 +155,8 @@ function MoreOptions({ title="More options", count, children, defaultOpen=false,
      in   → money received in your pocket  (income, sale proceeds, payout, dividend, distribution, redemption)
      out  → money paid from your pocket    (purchase, capital call, fee, premium, maintenance)
      info → no cash flow, informational    (valuation update, internal transfer, stake/unstake) */
-const TX_FLOW_IN  = new Set(["Sale","Sell","Coupon","Distribution","Interest","Redemption","Payout","Withdrawal","Staking Reward","Airdrop","Dividend","Profit Distribution","Salary / Drawings","Loan Repayment","Capital Withdrawal","Exit / Buyout","Exit / Realisation","Income / Gain"]);
-const TX_FLOW_OUT = new Set(["Purchase","Buy","Fee","Capital Contribution","Partner Loan","Capital Call","Additional Investment","Management Fee","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration","Top-Up","Premium","Contribution"]);
+const TX_FLOW_IN  = new Set(["Sale","Sell","Coupon","Distribution","Interest","Redemption","Payout","Withdrawal","Staking Reward","Airdrop","Dividend","Profit Distribution","Salary / Drawings","Loan Repayment","Capital Withdrawal","Exit / Buyout","Exit / Realisation","Income / Gain","Rent Received","Deposit Received","Other Income","Maturity Benefit","Surrender","Subscription Income"]);
+const TX_FLOW_OUT = new Set(["Purchase","Buy","Fee","Capital Contribution","Partner Loan","Capital Call","Additional Investment","Management Fee","Appraisal Fee","Insurance Premium","Maintenance","Storage Cost","Consignment Fee","Restoration","Top-Up","Premium","Contribution","Deposit Refunded","Property Tax","MCST / Maintenance","Repairs & Maintenance","Agent Commission","Utilities","Other Expense"]);
 const TX_FLOW_INFO = new Set(["Valuation Update","Transfer In","Transfer Out","Stake","Unstake","Deposit","Withdraw"]);
 const classifyTxFlow = (type) =>
   TX_FLOW_OUT.has(type)  ? "out"  :
@@ -11508,6 +11508,10 @@ const RE_STATUS_COLORS = {
 const EMPTY_PROP = {
   id:"", name:"", country:"Singapore", type:"", tenure:"", address:"", postalCode:"",
   sizeSqft:0, purchasePrice:0, purchaseDate:"", currentValuation:0,
+  // `tenants` is the source of truth; isRented/monthlyRent/tenantName/leaseStart/leaseEnd are a
+  // DERIVED MIRROR of the active tenant (see tenantMirror), so the ~6 existing readers of those
+  // flat fields keep working untouched.
+  tenants: [],
   isRented:false, monthlyRent:0, tenantName:"", leaseStart:"", leaseEnd:"",
   loanAmount:0, interestRate:0, loanTenureYears:25, monthlyPayment:0,
   purpose:"Own Stay", annualTax:0, mcstFee:0, maintenanceFee:0,
@@ -11516,7 +11520,54 @@ const EMPTY_PROP = {
   tags: [],
   loanContracts: [],
   loanRepayments: [],
+  // Real money in/out for the property. Deliberately SEPARATE from loanRepayments, which feeds
+  // the amortisation maths (contractId / cashAmount / cpfAmount / per-contract ordering) — the
+  // two are merged only on the read side, in reUnifiedLedger.
+  propertyTransactions: [],
 };
+
+/* Lazy-migrate a property that predates `tenants[]`: if it has no array but the flat fields say
+   it's rented, synthesise one active tenant from them. */
+function reTenants(p) {
+  if (Array.isArray(p.tenants) && p.tenants.length) return p.tenants;
+  if (p.isRented && (p.tenantName || p.monthlyRent)) {
+    return [{ id: `TN_${p.id}_0`, name: p.tenantName || "Tenant", contact: "", email: "",
+      leaseStart: p.leaseStart || "", leaseEnd: p.leaseEnd || "", monthlyRent: +p.monthlyRent || 0,
+      deposit: 0, depositMonths: 0, status: "Active", agentName: "", notes: "" }];
+  }
+  return [];
+}
+const reActiveTenant = (p) => reTenants(p).find(t => t.status === "Active") || null;
+
+/* Keep the flat fields in step with the tenant array. Every writer to `tenants` must pass its
+   result through this, or the mirror silently desyncs from its source of truth. */
+function tenantMirror(tenants) {
+  const active = (tenants || []).find(t => t.status === "Active");
+  return {
+    tenants,
+    isRented: !!active,
+    monthlyRent: active ? (+active.monthlyRent || 0) : 0,
+    tenantName: active ? active.name : "",
+    leaseStart: active ? active.leaseStart : "",
+    leaseEnd: active ? active.leaseEnd : "",
+  };
+}
+
+/* Property money-flow categories. Added to the flow sets so FlowBanner classifies them for free. */
+const RE_TX_CATEGORIES = [
+  { key: "Rent Received",          flow: "in",  icon: "🔑", account: (n) => `Income:Rental:${n}` },
+  { key: "Deposit Received",       flow: "in",  icon: "🔒", account: (n) => `Liabilities:TenantDeposit:${n}` },
+  { key: "Deposit Refunded",       flow: "out", icon: "🔓", account: (n) => `Liabilities:TenantDeposit:${n}` },
+  { key: "Property Tax",           flow: "out", icon: "🏛", account: () => `Expenses:Property:Tax` },
+  { key: "MCST / Maintenance",     flow: "out", icon: "🏢", account: () => `Expenses:Property:MCST` },
+  { key: "Repairs & Maintenance",  flow: "out", icon: "🔧", account: () => `Expenses:Property:Repairs` },
+  { key: "Agent Commission",       flow: "out", icon: "🤝", account: () => `Expenses:Property:AgentCommission` },
+  { key: "Insurance Premium",      flow: "out", icon: "🛡", account: () => `Expenses:Property:Insurance` },
+  { key: "Utilities",              flow: "out", icon: "💡", account: () => `Expenses:Property:Utilities` },
+  { key: "Other Income",           flow: "in",  icon: "📥", account: (n) => `Income:Property:Other:${n}` },
+  { key: "Other Expense",          flow: "out", icon: "📤", account: () => `Expenses:Property:Other` },
+];
+const RE_TX_BY_KEY = Object.fromEntries(RE_TX_CATEGORIES.map(c => [c.key, c]));
 
 function calcMonthly(principal, annualRate, years) {
   if (!principal || !annualRate || !years) return 0;
@@ -11679,7 +11730,7 @@ function EditContractModal({ contract, sym, onSave, onClose }) {
   );
 }
 
-function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab, showToast, onClose, auditLog, logAudit }) {
+function REDrawer({ p, properties, setProperties, policies, accounts, setAccounts, propTab, setPropTab, showToast, onClose, auditLog, logAudit }) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [ef, setEFState] = useState(null);
@@ -11703,6 +11754,116 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
   const outstandingLoan = headerActiveContract ? (headerActiveContract.loanAmount||0) : (p.loanAmount||0);
   const update = (fields) => setProperties(prev => prev.map(pr => pr.id === p.id ? {...pr,...fields} : pr));
 
+  /* ── Tenants ─────────────────────────────────────────
+     Every write goes through tenantMirror(), which recomputes the flat
+     isRented/monthlyRent/tenantName/leaseStart/leaseEnd fields the rest of the app reads. */
+  const EMPTY_TENANT = { name:"", contact:"", email:"", leaseStart:"", leaseEnd:"", monthlyRent:"", deposit:"", depositMonths:"", status:"Active", agentName:"", notes:"" };
+  const [showTenantModal, setShowTenantModal] = useState(false);
+  const [tenantDraft, setTenantDraft] = useState(EMPTY_TENANT);
+  const [editingTenant, setEditingTenant] = useState(null);
+
+  const openTenant = (t) => {
+    setEditingTenant(t);
+    setTenantDraft(t ? { ...EMPTY_TENANT, ...t } : EMPTY_TENANT);
+    setShowTenantModal(true);
+  };
+
+  const saveTenant = () => {
+    const d = tenantDraft;
+    if (!d.name || !d.leaseStart) return;
+    const cur = reTenants(p);
+    let next;
+    if (editingTenant) {
+      next = cur.map(t => t.id === editingTenant.id ? { ...t, ...d, monthlyRent: +d.monthlyRent || 0, deposit: +d.deposit || 0 } : t);
+    } else {
+      // Only one Active tenant at a time — adding a new active tenant retires the incumbent.
+      const retired = d.status === "Active" ? cur.map(t => t.status === "Active" ? { ...t, status: "Past" } : t) : cur;
+      next = [...retired, { ...d, id: `TN${Date.now()}`, monthlyRent: +d.monthlyRent || 0, deposit: +d.deposit || 0 }];
+    }
+    update(tenantMirror(next));
+    if (logAudit) logAudit("property", p.id, editingTenant ? "edit-transaction" : "add-transaction",
+      editingTenant || null, { ...d, monthlyRent: +d.monthlyRent || 0 },
+      `Tenant · ${d.name} · ${sym}${(+d.monthlyRent||0).toLocaleString()}/mo · ${d.leaseStart||"—"}`);
+    showToast(editingTenant ? "Tenant updated" : "Tenant added", "success");
+    setShowTenantModal(false); setEditingTenant(null); setTenantDraft(EMPTY_TENANT);
+  };
+
+  const endLease = (t) => {
+    if (!window.confirm(`End ${t.name}'s lease?\n\nThey move to Tenant History and the property is marked vacant.`)) return;
+    const next = reTenants(p).map(x => x.id === t.id ? { ...x, status: "Past" } : x);
+    update(tenantMirror(next));
+    if (logAudit) logAudit("property", p.id, "update", { tenantName: t.name, isRented: true }, { tenantName: "", isRented: false }, `${p.name} · lease ended — ${t.name}`);
+    showToast("Lease ended — property is now vacant", "success");
+  };
+
+  const deleteTenant = (t) => {
+    if (!window.confirm(`Delete tenant ${t.name}? This removes them from the history.`)) return;
+    const next = reTenants(p).filter(x => x.id !== t.id);
+    update(tenantMirror(next));
+    if (logAudit) logAudit("property", p.id, "delete-transaction", t, null, `Tenant · ${t.name} · ${t.leaseStart||"—"} → ${t.leaseEnd||"—"}`);
+    showToast("Tenant deleted", "success");
+  };
+
+  /* ── Property transactions ─────────────────────────── */
+  const EMPTY_PTX = { category:"Rent Received", date:new Date().toISOString().slice(0,10), amount:"", method:"Bank Transfer", cashAccountId:"", tenantId:"", ref:"", notes:"", recordOnly:false };
+  const [showPtxModal, setShowPtxModal] = useState(false);
+  const [ptxDraft, setPtxDraft] = useState(EMPTY_PTX);
+  const [editingPtx, setEditingPtx] = useState(null);
+  const [ptxSearch, setPtxSearch] = useState("");
+  const [ptxFilter, setPtxFilter] = useState("All");
+
+  const reCashAccounts = (accounts || []).filter(a => a.accountType !== "Brokerage" && a.accountType !== "Crypto Wallet");
+
+  const openPtx = (tx) => {
+    setEditingPtx(tx);
+    setPtxDraft(tx ? { ...EMPTY_PTX, ...tx } : { ...EMPTY_PTX, cashAccountId: reCashAccounts[0] ? String(reCashAccounts[0].id) : "" });
+    setShowPtxModal(true);
+  };
+
+  // Debit/credit the chosen cash account. Signed by the category's money-flow direction.
+  const ptxCash = (tx, sign = 1) => {
+    if (!tx || tx.recordOnly || !tx.cashAccountId || !setAccounts) return;
+    const dir = classifyTxFlow(tx.category) === "out" ? -1 : 1;
+    const signed = dir * (+tx.amount || 0) * sign;
+    if (!signed) return;
+    setAccounts(prev => prev.map(a => {
+      if (String(a.id) !== String(tx.cashAccountId)) return a;
+      const cur = acctBalances(a);
+      const has = cur.find(b => b.ccy === "SGD");
+      const nextBals = has ? cur.map(b => b.ccy === "SGD" ? { ...b, amount: (b.amount||0) + signed } : b) : [...cur, { ccy:"SGD", amount: signed }];
+      const nextLegacy = (a.currency||"SGD") === "SGD" ? { balance: (a.balance||0) + signed } : {};
+      return { ...a, balances: nextBals, ...nextLegacy };
+    }));
+  };
+
+  const savePtx = () => {
+    const d = ptxDraft;
+    if (!d.date || !(parseFloat(d.amount) > 0)) return;
+    const cur = p.propertyTransactions || [];
+    if (editingPtx) {
+      const upd = { ...editingPtx, ...d, amount: parseFloat(d.amount) || 0 };
+      ptxCash(editingPtx, -1);   // reverse the old cash effect
+      ptxCash(upd, 1);           // apply the new one
+      update({ propertyTransactions: cur.map(t => t.id === editingPtx.id ? upd : t) });
+      if (logAudit) logAudit("property", p.id, "edit-transaction", editingPtx, upd, `${upd.category} · ${sym}${(+upd.amount||0).toLocaleString()} · ${upd.date}`);
+      showToast(`${upd.category} updated`, "success");
+    } else {
+      const tx = { ...d, id: `RTX${Date.now()}`, amount: parseFloat(d.amount) || 0 };
+      ptxCash(tx, 1);
+      update({ propertyTransactions: [...cur, tx] });
+      if (logAudit) logAudit("property", p.id, "add-transaction", null, tx, `${tx.category} · ${sym}${(+tx.amount||0).toLocaleString()} · ${tx.date}`);
+      showToast(`${tx.category} recorded — ${sym}${(+tx.amount||0).toLocaleString()}`, "success");
+    }
+    setShowPtxModal(false); setEditingPtx(null); setPtxDraft(EMPTY_PTX);
+  };
+
+  const deletePtx = (tx) => {
+    if (!window.confirm(`Delete this ${tx.category}?\n\n${sym}${(+tx.amount||0).toLocaleString()} on ${tx.date}. The cash account is restored.`)) return;
+    ptxCash(tx, -1);
+    update({ propertyTransactions: (p.propertyTransactions || []).filter(t => t.id !== tx.id) });
+    if (logAudit) logAudit("property", p.id, "delete-transaction", tx, null, `${tx.category} · ${sym}${(+tx.amount||0).toLocaleString()} · ${tx.date||"—"}`);
+    showToast("Transaction deleted", "success");
+  };
 
   // ── Add Contract Modal ─────────────────────────────
   const AddContractModal = ({ onClose }) => {
@@ -12081,8 +12242,8 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
     );
   };
 
-  const TABS = ["overview","financials","rental","insurance","postings","audit","manage"];
-  const tabLabel = {overview:"Overview",financials:"Loan & Finance",rental:"Rental",insurance:"Insurance",postings:"Postings",audit:"Audit",manage:"Manage"};
+  const TABS = ["overview","transactions","financials","rental","insurance","postings","audit","manage"];
+  const tabLabel = {overview:"Overview",transactions:"Transactions",financials:"Loan & Finance",rental:"Rental",insurance:"Insurance",postings:"Postings",audit:"Audit",manage:"Manage"};
 
   const handleSave = () => {
     if (logAudit) logAudit("property", p.id, "update", p, { ...p, ...ef }, `${p.flag||""} ${p.name}`);
@@ -12147,7 +12308,9 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
           ))}
         </div>
         <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-          {TABS.filter(t => t !== "rental" || p.isRented).map(t => (
+          {/* The rental tab used to be gated on p.isRented, which made it impossible to add a
+              FIRST tenant — the only way in was already being rented. Always shown now. */}
+          {TABS.map(t => (
             <button key={t} onClick={()=>setPropTab(t)}
               style={{padding:"6px 14px",borderRadius:8,border:"none",background:propTab===t?T.selected:T.inputBg,color:propTab===t?T.selectedText:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:propTab===t?700:400}}>
               {tabLabel[t]}
@@ -12158,6 +12321,75 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
 
       {/* Content */}
       <div><div style={{padding:"0 0 32px",display:"flex",flexDirection:"column",gap:14}}>
+
+        {/* ── TRANSACTIONS — the property's real money in/out ── */}
+        {propTab === "transactions" && (() => {
+          const txs = p.propertyTransactions || [];
+          const tenants = reTenants(p);
+          const q = ptxSearch.trim().toLowerCase();
+          const visible = txs.slice()
+            .sort((a,b) => (b.date||"").localeCompare(a.date||""))
+            .filter(t => (ptxFilter === "All" || t.category === ptxFilter)
+              && (!q || (t.category||"").toLowerCase().includes(q) || (t.notes||"").toLowerCase().includes(q) || (t.ref||"").toLowerCase().includes(q) || (t.date||"").includes(q)));
+          const sumOf = (dir) => txs.filter(t => classifyTxFlow(t.category) === dir && !t.recordOnly).reduce((s,t) => s + (+t.amount||0), 0);
+          const inSum = sumOf("in"), outSum = sumOf("out");
+          return (
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+              <StatStrip stats={[
+                {l:"Money In",  v:`${sym}${inSum.toLocaleString()}`,  c:T.up},
+                {l:"Money Out", v:`${sym}${outSum.toLocaleString()}`, c:T.down},
+                {l:"Net",       v:`${inSum-outSum>=0?"+":"-"}${sym}${Math.abs(inSum-outSum).toLocaleString()}`, c:inSum-outSum>=0?T.up:T.down},
+                {l:"Entries",   v:String(txs.length)},
+              ]}/>
+              <div style={{fontSize:11,color:T.dim,padding:"0 2px"}}>
+                Rent collected, MCST, tax, repairs and other property cash flow. Mortgage repayments live in <strong>Loan &amp; Finance → Repayments</strong> — they drive the amortisation schedule and stay there.
+              </div>
+              <TxToolbar search={ptxSearch} setSearch={setPtxSearch} filter={ptxFilter} setFilter={setPtxFilter}
+                filters={["All", ...Array.from(new Set(txs.map(t=>t.category)))]}
+                placeholder="Search property transactions…"
+                action={<button onClick={()=>openPtx(null)} style={{padding:"8px 16px",borderRadius:8,border:"none",background:T.selected,color:T.selectedText,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>+ Record</button>}/>
+              {visible.length === 0 ? (
+                <div style={{textAlign:"center",padding:"36px 20px",color:T.muted}}>
+                  <div style={{fontSize:28,marginBottom:8}}>📒</div>
+                  <div style={{fontSize:13,fontWeight:600}}>{txs.length===0?"No property transactions yet":"No matching transactions"}</div>
+                  <div style={{fontSize:11,marginTop:4,color:T.dim}}>Record rent collected, MCST fees, property tax, repairs and more.</div>
+                </div>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:1,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                  {visible.map((tx,i) => {
+                    const cat = RE_TX_BY_KEY[tx.category] || { icon:"💰" };
+                    const flow = classifyTxFlow(tx.category);
+                    const isIn = flow === "in";
+                    const acct = reCashAccounts.find(a => String(a.id) === String(tx.cashAccountId));
+                    const tn = tenants.find(t => t.id === tx.tenantId);
+                    return (
+                      <div key={tx.id} className="hov-row" style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",background:i%2===0?T.bg:T.inputBg,borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                        <div style={{width:34,height:34,borderRadius:8,background:isIn?T.upBg:T.downBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{cat.icon}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:600}}>{tx.category}{tx.notes?` — ${tx.notes}`:""}</div>
+                          <div style={{fontSize:11,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                            <span>{tx.date}</span>
+                            {tx.method && <span style={{fontSize:10,background:T.inputBg,borderRadius:4,padding:"1px 6px"}}>{tx.method}</span>}
+                            {tn && <span style={{fontSize:10,color:T.dim}}>👤 {tn.name}</span>}
+                            {acct && <span style={{fontSize:10,color:T.dim}}>{isIn?"→":"←"} {acct.accountName}</span>}
+                            {tx.ref && <span style={{fontSize:10,color:T.dim,fontFamily:"monospace"}}>{tx.ref}</span>}
+                            {tx.recordOnly && <span style={{fontSize:10,color:T.muted,background:T.inputBg,borderRadius:4,padding:"1px 6px"}}>record only</span>}
+                          </div>
+                        </div>
+                        <div style={{textAlign:"right",flexShrink:0}}>
+                          <div style={{fontSize:13,fontWeight:700,color:tx.recordOnly?T.text:isIn?T.up:T.down}}>
+                            {tx.recordOnly?"":isIn?"+ ":"- "}{sym}{(+tx.amount||0).toLocaleString(undefined,{minimumFractionDigits:2})}
+                          </div>
+                        </div>
+                        <TxRowActions onEdit={()=>openPtx(tx)} onDelete={()=>deletePtx(tx)}/>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── OVERVIEW ── */}
         {propTab === "overview" && (
@@ -12507,11 +12739,34 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
               journal.push({ date: r.date, desc: `${cLender}${label}`, _order: 1, lines: repayLines });
             });
 
-          // 4. Recurring costs — dated to end of purchase year, sort chronologically with everything else
-          if (annualTax > 0) {
+          // 4. Real property transactions — rent, tax, MCST, repairs, deposits…
+          const propTxs = (p.propertyTransactions || []).filter(t => !t.recordOnly);
+          propTxs.slice().sort((a,b) => (a.date||"").localeCompare(b.date||"")).forEach(t => {
+            const cat = RE_TX_BY_KEY[t.category];
+            if (!cat) return;
+            const amt = +t.amount || 0;
+            if (!amt) return;
+            const other = cat.account(propertyName);
+            const isIn = classifyTxFlow(t.category) === "in";
+            // Money in  → Dr Cash, Cr the income/liability account.
+            // Money out → Dr the expense/liability account, Cr Cash.
+            // A tenant deposit is a LIABILITY (you owe it back), not income — hence the
+            // Liabilities:TenantDeposit account on both the receive and refund legs.
+            const lines = isIn
+              ? [ptaLine(`Assets:Bank:Cash`, fmtV(amt, false), false), ptaLine(other, fmtV(amt, true), true)]
+              : [ptaLine(other, fmtV(amt, false), false), ptaLine(`Assets:Bank:Cash`, fmtV(amt, true), true)];
+            journal.push({ date: t.date, desc: `${t.category}${t.notes ? ` — ${t.notes}` : ""}`, _order: 1, lines });
+          });
+
+          /* 5. Synthetic recurring costs — a stand-in for tax/MCST that were never recorded as real
+             transactions. Suppressed the moment real propertyTransactions exist, or the same cost
+             would be double-counted. (This is also why maintenanceFee was never posted at all: only
+             annualTax and mcstFee ever had synthetic entries.) */
+          const hasRealTxs = propTxs.length > 0;
+          if (!hasRealTxs && annualTax > 0) {
             journal.push({
               date: purchaseDateFmt.slice(0,4) + "-12-31",
-              desc: "Property tax payment",
+              desc: "Property tax payment (estimated — not yet recorded)",
               _order: 1,
               lines: [
                 ptaLine(`Expenses:Property:Tax`,  fmtV(annualTax, false), false),
@@ -12519,10 +12774,10 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
               ],
             });
           }
-          if (mcstFee > 0) {
+          if (!hasRealTxs && mcstFee > 0) {
             journal.push({
               date: purchaseDateFmt.slice(0,4) + "-12-31",
-              desc: "MCST / maintenance fee",
+              desc: "MCST / maintenance fee (estimated — not yet recorded)",
               _order: 1,
               lines: [
                 ptaLine(`Expenses:Property:MCST`, fmtV(mcstFee, false), false),
@@ -12564,11 +12819,18 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
           }
 
           return (
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                  {!hasRealTxs && (annualTax > 0 || mcstFee > 0) && (
+                    <div style={{background:T.warnBg,border:`1px solid ${T.warn}30`,borderRadius:10,padding:"11px 16px",fontSize:12,color:T.warn,display:"flex",gap:8,alignItems:"flex-start"}}>
+                      <span style={{fontSize:15,lineHeight:1.2}}>ℹ️</span>
+                      <span>Property tax and MCST below are <strong>estimates</strong> derived from the property's annual figures, not recorded transactions. Record them in the <strong>Transactions</strong> tab and these placeholders disappear.</span>
+                    </div>
+                  )}
                   <div style={{border:`1px solid ${T.border}`,borderRadius:14,overflow:"hidden",background:T.bg}}>
                     {/* Header */}
                     <div style={{padding:"18px 22px",borderBottom:`1px solid ${T.border}`}}>
                       <div style={{fontSize:15,fontWeight:700,color:T.text,fontFamily:inter}}>Ledger Postings</div>
-                      <div style={{fontSize:12,color:T.accent,marginTop:4,fontFamily:inter}}>Double-entry bookkeeping postings for this asset (PTA compliant)</div>
+                      <div style={{fontSize:12,color:T.accent,marginTop:4,fontFamily:inter}}>Double-entry bookkeeping postings for this asset (PTA compliant) · {journal.length} entries</div>
                     </div>
 
                     {/* Table */}
@@ -12633,36 +12895,86 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                       <div style={{fontSize:11,color:T.dim,marginTop:10,fontFamily:inter}}>Every transaction has equal debits and credits (sum = 0)</div>
                     </div>
                   </div>
+                </div>
                 );
         })()}
-        {propTab === "rental" && p.isRented && (
+        {propTab === "rental" && (() => {
+          const tenants = reTenants(p);
+          const active = reActiveTenant(p);
+          const past = tenants.filter(t => t.status !== "Active");
+          const rent = active ? (+active.monthlyRent || 0) : 0;
+          return (
           <>
             <StatStrip stats={[
-              {l:"Monthly Rent",  v:`${sym}${(p.monthlyRent||0).toLocaleString()}`,            c:T.accent},
-              {l:"Annual Rent",   v:`${sym}${((p.monthlyRent||0)*12).toLocaleString()}`,        c:T.text},
-              {l:"Gross Yield",   v:p.currentValuation?`${((p.monthlyRent*12)/p.currentValuation*100).toFixed(2)}%`:"—", c:T.up},
+              {l:"Monthly Rent",  v:`${sym}${rent.toLocaleString()}`, c:T.accent},
+              {l:"Annual Rent",   v:`${sym}${(rent*12).toLocaleString()}`, c:T.text},
+              {l:"Gross Yield",   v:p.currentValuation && rent ? `${((rent*12)/p.currentValuation*100).toFixed(2)}%` : "—", c:T.up},
+              {l:"Tenants",       v:`${tenants.length} (${past.length} past)`},
             ]}/>
 
-            <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-              <div style={{padding:"11px 16px",background:T.accentBg,fontSize:13,fontWeight:700,color:T.accent}}>👤 Tenant</div>
-              {[
-                ["Tenant Name",  p.tenantName||"—"],
-                ["Monthly Rent", `${sym}${(p.monthlyRent||0).toLocaleString()}`],
-                ["Lease Start",  p.leaseStart||"—"],
-                ["Lease End",    p.leaseEnd||"—"],
-              ].map(([k,v]) => (
-                <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`}}>
-                  <span style={{fontSize:12,color:T.muted}}>{k}</span>
-                  <span style={{fontSize:12,fontWeight:600}}>{v}</span>
-                </div>
-              ))}
-            </div>
-
-            {!editing && (
+            {active ? (
               <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
-                <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>📊 Monthly Cash Flow</div>
+                <div style={{padding:"11px 16px",background:T.accentBg,fontSize:13,fontWeight:700,color:T.accent,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span>👤 Current Tenant</span>
+                  <span style={{display:"flex",gap:6}}>
+                    <button onClick={()=>openTenant(active)}
+                      style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,color:T.text,fontFamily:"inherit"}}>✏️ Edit</button>
+                    <button onClick={()=>endLease(active)}
+                      style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,color:T.down,fontFamily:"inherit"}}>🚪 End Lease</button>
+                  </span>
+                </div>
                 {[
-                  ["Rental Income",      "in",  p.monthlyRent||0],
+                  ["Tenant Name",   active.name || "—"],
+                  ["Contact",       [active.contact, active.email].filter(Boolean).join(" · ") || "—"],
+                  ["Monthly Rent",  `${sym}${rent.toLocaleString()}`],
+                  ["Security Deposit", active.deposit > 0 ? `${sym}${(+active.deposit).toLocaleString()}${active.depositMonths ? ` (${active.depositMonths} mo)` : ""}` : "—"],
+                  ["Lease Start",   active.leaseStart || "—"],
+                  ["Lease End",     active.leaseEnd || "—"],
+                  ["Agent",         active.agentName || "—"],
+                  ...(active.notes ? [["Notes", active.notes]] : []),
+                ].map(([k,v]) => (
+                  <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 16px",borderTop:`1px solid ${T.border}`,gap:12}}>
+                    <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>{k}</span>
+                    <span style={{fontSize:12,fontWeight:600,textAlign:"right"}}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{border:`1px dashed ${T.border}`,borderRadius:12,padding:"32px 20px",textAlign:"center"}}>
+                <div style={{fontSize:28,marginBottom:8}}>🔑</div>
+                <div style={{fontSize:13,fontWeight:600}}>No tenant on this property</div>
+                <div style={{fontSize:11,color:T.dim,marginTop:4,marginBottom:14}}>Add a tenant to start tracking rent, deposits and lease dates.</div>
+                <button onClick={()=>openTenant(null)}
+                  style={{background:T.selected,color:T.selectedText,border:"none",borderRadius:8,padding:"9px 20px",cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit"}}>
+                  ＋ Add Tenant
+                </button>
+              </div>
+            )}
+
+            {past.length > 0 && (
+              <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>📜 Tenant History ({past.length})</div>
+                {past.slice().sort((a,b)=>(b.leaseStart||"").localeCompare(a.leaseStart||"")).map(t => (
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderTop:`1px solid ${T.border}`}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600}}>{t.name}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.leaseStart||"—"} → {t.leaseEnd||"—"}{t.agentName?` · ${t.agentName}`:""}</div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:13,fontWeight:700}}>{sym}{(+t.monthlyRent||0).toLocaleString()}</div>
+                      <div style={{fontSize:10,color:T.dim,marginTop:1}}>per month</div>
+                    </div>
+                    <TxRowActions onEdit={()=>openTenant(t)} onDelete={()=>deleteTenant(t)}/>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {active && !editing && (
+              <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden"}}>
+                <div style={{padding:"11px 16px",background:T.inputBg,fontSize:13,fontWeight:700}}>📊 Monthly Cash Flow (projection)</div>
+                {[
+                  ["Rental Income",      "in",  rent],
                   ["Mortgage",           "out", monthly],
                   [ctry.maintenanceLabel,"out", p.mcstFee||0],
                   ["Maintenance",        "out", p.maintenanceFee||0],
@@ -12673,12 +12985,12 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                   </div>
                 ))}
                 <div style={{display:"flex",justifyContent:"space-between",padding:"11px 16px",borderTop:`2px solid ${T.border}`,
-                  background:((p.monthlyRent||0)-monthly-(p.mcstFee||0)-(p.maintenanceFee||0))>=0?T.upBg:T.downBg}}>
+                  background:(rent-monthly-(p.mcstFee||0)-(p.maintenanceFee||0))>=0?T.upBg:T.downBg}}>
                   <span style={{fontSize:13,fontWeight:700}}>Net Monthly</span>
                   <span style={{fontSize:14,fontWeight:800,
-                    color:((p.monthlyRent||0)-monthly-(p.mcstFee||0)-(p.maintenanceFee||0))>=0?T.up:T.down}}>
-                    {((p.monthlyRent||0)-monthly-(p.mcstFee||0)-(p.maintenanceFee||0))>=0?"+":"-"}
-                    {sym}{Math.abs((p.monthlyRent||0)-monthly-(p.mcstFee||0)-(p.maintenanceFee||0)).toLocaleString()}
+                    color:(rent-monthly-(p.mcstFee||0)-(p.maintenanceFee||0))>=0?T.up:T.down}}>
+                    {(rent-monthly-(p.mcstFee||0)-(p.maintenanceFee||0))>=0?"+":"-"}
+                    {sym}{Math.abs(rent-monthly-(p.mcstFee||0)-(p.maintenanceFee||0)).toLocaleString()}
                   </span>
                 </div>
                 {p.annualTax>0 && (
@@ -12687,10 +12999,14 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
                     <span style={{fontSize:11,fontWeight:700,color:T.warn}}>{sym}{(p.annualTax).toLocaleString()}/yr</span>
                   </div>
                 )}
+                <div style={{padding:"8px 16px",borderTop:`1px solid ${T.border}`,fontSize:10,color:T.dim}}>
+                  This is a projection from the lease terms — see the Transactions tab for rent actually collected.
+                </div>
               </div>
             )}
           </>
-        )}
+          );
+        })()}
 
         {/* ── COSTS ── */}
         {/* ── INSURANCE ── */}
@@ -12842,7 +13158,16 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
               // Monthly Rent only applies to investment/rental properties — own-stay homes have no rent
               ...(p.purpose !== "Own Stay" ? [{ key:"monthlyRent", label:"Monthly Rent", icon:"🔑", prefix:"S$", helper:"Gross rent received per month" }] : []),
             ]}
-            onUpdate={(next)=>setProperties(prev=>prev.map(x=>x.id===p.id?next:x))}
+            onUpdate={(next)=>{
+              // FieldUpdatePanel writes monthlyRent flat. Push it into the ACTIVE TENANT too,
+              // otherwise the flat mirror and its source of truth silently disagree.
+              let patched = next;
+              if ((+next.monthlyRent || 0) !== (+p.monthlyRent || 0)) {
+                const tenants = reTenants(p).map(t => t.status === "Active" ? { ...t, monthlyRent: +next.monthlyRent || 0 } : t);
+                patched = { ...next, ...tenantMirror(tenants) };
+              }
+              setProperties(prev=>prev.map(x=>x.id===p.id?patched:x));
+            }}
             auditLog={auditLog} logAudit={logAudit} showToast={showToast}
             extraActions={!p.sold && (
               <button onClick={()=>setShowSold(true)}
@@ -12867,6 +13192,126 @@ function REDrawer({ p, properties, setProperties, policies, propTab, setPropTab,
           setEditRepay(null); showToast("Repayment updated","success");
         }}/>}
       {showSold && <SoldModal onClose={()=>setShowSold(false)}/>}
+
+      {/* ══ TENANT MODAL ══════════════════════════════════════ */}
+      {showTenantModal && (() => {
+        const d = tenantDraft;
+        const setT = (k,v) => setTenantDraft(f => ({...f, [k]: v}));
+        const invalid = !d.name || !d.leaseStart;
+        const close = () => { setShowTenantModal(false); setEditingTenant(null); setTenantDraft(EMPTY_TENANT); };
+        return (
+          <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:16,width:"min(560px,100%)",maxHeight:"90vh",display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,overflow:"hidden"}}>
+              <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:16,fontWeight:800}}>{editingTenant ? "Edit Tenant" : "Add Tenant"}</div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:2}}>{p.name}</div>
+                </div>
+                <button onClick={close} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1}}>×</button>
+              </div>
+              <div style={{padding:22,overflowY:"auto",flex:1,minHeight:0}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <div style={{gridColumn:"1 / -1"}}><Label required>Tenant Name</Label>
+                    <Input value={d.name} onChange={e=>setT("name",e.target.value)} placeholder="e.g. Sarah Lim"/></div>
+                  <div><Label required>Lease Start</Label><Input type="date" value={d.leaseStart} onChange={e=>setT("leaseStart",e.target.value)}/></div>
+                  <div><Label>Lease End</Label><Input type="date" value={d.leaseEnd} onChange={e=>setT("leaseEnd",e.target.value)}/></div>
+                  <div><Label required>Monthly Rent</Label><Input type="number" prefix={sym} value={d.monthlyRent} onChange={e=>setT("monthlyRent",e.target.value)} placeholder="0"/></div>
+                  <div><Label>Status</Label><Sel value={d.status} onChange={e=>setT("status",e.target.value)} options={["Active","Past"]}/></div>
+                  <MoreOptions count={5}>
+                    <div><Label>Security Deposit</Label><Input type="number" prefix={sym} value={d.deposit} onChange={e=>setT("deposit",e.target.value)} placeholder="0"/></div>
+                    <div><Label>Deposit (months)</Label><Input type="number" value={d.depositMonths} onChange={e=>setT("depositMonths",e.target.value)} placeholder="e.g. 2"/></div>
+                    <div><Label>Contact</Label><Input value={d.contact} onChange={e=>setT("contact",e.target.value)} placeholder="Phone"/></div>
+                    <div><Label>Email</Label><Input value={d.email} onChange={e=>setT("email",e.target.value)} placeholder="name@example.com"/></div>
+                    <div><Label>Agent</Label><Input value={d.agentName} onChange={e=>setT("agentName",e.target.value)} placeholder="Letting agent"/></div>
+                    <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                      <textarea value={d.notes} onChange={e=>setT("notes",e.target.value)} rows={2} placeholder="Lease terms, special conditions…"
+                        style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+                    </div>
+                  </MoreOptions>
+                </div>
+                {!editingTenant && d.status === "Active" && reActiveTenant(p) && (
+                  <div style={{marginTop:14,background:T.warnBg,border:`1px solid ${T.warn}30`,borderRadius:8,padding:"10px 14px",fontSize:11,color:T.warn}}>
+                    ⚠️ {reActiveTenant(p).name} is the current tenant and will be moved to Tenant History — only one tenant can be active at a time.
+                  </div>
+                )}
+              </div>
+              <div style={{padding:"14px 24px 20px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"flex-end",gap:10}}>
+                <button onClick={close} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+                <button onClick={saveTenant} disabled={invalid}
+                  style={{padding:"9px 22px",borderRadius:8,border:"none",background:invalid?T.border:T.selected,color:invalid?T.dim:T.selectedText,cursor:invalid?"not-allowed":"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>
+                  {editingTenant ? "Save Changes" : "Add Tenant"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ══ PROPERTY TRANSACTION MODAL ════════════════════════ */}
+      {showPtxModal && (() => {
+        const d = ptxDraft;
+        const setD = (k,v) => setPtxDraft(f => ({...f, [k]: v}));
+        const tenants = reTenants(p);
+        const isRentish = d.category === "Rent Received" || d.category === "Deposit Received" || d.category === "Deposit Refunded";
+        const invalid = !d.date || !(parseFloat(d.amount) > 0) || (!d.recordOnly && !d.cashAccountId);
+        const close = () => { setShowPtxModal(false); setEditingPtx(null); setPtxDraft(EMPTY_PTX); };
+        return (
+          <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:16,width:"min(560px,100%)",maxHeight:"90vh",display:"flex",flexDirection:"column",border:`1px solid ${T.border}`,overflow:"hidden"}}>
+              <div style={{padding:"22px 24px 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:16,fontWeight:800}}>{editingPtx ? "Edit Transaction" : "Record Property Transaction"}</div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:2}}>{p.name}</div>
+                </div>
+                <button onClick={close} style={{background:T.inputBg,border:"none",borderRadius:7,width:30,height:30,cursor:"pointer",fontSize:18,color:T.muted,lineHeight:1}}>×</button>
+              </div>
+              <div style={{padding:22,overflowY:"auto",flex:1,minHeight:0}}>
+                <div style={{marginBottom:14}}>
+                  <Label required>Category</Label>
+                  <Sel value={d.category} onChange={e=>setD("category",e.target.value)}
+                    options={RE_TX_CATEGORIES.map(c => ({ value: c.key, label: `${c.icon}  ${c.key}` }))}/>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+                  <div><Label required>Date</Label><Input type="date" value={d.date} onChange={e=>setD("date",e.target.value)}/></div>
+                  <div><Label required>Amount</Label><Input type="number" prefix={sym} value={d.amount} onChange={e=>setD("amount",e.target.value)} placeholder="0.00"/></div>
+                  <div style={{gridColumn:"1 / -1"}}>
+                    <Label required={!d.recordOnly}>{classifyTxFlow(d.category) === "out" ? "Pay From Account" : "Credit To Account"}</Label>
+                    <Sel value={d.cashAccountId} onChange={e=>setD("cashAccountId",e.target.value)}
+                      placeholder={reCashAccounts.length ? "Select account…" : "— No cash accounts —"}
+                      options={reCashAccounts.map(a => ({ value:String(a.id), label:`${a.bank} · ${a.accountName}` }))}/>
+                  </div>
+                  {isRentish && tenants.length > 0 && (
+                    <div style={{gridColumn:"1 / -1"}}>
+                      <Label>Tenant</Label>
+                      <Sel value={d.tenantId} onChange={e=>setD("tenantId",e.target.value)} placeholder="Not linked"
+                        options={tenants.map(t => ({ value:t.id, label:`${t.name}${t.status!=="Active"?" (past)":""}` }))}/>
+                    </div>
+                  )}
+                  <MoreOptions count={3}>
+                    <div><Label>Method</Label><Sel value={d.method} onChange={e=>setD("method",e.target.value)} options={["Bank Transfer","GIRO","PayNow","Cheque","Cash","Credit Card"]}/></div>
+                    <div><Label>Reference</Label><Input value={d.ref} onChange={e=>setD("ref",e.target.value)} placeholder="Optional"/></div>
+                    <div style={{gridColumn:"1 / -1"}}><Label>Notes</Label>
+                      <textarea value={d.notes} onChange={e=>setD("notes",e.target.value)} rows={2} placeholder="e.g. Jul 2026 rent, Q3 MCST, aircon servicing…"
+                        style={{width:"100%",boxSizing:"border-box",background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",fontSize:13,fontFamily:"inherit",color:T.text,outline:"none",resize:"vertical"}}/>
+                    </div>
+                  </MoreOptions>
+                </div>
+                <FlowBanner type={d.category} prefix={sym} flowOverride={d.recordOnly ? "info" : undefined}
+                  amount={d.recordOnly ? null : d.amount}
+                  label={d.recordOnly ? "📝 Recorded — no cash flow" : `${(RE_TX_BY_KEY[d.category]||{}).icon || "💰"} ${d.category}`}/>
+                <RecordOnlyToggle recordOnly={!!d.recordOnly} setRecordOnly={(fn) => setD("recordOnly", typeof fn === "function" ? fn(!!d.recordOnly) : fn)} style={{marginTop:10,marginBottom:0}}/>
+              </div>
+              <div style={{padding:"14px 24px 20px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"flex-end",gap:10}}>
+                <button onClick={close} style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>Cancel</button>
+                <button onClick={savePtx} disabled={invalid}
+                  style={{padding:"9px 22px",borderRadius:8,border:"none",background:invalid?T.border:T.selected,color:invalid?T.dim:T.selectedText,cursor:invalid?"not-allowed":"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}}>
+                  {editingPtx ? "Save Changes" : "Record"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Edit Property modal — consistent with other modules' edit dialogs */}
       {editing && ef && (
@@ -13189,6 +13634,8 @@ function RealEstateScreen({ properties, setProperties, policies, accounts, setAc
             properties={properties}
             setProperties={setProperties}
             policies={policies}
+            accounts={accounts}
+            setAccounts={setAccounts}
             propTab={propTab}
             setPropTab={setPropTab}
             showToast={showToast}
