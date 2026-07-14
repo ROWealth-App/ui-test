@@ -18964,48 +18964,227 @@ function CreditCardScreen({ cards, setCards, accounts, setAccounts, transactions
 
 const EXPORT_TABS = [
   { id: "stocks",       label: "Stocks" },
+  { id: "funds",        label: "Investment Funds" },
   { id: "bonds",        label: "Bonds & T-Bills" },
   { id: "crypto",       label: "Cryptocurrencies" },
   { id: "creditcards",  label: "Credit Cards" },
   { id: "loans",        label: "Loans" },
+  { id: "realestate",   label: "Real Estate" },
+  { id: "insurance",    label: "Insurance" },
+  { id: "retirement",   label: "Retirement" },
   { id: "privateequity",label: "VC/PE" },
   { id: "partnerships", label: "Business Ventures" },
   { id: "collectibles", label: "Collectibles" },
 ];
+/* Cash Accounts is deliberately absent: it has no per-account transaction ledger, and its
+   card spending is already exported under `creditcards`. Including it would double-count. */
 
-const safeAcct = (s) => String(s||"Unknown").replace(/[\s.]/g, "");
+/* ── Account-name builder ──────────────────────────────────────
+   The ONE place PTA account strings are constructed. Previously each tab hand-rolled its own,
+   which is how `Assets:Collectible:` (export) and `Assets:Collectibles:` (postings tab) drifted
+   apart for the same asset. */
+const A = {
+  seg: (v) => String(v ?? "").replace(/[^A-Za-z0-9]/g, "") || "Unknown",
+  cash:        ()             => "Assets:Bank:Cash",
+  equity:      ()             => "Equity:Transfers",
+  fees:        ()             => "Expenses:Fees",
+  brokerage:   (broker, sym)  => `Assets:Brokerage:${A.seg(broker)}:${A.seg(sym)}`,
+  brokerCash:  (broker)       => `Assets:Brokerage:${A.seg(broker)}:Cash`,
+  fund:        (name)         => `Assets:Funds:${A.seg(name)}`,
+  bond:        (issuer, name) => `Assets:Bonds:${A.seg(issuer)}:${A.seg(name)}`,
+  crypto:      (wallet, sym)  => `Assets:Crypto:${A.seg(wallet)}:${A.seg(sym)}`,
+  pe:          (mgr, name)    => `Assets:PE:${A.seg(mgr)}:${A.seg(name)}`,
+  venture:     (name)         => `Assets:BusinessVenture:${A.seg(name)}`,
+  collectible: (cat, name)    => `Assets:Collectibles:${A.seg(cat)}:${A.seg(name)}`,
+  property:    (name)         => `Assets:Fixed:Property:${A.seg(name)}`,
+  policy:      (insurer, plan)=> `Assets:Insurance:${A.seg(insurer)}:${A.seg(plan)}`,
+  retirement:  (name)         => `Assets:Retirement:${A.seg(name)}`,
+  creditCard:  (bank)         => `Liabilities:CreditCard:${A.seg(bank)}`,
+  loan:        (lender)       => `Liabilities:Loan:${A.seg(lender)}`,
+  mortgage:    (lender)       => `Liabilities:Mortgage:${A.seg(lender)}`,
+  deposit:     (name)         => `Liabilities:TenantDeposit:${A.seg(name)}`,
+  income:      (...parts)     => ["Income", ...parts.map(A.seg)].join(":"),
+  expense:     (...parts)     => ["Expenses", ...parts.map(A.seg)].join(":"),
+};
+
+/* ── Dr/Cr direction, per TRANSACTION TYPE ─────────────────────
+   The old export hardcoded debit/credit per TAB, so a Buy and a Sell produced the SAME journal
+   direction — a real correctness bug, not just duplication. Direction is a property of the type,
+   not the tab.
+
+   Roles resolve against the accounts each row supplies: asset / cash / income / expense /
+   liability / equity. Keys may be scoped as "tab:Type" where the same type means different things
+   in different tabs (a credit-card "Purchase" is an expense against a liability; a collectible
+   "Purchase" is an asset against cash). Unscoped keys are the fallback. */
+const POSTING_RULES = {
+  // ── Acquisitions: money out, asset up
+  "Buy":                    { dr:"asset",     cr:"cash" },
+  "Purchase":               { dr:"asset",     cr:"cash" },
+  "Subscription":           { dr:"asset",     cr:"cash" },
+  "Capital Call":           { dr:"asset",     cr:"cash" },
+  "Additional Investment":  { dr:"asset",     cr:"cash" },
+  "Capital Contribution":   { dr:"asset",     cr:"cash" },
+  "Partner Loan":           { dr:"asset",     cr:"cash" },
+  "Contribution":           { dr:"asset",     cr:"cash" },
+  "Top-Up":                 { dr:"asset",     cr:"cash" },
+  "Restoration":            { dr:"asset",     cr:"cash" },
+  "Stake":                  { dr:"asset",     cr:"equity" },
+  "Unstake":                { dr:"equity",    cr:"asset" },
+  "Deposit":                { dr:"asset",     cr:"cash" },
+
+  // ── Disposals / return of capital: money in, asset down
+  "Sell":                   { dr:"cash",      cr:"asset" },
+  "Sale":                   { dr:"cash",      cr:"asset" },
+  "Redemption":             { dr:"cash",      cr:"asset" },
+  "Withdraw":               { dr:"cash",      cr:"asset" },
+  "Withdrawal":             { dr:"cash",      cr:"asset" },
+  "Distribution":           { dr:"cash",      cr:"asset" },
+  "Exit / Realisation":     { dr:"cash",      cr:"asset" },
+  "Exit / Buyout":          { dr:"cash",      cr:"asset" },
+  "Capital Withdrawal":     { dr:"cash",      cr:"asset" },
+  "Payout":                 { dr:"cash",      cr:"asset" },
+  "Surrender":              { dr:"cash",      cr:"asset" },
+  "Maturity Benefit":       { dr:"cash",      cr:"asset" },
+  "Deposit Received":       { dr:"cash",      cr:"liability" },  // a tenant deposit is owed back
+  "Deposit Refunded":       { dr:"liability", cr:"cash" },
+
+  // ── Income
+  "Dividend":               { dr:"cash",      cr:"income" },
+  "Coupon":                 { dr:"cash",      cr:"income" },
+  "Interest":               { dr:"cash",      cr:"income" },
+  "Income / Gain":          { dr:"cash",      cr:"income" },
+  "Profit Distribution":    { dr:"cash",      cr:"income" },
+  "Salary / Drawings":      { dr:"cash",      cr:"income" },
+  "Rent Received":          { dr:"cash",      cr:"income" },
+  "Other Income":           { dr:"cash",      cr:"income" },
+  "Claim":                  { dr:"cash",      cr:"income" },
+  "Staking Reward":         { dr:"asset",     cr:"income" },     // paid in kind, not cash
+  "Airdrop":                { dr:"asset",     cr:"income" },
+
+  // ── Expenses
+  "Fee":                    { dr:"expense",   cr:"cash" },
+  "Management Fee":         { dr:"expense",   cr:"cash" },
+  "Appraisal Fee":          { dr:"expense",   cr:"cash" },
+  "Insurance Premium":      { dr:"expense",   cr:"cash" },
+  "Premium":                { dr:"expense",   cr:"cash" },
+  "Maintenance":            { dr:"expense",   cr:"cash" },
+  "Storage Cost":           { dr:"expense",   cr:"cash" },
+  "Consignment Fee":        { dr:"expense",   cr:"cash" },
+  "Property Tax":           { dr:"expense",   cr:"cash" },
+  "MCST / Maintenance":     { dr:"expense",   cr:"cash" },
+  "Repairs & Maintenance":  { dr:"expense",   cr:"cash" },
+  "Agent Commission":       { dr:"expense",   cr:"cash" },
+  "Utilities":              { dr:"expense",   cr:"cash" },
+  "Other Expense":          { dr:"expense",   cr:"cash" },
+
+  // ── In-kind transfers: no cash leg at all
+  "Transfer In":            { dr:"asset",     cr:"equity" },
+  "Transfer Out":           { dr:"equity",    cr:"asset" },
+  "Switch In":              { dr:"asset",     cr:"equity" },
+  "Switch Out":             { dr:"equity",    cr:"asset" },
+  "Valuation Update":       null,   // no cash and no journal entry — a mark, not a transaction
+
+  // ── Tab-scoped overrides (same word, different meaning)
+  "creditcards:Purchase":   { dr:"expense",   cr:"liability" },
+  "creditcards:Refund":     { dr:"liability", cr:"expense" },
+  "creditcards:Payment":    { dr:"liability", cr:"cash" },
+  "loans:Repayment":        { dr:"liability", cr:"cash" },
+  "loans:Partial":          { dr:"liability", cr:"cash" },
+  "loans:Settlement":       { dr:"liability", cr:"cash" },
+  "realestate:Repayment":   { dr:"liability", cr:"cash" },
+  "retirement:Contribution":{ dr:"asset",     cr:"cash" },
+  "retirement:Withdrawal":  { dr:"cash",      cr:"asset" },
+  "insurance:Premium":      { dr:"expense",   cr:"cash" },
+  "insurance:Payout":       { dr:"cash",      cr:"asset" },
+};
+
+const postingRule = (tab, type) =>
+  (`${tab}:${type}` in POSTING_RULES) ? POSTING_RULES[`${tab}:${type}`]
+  : (type in POSTING_RULES) ? POSTING_RULES[type]
+  : { dr:"asset", cr:"cash" };   // conservative default: treat an unknown type as an acquisition
+
+/* Resolve a row's dr/cr roles into real account strings. Returns null for a type whose rule is
+   explicitly null (e.g. Valuation Update), so the caller can skip it entirely. */
+function resolvePosting(row) {
+  const rule = postingRule(row.tab, row.type);
+  if (!rule) return null;
+  const acct = (role) => row.accounts[role] || (
+    role === "cash" ? A.cash() :
+    role === "equity" ? A.equity() :
+    role === "income" ? A.income("Other") :
+    role === "expense" ? A.expense("Other") :
+    role === "liability" ? "Liabilities:Other" :
+    "Assets:Other"
+  );
+  /* Which account funds the fee. It is NOT simply the credit leg: on a Buy the credit leg is cash
+     (right), but on a Sell the credit leg is the ASSET — booking the fee there would credit stock
+     rather than the cash actually paid out. Prefer the cash side, then the liability side. */
+  const feeCounter =
+      rule.dr === "cash"      ? acct("cash")
+    : rule.cr === "cash"      ? acct("cash")
+    : rule.cr === "liability" ? acct(rule.cr)
+    : rule.dr === "liability" ? acct(rule.dr)
+    : acct("cash");
+  return { debit: acct(rule.dr), credit: acct(rule.cr), drRole: rule.dr, crRole: rule.cr, feeCounter };
+}
 
 function gatherTransactions({
   holdings, transactions, ccTransactions, ccCards, bondHoldings,
-  cryptoHoldings, peInvestments, bpVentures, collectibles, loans, tabFilter,
+  cryptoHoldings, peInvestments, bpVentures, collectibles, loans,
+  properties, policies, retirementPlans, funds, tabFilter,
 }) {
   const rows = [];
   const want = (id) => !tabFilter || tabFilter.has(id);
+  /* Every row carries the accounts for the roles its type might use; resolvePosting picks the
+     right pair. `payee` is the counterparty (Ledger payee semantics); `narration` is the memo. */
+  const push = (r) => {
+    const posting = resolvePosting(r);
+    if (!posting) return;                 // type explicitly posts nothing
+    rows.push({ ...r, ...posting });
+  };
 
   if (want("stocks")) {
     (transactions||[]).forEach(t => {
       const h = (holdings||[]).find(x => x.sym === t.sym && x.accountId === t.accountId);
       const broker = t.broker || (h && h.broker) || "Brokerage";
       const ccy = t.currency || (h && h.tradeCcy) || "SGD";
-      const qty = parseFloat(t.qty||0); const price = parseFloat(t.price||0); const fees = parseFloat(t.fees||0);
-      const amount = qty * price + fees;
-      rows.push({
+      const qty = parseFloat(t.qty||0), price = parseFloat(t.price||0), fees = parseFloat(t.fees||0);
+      push({
         tab:"stocks", id:t.id, date:t.date, type:t.txType, asset:t.sym, name:t.name||(h&&h.name)||"",
-        venue:broker, qty, price, amount, currency:ccy, fees, notes:t.notes||"",
-        debit:`Assets:Brokerage:${safeAcct(broker)}:${t.sym}`,
-        credit:`Assets:Brokerage:${safeAcct(broker)}:Cash`,
+        venue:broker, payee:broker, qty, price, amount: qty*price + fees, currency:ccy, fees,
+        notes:t.notes||"", ref:t.ref||"", status:t.recordOnly ? "record-only" : "complete",
+        entityId: h ? h.id : t.sym,
+        accounts:{ asset:A.brokerage(broker, t.sym), cash:A.brokerCash(broker),
+                   income:A.income("Dividend", t.sym), expense:A.expense("Brokerage","Fees"), equity:A.equity() },
       });
     });
   }
 
+  if (want("funds")) {
+    (funds||[]).forEach(f => (f.transactions||[]).forEach(t => {
+      push({
+        tab:"funds", id:t.id, date:t.date, type:t.type, asset:f.name, name:f.fundHouse||"",
+        venue:f.platform||f.fundHouse||"Fund", payee:f.fundHouse||"Fund",
+        qty:parseFloat(t.units||0)||null, price:parseFloat(t.price||0)||null,
+        amount:parseFloat(t.amount||0), currency:f.currency||"SGD", fees:parseFloat(t.fees||0),
+        notes:t.notes||"", ref:t.ref||"", status:t.recordOnly ? "record-only" : "complete",
+        entityId:f.id, commodity:f.isin || null,
+        accounts:{ asset:A.fund(f.name), cash:A.cash(),
+                   income:A.income("Funds","Distribution", f.name), expense:A.expense("Funds","Fees"), equity:A.equity() },
+      });
+    }));
+  }
+
   if (want("bonds")) {
     (bondHoldings||[]).forEach(b => (b.transactions||[]).forEach(t => {
-      rows.push({
+      push({
         tab:"bonds", id:t.id, date:t.date, type:t.type, asset:b.name, name:b.issuer||"",
-        venue:b.issuer||"Bonds", qty:null, price:null, amount:parseFloat(t.amount||0),
-        currency:b.currency||"SGD", fees:0, notes:t.notes||t.ref||"",
-        debit:`Assets:Bonds:${safeAcct(b.issuer)}:${safeAcct(b.name)}`,
-        credit:`Assets:Bank:Cash`,
+        venue:b.issuer||"Bonds", payee:b.issuer||"Bonds", qty:null, price:null,
+        amount:parseFloat(t.amount||0), currency:b.currency||"SGD", fees:0,
+        notes:t.notes||"", ref:t.ref||"", status:t.recordOnly ? "record-only" : (t.status||"complete"),
+        entityId:b.id,
+        accounts:{ asset:A.bond(b.issuer, b.name), cash:A.cash(),
+                   income:A.income("Bonds","Coupon", b.name), expense:A.expense("Bonds","Fees"), equity:A.equity() },
       });
     }));
   }
@@ -19013,13 +19192,14 @@ function gatherTransactions({
   if (want("crypto")) {
     (cryptoHoldings||[]).forEach(c => (c.transactions||[]).forEach(t => {
       const wallet = c.wallet || "Wallet";
-      rows.push({
+      push({
         tab:"crypto", id:t.id, date:t.date, type:t.type, asset:c.symbol, name:c.name||"",
-        venue:wallet, qty:parseFloat(t.qty||0), price:parseFloat(t.price||0),
-        amount:parseFloat(t.amount||0), currency:c.currency||"SGD",
-        fees:parseFloat(t.gasFees||0), notes:t.notes||t.counterpartyAddress||"",
-        debit:`Assets:Crypto:${safeAcct(wallet)}:${c.symbol}`,
-        credit:`Assets:Crypto:${safeAcct(wallet)}:Cash`,
+        venue:wallet, payee:wallet, qty:parseFloat(t.qty||0), price:parseFloat(t.price||0),
+        amount:parseFloat(t.amount||0), currency:c.currency||"SGD", fees:parseFloat(t.gasFees||0),
+        notes:t.notes||t.counterpartyAddress||"", ref:t.ref||"",
+        status:t.recordOnly ? "record-only" : "complete", entityId:c.id, commodity:c.symbol,
+        accounts:{ asset:A.crypto(wallet, c.symbol), cash:A.cash(),
+                   income:A.income("Crypto", c.symbol), expense:A.expense("Crypto","NetworkFees"), equity:A.equity() },
       });
     }));
   }
@@ -19028,62 +19208,150 @@ function gatherTransactions({
     (ccTransactions||[]).forEach(t => {
       const card = (ccCards||[]).find(c => c.id === t.cardId);
       const bank = card ? card.bank : "Card";
-      rows.push({
+      push({
         tab:"creditcards", id:t.id, date:t.date, type:t.type, asset:t.description||t.category,
-        name:card ? `${card.bank} ${card.cardName}` : "",
-        venue:bank, qty:null, price:null, amount:parseFloat(t.amount||0),
-        currency:t.currency||"SGD", fees:parseFloat(t.fees||0), notes:t.notes||t.ref||"",
-        debit:`Expenses:${safeAcct(t.category||"Other")}`,
-        credit:`Liabilities:CreditCard:${safeAcct(bank)}`,
+        name:card ? `${card.bank} ${card.cardName}` : "", venue:bank, payee:t.merchant||t.description||bank,
+        qty:null, price:null, amount:parseFloat(t.amount||0), currency:t.currency||"SGD",
+        fees:parseFloat(t.fees||0), notes:t.notes||"", ref:t.ref||"", status:t.status||"complete",
+        entityId: card ? card.id : t.cardId,
+        accounts:{ liability:A.creditCard(bank), expense:A.expense(t.category||"Other"),
+                   cash:A.cash(), asset:A.creditCard(bank), income:A.income("Cashback"), equity:A.equity() },
       });
     });
   }
 
   if (want("loans")) {
     (loans||[]).forEach(l => (l.repayments||[]).forEach((t,i) => {
-      rows.push({
-        tab:"loans", id:`${l.id}-R${i}`, date:t.date, type:t.repaymentType||"Repayment",
-        asset:l.loanType, name:l.lender, venue:l.lender, qty:null, price:null,
+      push({
+        tab:"loans", id:t.id||`${l.id}-R${i}`, date:t.date, type:t.repaymentType||"Repayment",
+        asset:l.loanType, name:l.lender, venue:l.lender, payee:l.lender, qty:null, price:null,
         amount:parseFloat(t.amount||0), currency:"SGD", fees:parseFloat(t.fees||0),
-        notes:t.notes||"",
-        debit:`Liabilities:Loan:${safeAcct(l.lender)}`,
-        credit:`Assets:Bank:Cash`,
+        notes:t.notes||"", ref:t.ref||"", status:"complete", entityId:l.id,
+        accounts:{ liability:A.loan(l.lender), cash:A.cash(),
+                   expense:A.expense("Interest","Loan"), asset:A.loan(l.lender), income:A.income("Other"), equity:A.equity() },
+      });
+    }));
+  }
+
+  if (want("realestate")) {
+    (properties||[]).forEach(p => {
+      (p.propertyTransactions||[]).forEach(t => {
+        const cat = RE_TX_BY_KEY[t.category];
+        push({
+          tab:"realestate", id:t.id, date:t.date, type:t.category, asset:p.name, name:p.type||"",
+          venue:p.name, payee:t.notes || p.name, qty:null, price:null,
+          amount:parseFloat(t.amount||0), currency:"SGD", fees:0,
+          notes:t.notes||"", ref:t.ref||"", status:t.recordOnly ? "record-only" : "complete",
+          entityId:p.id,
+          accounts:{ asset:A.property(p.name), cash:A.cash(), liability:A.deposit(p.name),
+                     income:A.income("Rental", p.name),
+                     expense: cat ? cat.account(A.seg(p.name)) : A.expense("Property","Other"),
+                     equity:A.equity() },
+        });
+      });
+      (p.loanRepayments||[]).forEach((t,i) => {
+        const c = (p.loanContracts||[]).find(x => x.id === t.contractId);
+        const lender = c ? c.lender : "Bank";
+        push({
+          tab:"realestate", id:t.id||`${p.id}-LR${i}`, date:t.date, type:"Repayment",
+          asset:p.name, name:lender, venue:lender, payee:lender, qty:null, price:null,
+          amount:parseFloat(t.totalAmount||0), currency:"SGD", fees:parseFloat(t.fees||0),
+          notes:t.notes||"", ref:t.ref||"", status:"complete", entityId:p.id,
+          accounts:{ liability:A.mortgage(lender), cash:A.cash(),
+                     expense:A.expense("Interest","Mortgage"), asset:A.property(p.name), income:A.income("Other"), equity:A.equity() },
+        });
+      });
+    });
+  }
+
+  if (want("insurance")) {
+    (policies||[]).forEach(pol => {
+      (pol.premiumTransactions||[]).forEach(t => {
+        if (t.status !== "Paid") return;
+        push({
+          tab:"insurance", id:t.id, date:t.date, type:"Premium", asset:pol.planName, name:pol.insurer||"",
+          venue:pol.insurer||"Insurer", payee:pol.insurer||"Insurer", qty:null, price:null,
+          amount:parseFloat(t.amount||0), currency:pol.currency||"SGD", fees:parseFloat(t.fees||0),
+          notes:t.notes||"", ref:t.ref||"", status:"complete", entityId:pol.id,
+          accounts:{ expense:A.expense("Insurance", pol.type||"General"), cash:A.cash(),
+                     asset:A.policy(pol.insurer, pol.planName), income:A.income("Insurance"), equity:A.equity() },
+        });
+      });
+      (pol.payouts||[]).forEach(t => {
+        if (t.status !== "Paid") return;
+        push({
+          tab:"insurance", id:t.id, date:t.date, type:t.type||"Payout", asset:pol.planName, name:pol.insurer||"",
+          venue:pol.insurer||"Insurer", payee:pol.insurer||"Insurer", qty:null, price:null,
+          amount:parseFloat(t.amount||0), currency:pol.currency||"SGD", fees:0,
+          notes:t.notes||"", ref:t.ref||"", status:t.recordOnly ? "record-only" : "complete", entityId:pol.id,
+          // source "none" → genuine income; otherwise a drawdown of the policy asset.
+          accounts:{ asset: t.source === "none" ? A.income("Insurance", pol.insurer) : A.policy(pol.insurer, pol.planName),
+                     cash:A.cash(), income:A.income("Insurance", pol.insurer),
+                     expense:A.expense("Insurance","Other"), equity:A.equity() },
+        });
+      });
+      (pol.claims||[]).forEach(t => {
+        if (t.status !== "Paid") return;
+        push({
+          tab:"insurance", id:t.id, date:t.date, type:"Claim", asset:t.type||"Claim", name:pol.insurer||"",
+          venue:pol.insurer||"Insurer", payee:pol.insurer||"Insurer", qty:null, price:null,
+          amount:parseFloat(t.amount||0), currency:pol.currency||"SGD", fees:0,
+          notes:t.notes||"", ref:t.ref||"", status:"complete", entityId:pol.id,
+          accounts:{ cash:A.cash(), income:A.income("InsuranceClaim", pol.insurer),
+                     asset:A.policy(pol.insurer, pol.planName), expense:A.expense("Insurance","Other"), equity:A.equity() },
+        });
+      });
+    });
+  }
+
+  if (want("retirement")) {
+    (retirementPlans||[]).forEach(pl => (pl.transactions||[]).forEach(t => {
+      push({
+        tab:"retirement", id:t.id, date:t.date, type:t.type, asset:pl.name, name:pl.provider||pl.planType||"",
+        venue:pl.provider||"Retirement", payee:pl.provider||"Retirement", qty:null, price:null,
+        amount:parseFloat(t.amount||0), currency:pl.currency||"SGD", fees:0,
+        notes:t.notes||"", ref:t.ref||"", status:t.recordOnly ? "record-only" : "complete", entityId:pl.id,
+        accounts:{ asset:A.retirement(pl.name), cash:A.cash(),
+                   income:A.income("Retirement", pl.name), expense:A.expense("Retirement","Fees"), equity:A.equity() },
       });
     }));
   }
 
   if (want("privateequity")) {
     (peInvestments||[]).forEach(i => (i.transactions||[]).forEach(t => {
-      rows.push({
+      push({
         tab:"privateequity", id:t.id, date:t.date, type:t.type, asset:i.name, name:i.manager||"",
-        venue:i.manager||"PE", qty:null, price:null, amount:parseFloat(t.amount||0),
-        currency:i.currency||"SGD", fees:0, notes:t.notes||t.ref||"",
-        debit:`Assets:PE:${safeAcct(i.manager)}:${safeAcct(i.name)}`,
-        credit:`Assets:Bank:Cash`,
+        venue:i.manager||"PE", payee:i.manager||"PE", qty:null, price:null,
+        amount:parseFloat(t.amount||0), currency:i.currency||"SGD", fees:0,
+        notes:t.notes||"", ref:t.ref||"", status:t.recordOnly ? "record-only" : (t.status||"complete"), entityId:i.id,
+        accounts:{ asset:A.pe(i.manager, i.name), cash:A.cash(),
+                   income:A.income("PE", i.name), expense:A.expense("PE","ManagementFee"), equity:A.equity() },
       });
     }));
   }
 
   if (want("partnerships")) {
     (bpVentures||[]).forEach(v => (v.transactions||[]).forEach(t => {
-      rows.push({
+      push({
         tab:"partnerships", id:t.id, date:t.date, type:t.type, asset:v.businessName, name:v.role||"",
-        venue:v.businessName||"BP", qty:null, price:null, amount:parseFloat(t.amount||0),
-        currency:v.currency||"SGD", fees:0, notes:t.notes||"",
-        debit:`Assets:BusinessVenture:${safeAcct(v.businessName)}`,
-        credit:`Assets:Bank:Cash`,
+        venue:v.businessName||"BP", payee:v.businessName||"BP", qty:null, price:null,
+        amount:parseFloat(t.amount||0), currency:v.currency||"SGD", fees:0,
+        notes:t.notes||"", ref:t.ref||"", status:t.recordOnly ? "record-only" : "complete", entityId:v.id,
+        accounts:{ asset:A.venture(v.businessName), cash:A.cash(),
+                   income:A.income("BusinessVenture", v.businessName), expense:A.expense("BusinessVenture","Fees"), equity:A.equity() },
       });
     }));
   }
 
   if (want("collectibles")) {
     (collectibles||[]).forEach(c => (c.transactions||[]).forEach(t => {
-      rows.push({
+      push({
         tab:"collectibles", id:t.id, date:t.date, type:t.type, asset:c.name, name:c.brand||"",
-        venue:c.brand||"Collectible", qty:null, price:null, amount:parseFloat(t.amount||0),
-        currency:c.currency||"SGD", fees:0, notes:t.notes||"",
-        debit:`Assets:Collectible:${safeAcct(c.category)}:${safeAcct(c.name)}`,
-        credit:`Assets:Bank:Cash`,
+        venue:c.brand||"Collectible", payee:c.brand||"Collectible", qty:null, price:null,
+        amount:parseFloat(t.amount||0), currency:c.currency||"SGD", fees:0,
+        notes:t.notes||"", ref:t.ref||"", status:t.recordOnly ? "record-only" : "complete", entityId:c.id,
+        accounts:{ asset:A.collectible(c.category, c.name), cash:A.cash(),
+                   income:A.income("Collectibles", c.name), expense:A.expense("Collectibles","Upkeep"), equity:A.equity() },
       });
     }));
   }
@@ -19091,35 +19359,68 @@ function gatherTransactions({
   return rows.sort((a,b) => (a.date||"").localeCompare(b.date||""));
 }
 
+/* Ledger export with real PTA metadata: payee | narration, tags, typed key: value pairs, and
+   `account` / `commodity` declarations so the file is `ledger --strict` clean. */
 function buildLedgerExport(rows) {
+  const accounts = new Set();
+  const commodities = new Set();
+  rows.forEach(r => {
+    accounts.add(r.debit); accounts.add(r.credit);
+    if (r.fees > 0) { accounts.add(A.fees()); accounts.add(r.feeCounter || r.credit); }
+    commodities.add(r.currency || "SGD");
+    if (r.commodity && r.qty) commodities.add(A.seg(r.commodity));
+  });
+
   const header = [
     `; WealthOS PTA export — generated ${new Date().toISOString()}`,
     `; ${rows.length} transactions across ${new Set(rows.map(r=>r.tab)).size} tab(s)`,
-    `; Format: Ledger (https://ledger-cli.org)`,
+    `; Format: Ledger (https://ledger-cli.org) · ledger --strict clean`,
+    ``,
+    `; ── Commodity declarations ──`,
+    ...Array.from(commodities).sort().map(c => `commodity ${c}`),
+    ``,
+    `; ── Account declarations ──`,
+    ...Array.from(accounts).sort().map(a => `account ${a}`),
+    ``,
     ``,
   ].join("\n");
+
   const body = rows.map(r => {
-    const desc = [r.type, r.asset, r.name].filter(Boolean).join(" · ");
-    const amt = r.amount.toFixed(2);
-    const lines = [`${r.date} * ${desc.replace(/\n/g," ")}`];
-    if (r.notes) lines.push(`    ; ${r.notes.replace(/\n/g," ")}`);
-    if (r.qty != null && r.qty !== 0) {
-      lines.push(`    ${r.debit}          ${r.qty} ${r.asset} @ ${r.currency} ${(r.price||0).toFixed(2)}`);
+    const narration = [r.type, r.asset, r.name].filter(Boolean).join(" · ").replace(/\n/g, " ");
+    const payee = (r.payee || r.venue || "").replace(/\n/g, " ").replace(/\|/g, "-");
+    const amt = (+r.amount || 0).toFixed(2);
+    // Ledger payee semantics: "Payee | Narration".
+    const lines = [`${r.date} * ${payee ? `${payee} | ` : ""}${narration}`];
+    // Tags — searchable via `ledger --limit 'tag("tab")'`.
+    lines.push(`    ; :${A.seg(r.tab)}:${A.seg(r.type)}:${r.status === "record-only" ? "recordonly:" : ""}`);
+    // Typed metadata.
+    lines.push(`    ; tab: ${r.tab}`);
+    lines.push(`    ; entity: ${r.entityId ?? ""}`);
+    lines.push(`    ; txid: ${r.id ?? ""}`);
+    if (r.ref)    lines.push(`    ; ref: ${r.ref}`);
+    if (r.status) lines.push(`    ; status: ${r.status}`);
+    if (r.notes)  lines.push(`    ; note: ${r.notes.replace(/\n/g, " ")}`);
+
+    if (r.qty != null && r.qty !== 0 && r.commodity) {
+      // Commodity lot — lets Ledger track units and cost basis, not just cash.
+      lines.push(`    ${r.debit}          ${r.qty} ${A.seg(r.commodity)} @ ${r.currency} ${(+r.price||0).toFixed(2)}`);
     } else {
       lines.push(`    ${r.debit}          ${r.currency} ${amt}`);
     }
     lines.push(`    ${r.credit}          -${r.currency} ${amt}`);
     if (r.fees > 0) {
-      lines.push(`    Expenses:Fees          ${r.currency} ${r.fees.toFixed(2)}`);
-      lines.push(`    ${r.credit}          -${r.currency} ${r.fees.toFixed(2)}`);
+      lines.push(`    ${A.fees()}          ${r.currency} ${(+r.fees).toFixed(2)}`);
+      lines.push(`    ${r.feeCounter || r.credit}          -${r.currency} ${(+r.fees).toFixed(2)}`);
     }
     return lines.join("\n");
   }).join("\n\n");
+
   return header + body + "\n";
 }
 
 function buildCSVExport(rows) {
-  const cols = ["tab","date","type","asset","name","venue","qty","price","amount","currency","fees","notes","debit_account","credit_account","id"];
+  const cols = ["tab","date","type","asset","name","venue","payee","qty","price","amount","currency","fees",
+                "notes","tags","ref","status","debit_account","credit_account","entity_id","id"];
   const esc = (v) => {
     if (v == null) return "";
     const s = String(v);
@@ -19127,9 +19428,10 @@ function buildCSVExport(rows) {
   };
   const head = cols.join(",");
   const body = rows.map(r => [
-    r.tab, r.date, r.type, r.asset, r.name, r.venue,
+    r.tab, r.date, r.type, r.asset, r.name, r.venue, r.payee ?? "",
     r.qty ?? "", r.price ?? "", r.amount, r.currency, r.fees,
-    r.notes, r.debit, r.credit, r.id,
+    r.notes, `${A.seg(r.tab)};${A.seg(r.type)}`, r.ref ?? "", r.status ?? "",
+    r.debit, r.credit, r.entityId ?? "", r.id,
   ].map(esc).join(",")).join("\n");
   return head + "\n" + body + "\n";
 }
@@ -19691,7 +19993,7 @@ function ImportScreen({ setTransactions, setCCTransactions, ccCards, holdings, b
   );
 }
 
-function ExportScreen({ holdings, transactions, ccTransactions, ccCards, bondHoldings, cryptoHoldings, peInvestments, bpVentures, collectibles, loans, baseCurrency, initialTabFilter, showToast }) {
+function ExportScreen({ holdings, transactions, ccTransactions, ccCards, bondHoldings, cryptoHoldings, peInvestments, bpVentures, collectibles, loans, properties, policies, retirementPlans, funds, baseCurrency, initialTabFilter, showToast }) {
   const _ccy = baseCurrency || BASE_CURRENCY;
   void _ccy;
   const [selectedTabs, setSelectedTabs] = useState(() =>
@@ -19709,6 +20011,7 @@ function ExportScreen({ holdings, transactions, ccTransactions, ccCards, bondHol
   const allRows = gatherTransactions({
     holdings, transactions, ccTransactions, ccCards, bondHoldings,
     cryptoHoldings, peInvestments, bpVentures, collectibles, loans,
+    properties, policies, retirementPlans, funds,
     tabFilter: selectedTabs,
   });
   const filteredRows = allRows.filter(r => {
@@ -21359,6 +21662,8 @@ export default function App() {
         bondHoldings={bondHoldings} cryptoHoldings={cryptoHoldings}
         peInvestments={peInvestments} bpVentures={bpVentures}
         collectibles={collectibles} loans={loans}
+        properties={properties} policies={policies}
+        retirementPlans={retPlans} funds={funds}
         baseCurrency={baseCurrency}
         initialTabFilter={exportTabFilter}
         showToast={showToast} />;
