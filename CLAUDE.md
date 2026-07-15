@@ -19,7 +19,7 @@ No test framework is configured. Verify changes with `npx vite build` (must succ
 
 **Single-file application**: Nearly all code lives in `src/App.jsx` (~18,000+ lines). This includes screen components, the detail-page shell, modals, reusable primitives, mock data, and utilities.
 
-**Routing — hash-based (no library)**: `parseHash(hash)` / `buildHash(route)` (near `src/App.jsx:697`) produce a structured route `{screen, parentId, entityId, tab}`. `App()` derives `route` from `window.location.hash` via a `hashchange` effect, and a single `navigate(next)` primitive only ever sets `window.location.hash` — so browser back/forward, refresh-restore, and deep-linking all work for free. `const page = route.screen` is kept as an alias so layout/title code is untouched.
+**Routing — hash-based (no library)**: `parseHash(hash)` / `buildHash(route)` (near `src/App.jsx:895`) produce a structured route `{screen, parentId, entityId, tab}`. `App()` derives `route` from `window.location.hash` via a `hashchange` effect, and a single `navigate(next)` primitive only ever sets `window.location.hash` — so browser back/forward, refresh-restore, and deep-linking all work for free. `const page = route.screen` is kept as an alias so layout/title code is untouched.
 - `TWO_LEVEL = new Set(["stocks","crypto"])` — these use a `screen/parentId/entityId/tab` URL shape (account→holding, wallet→coin); all other screens use `screen/entityId/tab`.
 - `KNOWN_TABS` whitelists valid tab segments.
 - URLs look like `#/bonds/BD001/transactions`, `#/stocks/BR001/1/manage`, `#/crypto/WL001/CR001/postings`.
@@ -35,7 +35,7 @@ No test framework is configured. Verify changes with `npx vite build` (must succ
 
 ## Detail-page pattern (full-page, URL-addressable)
 
-Clicking an asset row navigates to a **full page** (not an overlay drawer — the drawers were converted to pages). Every detail page renders through the shared `DetailPage` shell (`src/App.jsx:746`): props `{icon, iconBg, title, subtitle, badges, stats, tabs, activeTab, onTab, onBack, headerActions, children}` — a ← Back button, a rounded header card with a stat grid, pill tabs, and inset children. A bad id renders `NotFound`.
+Clicking an asset row navigates to a **full page** (not an overlay drawer — the drawers were converted to pages). Every detail page renders through the shared `DetailPage` shell (`src/App.jsx:940`): props `{icon, iconBg, title, subtitle, badges, stats, tabs, activeTab, onTab, onBack, headerActions, children}` — a ← Back button, a rounded header card with a stat grid, pill tabs, and inset children. A bad id renders `NotFound`.
 
 Standard tab set: **Overview · Transactions · Postings · Audit · Manage** (with module-specific extras like Stocks/Crypto **Chart**, Stocks **Dividends**, Loans/Real-Estate **Repayments**). The tab id for the audit log is `audit` (it was historically `history`; some non-audit "Transactions" tabs on the Stocks-account and Crypto-wallet levels still use the `history` id internally).
 
