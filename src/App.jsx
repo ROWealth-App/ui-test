@@ -1916,7 +1916,7 @@ function StocksScreen({ holdings, setHoldings, transactions, setTransactions, ma
               <StockActionPanel key={recordTx} holding={detailHolding} setHoldings={setHoldings} setTransactions={setTransactions} setAccounts={setAccounts}
                 showToast={showToast} logAudit={logAudit} auditLog={auditLog}
                 types={["Buy","Sell","Dividend"]} defaultTxType={recordTx} showDanger={false}
-                onRecorded={()=>setRecordTx(null)}/>
+                maxWidth="100%" onRecorded={()=>setRecordTx(null)}/>
             </div>
           </div>
         </div>
@@ -2137,7 +2137,7 @@ function StockTxEditModal({ tx, onSave, onClose }) {
   );
 }
 
-function StockActionPanel({ holding, setHoldings, setTransactions, setAccounts, showToast, logAudit, auditLog, onDelete, defaultTxType, types, showDanger = true, onRecorded }) {
+function StockActionPanel({ holding, setHoldings, setTransactions, setAccounts, showToast, logAudit, auditLog, onDelete, defaultTxType, types, showDanger = true, onRecorded, maxWidth = 560 }) {
   const TYPES = types || ["Buy","Sell","Dividend","Transfer In","Transfer Out","Update Price"];
   const US_EX = ["NASDAQ","NYSE","AMEX"];
   const isUSStock = US_EX.includes(holding.exchange);
@@ -2265,7 +2265,7 @@ function StockActionPanel({ holding, setHoldings, setTransactions, setAccounts, 
   };
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <div style={{display:"flex",flexDirection:"column",gap:16,maxWidth}}>
       {/* Type pills */}
       <Card style={{padding:"16px 18px"}}>
         <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Transaction Type</div>
