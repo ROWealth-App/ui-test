@@ -1,0 +1,13 @@
+{
+  "name": "plane-attach-mcp",
+  "version": "1.0.0",
+  "description": "Local MCP server that attaches local files to Plane work items via the presigned-upload API",
+  "private": true,
+  "type": "module",
+  "bin": { "plane-attach-mcp": "server.mjs" },
+  "engines": { "node": ">=18.17" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.1"
+  }
+}
