@@ -4,3 +4,7 @@
 # debug / dev artifacts
 .screenshots/
 *.bak
+
+# generated screenshot captures
+/screenshots*/
+/screenshots*.zip
